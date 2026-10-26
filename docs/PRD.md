@@ -384,7 +384,7 @@
 
 ### 7.3 兼容与部署
 
-- Go 1.22 及以上；使用标准库 `net/http` 方法路由。
+- Go 1.26 及以上；使用标准库 `net/http` 方法路由。
 - Node.js 22 LTS 及以上（建议 24 LTS）仅用于前端开发和构建；运行机不需要 Node/npm。
 - 前端为独立工程 `web/`（Vite + Svelte 5 + TypeScript，不使用 SvelteKit）；Vite 构建输出到 `internal/web/dist`，由 `//go:embed` 内嵌。
 - SQLite 驱动使用纯 Go 实现（`modernc.org/sqlite`），`CGO_ENABLED=0` 可构建。
@@ -432,7 +432,7 @@
 
 | 层 | 选型 | 理由 |
 | --- | --- | --- |
-| 语言 | Go 1.22+ | 单二进制、部署简单、标准库完善。 |
+| 语言 | Go 1.26+ | 单二进制、部署简单、标准库完善。 |
 | HTTP/API | `net/http` + `ServeMux`，JSON API | 无框架依赖，满足小型 CRUD。 |
 | 前端 | Vite + Svelte 5 + TypeScript | 独立轻量 SPA，不使用 SvelteKit，无 UI/状态库。 |
 | 路由 | 自写微型 History 路由（约 60 行） | 仅 6 个视图，无需引入路由库。 |

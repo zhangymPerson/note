@@ -2,7 +2,7 @@
 
 本地单用户纯文本笔记应用：Go + SQLite + Svelte 5，单二进制部署，支持本地模糊搜索和带密码提示的单向加密笔记（无密码找回）。
 
-> **项目状态：设计与需求阶段。** 当前仓库已完成 [产品需求文档](docs/PRD.md) 和 [技术方案](docs/TECH_DESIGN.md)，实现代码尚未提交。下方「快速开始」是脚手架落地后的目标使用方式。
+> **项目状态：可运行骨架。** 已完成产品需求、技术方案，以及前后端脚手架、配置加载、SQLite 自动建库迁移和内嵌前端；笔记业务尚未实现。构建细节见 [构建指南](docs/BUILD.md)。
 
 ## 特性
 
@@ -30,15 +30,15 @@
 
 ## 技术栈
 
-| 层 | 技术 |
-| --- | --- |
-| 后端 | Go 1.22+，`net/http` + `ServeMux` |
-| 数据库 | SQLite（`modernc.org/sqlite`，纯 Go，无 CGO） |
-| 加密 | Argon2id（64 MiB）+ AES-256-GCM |
-| 前端 | Vite + Svelte 5 + TypeScript，不使用 SvelteKit |
-| 路由/样式 | 自写 History 路由；Svelte scoped CSS |
-| 构建 | Vite 输出到 `internal/web/dist`，`go:embed` 嵌入单二进制 |
-| 运行环境 | Node/npm 仅用于开发与构建；运行机只需要 Go 二进制 |
+| 层        | 技术                                                     |
+| --------- | -------------------------------------------------------- |
+| 后端      | Go 1.26+，`net/http` + `ServeMux`                        |
+| 数据库    | SQLite（`modernc.org/sqlite`，纯 Go，无 CGO）            |
+| 加密      | Argon2id（64 MiB）+ AES-256-GCM                          |
+| 前端      | Vite + Svelte 5 + TypeScript，不使用 SvelteKit           |
+| 路由/样式 | 自写 History 路由；Svelte scoped CSS                     |
+| 构建      | Vite 输出到 `internal/web/dist`，`go:embed` 嵌入单二进制 |
+| 运行环境  | Node/npm 仅用于开发与构建；运行机只需要 Go 二进制        |
 
 ## 架构
 
@@ -59,32 +59,35 @@ Go net/http
 
 - [产品需求文档（PRD）](docs/PRD.md)
 - [技术方案](docs/TECH_DESIGN.md)
+- [构建指南](docs/BUILD.md)
+- [变更记录](CHANGELOG.md)
 
 ## 快速开始
 
 前置条件：
 
-- Go 1.22 及以上
+- Go 1.26 及以上
 - Node.js 22 LTS 及以上（建议 24 LTS）
 - npm
 - `just`（可选，推荐）
 
-首次准备前端产物（Go 的 `//go:embed` 需要 `internal/web/dist`）：
+首次构建（Go 的 `//go:embed` 需要 `internal/web/dist`）：
 
 ```bash
-cd web
-npm ci
-npm run build
-cd ..
+just install   # npm ci
+just build     # 构建前端 + 单二进制
+./note
 ```
 
-启动应用：
+不使用 `just` 时：
 
 ```bash
+npm --prefix web ci
+npm --prefix web run build
 go run ./cmd/note
 ```
 
-打开 <http://127.0.0.1:8080>。
+打开 <http://127.0.0.1:8080>。首次启动会自动创建 `data/notes.db`。
 
 ### 前端开发
 
@@ -109,10 +112,8 @@ just build
 不使用 `just` 时：
 
 ```bash
-cd web
-npm ci
-npm run build
-cd ..
+npm --prefix web ci
+npm --prefix web run build
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o note ./cmd/note
 ```
 
@@ -124,18 +125,22 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o note ./cmd/note
 go test ./...
 go test -race ./...
 
-cd web
-npm test
-npm run check
+npm --prefix web test
+npm --prefix web run check
 ```
+
+或直接执行 `just test`、`just check`。
 
 ## 配置
 
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `--addr` | `127.0.0.1:8080` | 监听地址 |
-| `--db` | `./data/notes.db` | SQLite 文件路径 |
-| `--allow-remote` | `false` | 允许绑定非回环地址；启动时打印安全警告 |
+配置优先级：内置默认值 < `config/note.yaml` < 命令行参数。
+
+| 参数             | 默认值               | 说明                                   |
+| ---------------- | -------------------- | -------------------------------------- |
+| `--config`       | `./config/note.yaml` | YAML 配置文件路径                      |
+| `--addr`         | `127.0.0.1:8080`     | 监听地址                               |
+| `--db`           | `./data/notes.db`    | SQLite 文件路径                        |
+| `--allow-remote` | `false`              | 允许绑定非回环地址；启动时打印安全警告 |
 
 ```bash
 go run ./cmd/note --addr 127.0.0.1:9000 --db ./data/notes.db
@@ -156,15 +161,19 @@ go run ./cmd/note --addr 127.0.0.1:9000 --db ./data/notes.db
 ```text
 note/
 ├── cmd/note/              # Go 入口
+├── config/                # note.yaml 默认配置
+├── sql/                   # 建表与迁移脚本（嵌入二进制）
 ├── internal/
 │   ├── config/            # 运行参数
 │   ├── store/             # SQLite、迁移、查询
-│   ├── crypto/            # Argon2id + AES-GCM
-│   ├── session/           # 内存解锁会话
+│   ├── crypto/            # Argon2id + AES-GCM（待实现）
+│   ├── session/           # 内存解锁会话（待实现）
 │   └── web/               # API、中间件、内嵌前端
+│       └── dist/          # Vite 构建产物（不提交）
 ├── web/                   # 独立 Svelte 5 前端工程
 ├── data/                  # 运行时数据（不提交）
-├── docs/                  # PRD 与技术方案
+├── docs/                  # PRD、技术方案、构建指南
+├── CHANGELOG.md
 └── justfile
 ```
 
@@ -172,9 +181,9 @@ note/
 
 - [x] 产品需求文档
 - [x] 技术方案
-- [ ] Go 后端骨架与 SQLite
+- [x] Go 后端骨架与 SQLite 自动建库迁移
+- [x] Svelte 前端骨架与构建嵌入
 - [ ] 明文笔记 CRUD、分页、模糊搜索
-- [ ] Svelte 前端与构建嵌入
 - [ ] 加密、解锁、提示问答与会话
 - [ ] 安全加固、测试与单二进制发布
 

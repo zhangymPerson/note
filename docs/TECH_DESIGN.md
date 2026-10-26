@@ -145,8 +145,8 @@ note/
 
 | 层 | 选型 | 说明 |
 | --- | --- | --- |
-| 语言 | Go 1.22+ | 单二进制、标准库 HTTP 路由、部署简单 |
-| HTTP | `net/http` + `ServeMux` | 使用 Go 1.22 方法路由，不引入 Web 框架 |
+| 语言 | Go 1.26+ | 单二进制、标准库 HTTP 路由、部署简单 |
+| HTTP | `net/http` + `ServeMux` | 使用标准库方法路由，不引入 Web 框架 |
 | 配置 | `gopkg.in/yaml.v3` | 解析 `config/note.yaml`，严格字段校验 |
 | 数据库 | SQLite + `modernc.org/sqlite` | 纯 Go，无 CGO；本地单文件 |
 | 密钥派生 | `golang.org/x/crypto/argon2` | Argon2id，内存困难型 KDF |
