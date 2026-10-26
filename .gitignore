@@ -31,6 +31,9 @@ go.work.sum
 # Runtime data
 data/
 
+# 后台开发服务的 PID 与日志（just start/stop）
+.run/
+
 # Frontend dependencies and embedded build output
 web/node_modules/
 internal/web/dist/

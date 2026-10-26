@@ -22,6 +22,15 @@ install:
 frontend: install
     npm --prefix web run build
 
+# 后台启动前后端开发服务：go run 后端(:8080) + vite dev 前端(:5173)，日志写入 .run/
+# 子进程经 WMI 创建，不继承 just 的管道句柄，因此 start 能立即返回
+start:
+    {{ if os() == "windows" { "powershell.exe -NoLogo -ExecutionPolicy Bypass -File scripts/dev.ps1 start" } else { "bash scripts/dev.sh start" } }}
+
+# 停止 start 启动的后台前后端（按 .run/*.pid 杀进程树）
+stop:
+    {{ if os() == "windows" { "powershell.exe -NoLogo -ExecutionPolicy Bypass -File scripts/dev.ps1 stop" } else { "bash scripts/dev.sh stop" } }}
+
 # 构建单二进制
 build: frontend
     go build -trimpath -ldflags "-s -w" -o {{binary}} ./cmd/note
