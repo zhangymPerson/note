@@ -25,8 +25,8 @@ func TestOpenCreatesDatabaseAndAppliesMigrations(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("expected schema version 2, got %d", version)
+	if version != 3 {
+		t.Fatalf("expected schema version 3, got %d", version)
 	}
 
 	var mode string
@@ -69,8 +69,8 @@ func TestOpenExistingDatabaseIsIdempotent(t *testing.T) {
 	if err := second.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("expected schema version 2, got %d", version)
+	if version != 3 {
+		t.Fatalf("expected schema version 3, got %d", version)
 	}
 }
 
@@ -109,5 +109,58 @@ func TestOpenRejectsInvalidDatabase(t *testing.T) {
 
 	if _, err := Open(path); err == nil {
 		t.Fatal("expected invalid database to be rejected")
+	}
+}
+
+func TestNoteExtendedFieldsDefaultsAndChecks(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "notes.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+	const ts = "2026-01-01T00:00:00Z"
+
+	if _, err := store.db.Exec(
+		`INSERT INTO notes (id, title, content, created_at, updated_at)
+         VALUES ('n1', '标题', '正文', ?, ?)`,
+		ts, ts,
+	); err != nil {
+		t.Fatalf("insert note: %v", err)
+	}
+
+	var (
+		kind    string
+		remark  string
+		extra   sql.NullString
+		rev     int
+		visited sql.NullString
+	)
+	if err := store.db.QueryRow(
+		`SELECT kind, remark, extra, rev, last_visited_at FROM notes WHERE id = 'n1'`,
+	).Scan(&kind, &remark, &extra, &rev, &visited); err != nil {
+		t.Fatalf("scan extended fields: %v", err)
+	}
+	if kind != "note" || remark != "" || rev != 1 {
+		t.Fatalf("unexpected defaults: kind=%q remark=%q rev=%d", kind, remark, rev)
+	}
+	if extra.Valid || visited.Valid {
+		t.Fatalf("expected NULL extra/last_visited_at, got %v %v", extra, visited)
+	}
+
+	if _, err := store.db.Exec(`UPDATE notes SET extra = 'not-json' WHERE id = 'n1'`); err == nil {
+		t.Fatal("expected invalid JSON in extra to be rejected")
+	}
+	if _, err := store.db.Exec(`UPDATE notes SET extra = '{"reminder":"2026-11-01"}' WHERE id = 'n1'`); err != nil {
+		t.Fatalf("store valid JSON extra: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE notes SET kind = '' WHERE id = 'n1'`); err == nil {
+		t.Fatal("expected empty kind to be rejected")
+	}
+	if _, err := store.db.Exec(`UPDATE notes SET rev = 0 WHERE id = 'n1'`); err == nil {
+		t.Fatal("expected non-positive rev to be rejected")
 	}
 }

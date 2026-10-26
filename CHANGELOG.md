@@ -8,6 +8,12 @@
 
 ### Added
 
+- 笔记表扩展字段（迁移 `sql/0003_note_fields.sql`，实现逻辑与关键决策）：
+  - 新增 `kind`（笔记类型，`TEXT NOT NULL DEFAULT 'note'`，取值由应用层维护、新增类型无需迁移）、`remark`（纯文本备注，默认空串）、`extra`（JSON 扩展备注，列级 `json_valid` CHECK，NULL 表示无）三个用户要求的字段。
+  - 补充 `rev`（修订号，应用侧编辑时 +1，用于乐观并发与变更检测）与 `last_visited_at`（最近查看时间，UTC 秒级文本，配合 activities 支撑"最近打开"排序）。
+  - 置顶、回收站、标签等候选字段因与 PRD 2.2 非目标冲突未引入；提醒时间、颜色、来源等未定型信息统一先进 `extra` JSON，稳定后再提升为独立列。
+  - 迁移遵循 SQLite `ALTER TABLE ADD COLUMN` 逐列追加约束；`store_test` 断言版本 3 并验证默认值回填、非法 JSON / 空 kind / 非正 rev 被 CHECK 拒绝。
+  - 验证：`go vet` + Go 22 项 + 前端 11 项测试全部通过。
 - 用户命名与使用统计首页（实现过程与关键逻辑）：
   - 配置层：`config/note.yaml` 新增 `user.name` 与 `user.name_set` 两个配置；`internal/config` 解析该段并新增 `SaveUserName`，以同目录临时文件 + rename 原子写回，保证重启后读回姓名与门禁状态不丢。
   - 数据层：新增迁移 `sql/0002_activity.sql` 建 `activities` 表（`kind='search'`、`query`、UTC 秒级 `created_at`，含按天与按词两个索引）；`internal/store/activity.go` 提供 `SearchNotes`（LIKE 通配符转义防注入扩大匹配，查询即记录活动）、`RecordSearch` 与 `GetStats`（总次数、活跃天数、Top 查询词、近 N 天按天计数）。
