@@ -8,6 +8,9 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 # SQLite 驱动为纯 Go 实现，前端与后端构建都不需要 CGO
 export CGO_ENABLED := "0"
 
+# Windows 必须有 .exe 扩展名才能直接执行
+binary := if os() == "windows" { "note.exe" } else { "note" }
+
 default:
     just --list
 
@@ -21,7 +24,7 @@ frontend: install
 
 # 构建单二进制
 build: frontend
-    go build -trimpath -ldflags "-s -w" -o note ./cmd/note
+    go build -trimpath -ldflags "-s -w" -o {{binary}} ./cmd/note
 
 # 运行后端与前端测试
 test: frontend

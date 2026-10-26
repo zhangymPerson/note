@@ -159,6 +159,7 @@ just format     # go fmt + Prettier
 # 构建
 npm --prefix web ci
 npm --prefix web run build
+# Linux/macOS
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o note ./cmd/note
 
 # 测试与检查
@@ -176,10 +177,10 @@ Windows PowerShell 下把 `CGO_ENABLED=0 go build ...` 写成：
 
 ```powershell
 $env:CGO_ENABLED = "0"
-go build -trimpath -ldflags "-s -w" -o note ./cmd/note
+go build -trimpath -ldflags "-s -w" -o note.exe ./cmd/note
 ```
 
-`justfile` 通过 `set windows-shell` 自动切换 PowerShell，因此 `just build` 在 Windows 上无需额外设置。
+Windows 的可执行文件必须带 `.exe` 扩展名，否则 Nushell、PowerShell 等无法直接执行。`justfile` 通过 `os()` 自动选择输出名，Windows 下 `just build` 生成 `note.exe`，Unix 下生成 `note`，无需额外设置。
 
 ## 构建产物
 
@@ -192,7 +193,7 @@ note            # Linux/macOS 可执行文件；Windows 为 note.exe
 前端 HTML、JS、CSS 已嵌入二进制。部署时只需要：
 
 ```text
-note
+note                # Linux/macOS；Windows 为 note.exe
 config/note.yaml   # 可选，不存在则使用默认值
 ```
 
@@ -201,7 +202,9 @@ config/note.yaml   # 可选，不存在则使用默认值
 ## 运行
 
 ```bash
-./note
+./note         # Linux/macOS
+./note.exe     # Windows
+
 # 或指定参数
 ./note --addr 127.0.0.1:9000 --db ./data/notes.db
 ```

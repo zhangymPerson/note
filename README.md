@@ -76,7 +76,8 @@ Go net/http
 ```bash
 just install   # npm ci
 just build     # 构建前端 + 单二进制
-./note
+./note         # Linux/macOS
+./note.exe     # Windows
 ```
 
 不使用 `just` 时：
@@ -106,7 +107,8 @@ npm run dev
 
 ```bash
 just build
-./note
+./note     # Linux/macOS
+./note.exe # Windows
 ```
 
 不使用 `just` 时：
@@ -114,10 +116,21 @@ just build
 ```bash
 npm --prefix web ci
 npm --prefix web run build
+
+# Linux/macOS
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o note ./cmd/note
 ```
 
-部署时只需要 `note` 可执行文件和 `data/` 数据目录，不需要 Node/npm，也不需要单独部署前端。
+Windows PowerShell（输出必须是 `note.exe`）：
+
+```powershell
+npm --prefix web ci
+npm --prefix web run build
+$env:CGO_ENABLED = "0"
+go build -trimpath -ldflags "-s -w" -o note.exe ./cmd/note
+```
+
+部署时只需要 `note`（Windows 为 `note.exe`）和 `config/`、`data/` 目录，不需要 Node/npm，也不需要单独部署前端。
 
 ### 测试与检查
 

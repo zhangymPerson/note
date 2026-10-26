@@ -22,6 +22,10 @@
 - 前端构建输出重定向到 `internal/web/dist`，由 `go:embed` 嵌入，部署不再需要 Node/npm。
 - Go 模块版本提升到 1.26，SQLite 使用纯 Go 驱动，构建全程关闭 CGO。
 
+### Fixed
+
+- Windows 构建输出改为 `note.exe`，避免无扩展名的二进制无法在 Nushell、PowerShell 中直接执行。
+
 ### Security
 
 - 默认只监听回环地址，绑定非回环地址必须显式 `--allow-remote` 并输出警告。
