@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { matchRoute } from './router'
 
 describe('matchRoute', () => {
+  it('matches the home route', () => {
+    expect(matchRoute('/')).toEqual({ name: 'home', params: {} })
+  })
+
   it('matches the list route', () => {
-    expect(matchRoute('/')).toEqual({ name: 'list', params: {} })
+    expect(matchRoute('/notes')).toEqual({ name: 'list', params: {} })
   })
 
   it('prefers the new route over the detail route', () => {

@@ -2,19 +2,41 @@ package web
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"note/internal/config"
+	"note/internal/store"
 )
 
-func newTestHandler() http.Handler {
+func newTestHandler(t *testing.T) (http.Handler, config.Config) {
+	t.Helper()
 	dist := fstest.MapFS{
 		"index.html":    {Data: []byte("<!doctype html><title>note</title>")},
 		"assets/app.js": {Data: []byte("console.log('ok')")},
 	}
-	return New(Options{Addr: "127.0.0.1:8080"}, dist)
+	dir := t.TempDir()
+	cfg := config.Config{
+		Addr:       "127.0.0.1:8080",
+		DBPath:     filepath.Join(dir, "notes.db"),
+		ConfigPath: filepath.Join(dir, "note.yaml"),
+	}
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+	return New(cfg, st, dist), cfg
 }
 
 func doRequest(handler http.Handler, method, target, host, accept string) *httptest.ResponseRecorder {
@@ -29,7 +51,8 @@ func doRequest(handler http.Handler, method, target, host, accept string) *httpt
 }
 
 func TestSPAFallbackAndSecurityHeaders(t *testing.T) {
-	rec := doRequest(newTestHandler(), http.MethodGet, "/notes/demo", "127.0.0.1:8080", "text/html")
+	handler, _ := newTestHandler(t)
+	rec := doRequest(handler, http.MethodGet, "/notes/demo", "127.0.0.1:8080", "text/html")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -52,7 +75,7 @@ func TestSPAFallbackAndSecurityHeaders(t *testing.T) {
 }
 
 func TestAssetsAreCachedAndMissingAssetsReturn404(t *testing.T) {
-	handler := newTestHandler()
+	handler, _ := newTestHandler(t)
 
 	rec := doRequest(handler, http.MethodGet, "/assets/app.js", "127.0.0.1:8080", "")
 	if rec.Code != http.StatusOK {
@@ -71,7 +94,8 @@ func TestAssetsAreCachedAndMissingAssetsReturn404(t *testing.T) {
 }
 
 func TestUnknownAPIReturnsJSON404(t *testing.T) {
-	rec := doRequest(newTestHandler(), http.MethodGet, "/api/notes", "127.0.0.1:8080", "")
+	handler, _ := newTestHandler(t)
+	rec := doRequest(handler, http.MethodGet, "/api/whatever", "127.0.0.1:8080", "")
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
@@ -93,7 +117,7 @@ func TestUnknownAPIReturnsJSON404(t *testing.T) {
 }
 
 func TestCSRFIssuesAndReusesToken(t *testing.T) {
-	handler := newTestHandler()
+	handler, _ := newTestHandler(t)
 	rec := doRequest(handler, http.MethodGet, "/api/csrf", "127.0.0.1:8080", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -142,7 +166,8 @@ func TestCSRFIssuesAndReusesToken(t *testing.T) {
 }
 
 func TestHostGuardRejectsUnknownHost(t *testing.T) {
-	rec := doRequest(newTestHandler(), http.MethodGet, "/", "evil.example", "text/html")
+	handler, _ := newTestHandler(t)
+	rec := doRequest(handler, http.MethodGet, "/", "evil.example", "text/html")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
 	}
@@ -157,8 +182,128 @@ func TestHostGuardRejectsUnknownHost(t *testing.T) {
 }
 
 func TestNonHTMLPathWithExtensionReturns404(t *testing.T) {
-	rec := doRequest(newTestHandler(), http.MethodGet, "/missing.txt", "127.0.0.1:8080", "application/json")
+	handler, _ := newTestHandler(t)
+	rec := doRequest(handler, http.MethodGet, "/missing.txt", "127.0.0.1:8080", "application/json")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestSettingsGateAndSetName(t *testing.T) {
+	handler, cfg := newTestHandler(t)
+
+	rec := doRequest(handler, http.MethodGet, "/api/settings", "127.0.0.1:8080", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var settings struct {
+		Name    string `json:"name"`
+		NameSet bool   `json:"name_set"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &settings); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	if settings.NameSet {
+		t.Fatalf("expected unset name initially: %+v", settings)
+	}
+
+	setName := func(csrf string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/settings/name", strings.NewReader(`{"name":"阿澜"}`))
+		req.Host = "127.0.0.1:8080"
+		req.Header.Set("Content-Type", "application/json")
+		if csrf != "" {
+			req.Header.Set("X-CSRF-Token", csrf)
+			req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrf})
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := setName(""); rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without csrf token, got %d", rec.Code)
+	}
+
+	tokenRec := doRequest(handler, http.MethodGet, "/api/csrf", "127.0.0.1:8080", "")
+	var tokenBody struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(tokenRec.Body.Bytes(), &tokenBody); err != nil {
+		t.Fatalf("decode csrf token: %v", err)
+	}
+
+	rec = setName(tokenBody.Token)
+	if rec.Code != http.StatusOK {
+		body, _ := io.ReadAll(rec.Body)
+		t.Fatalf("expected 200 with csrf token, got %d: %s", rec.Code, body)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &settings); err != nil {
+		t.Fatalf("decode updated settings: %v", err)
+	}
+	if settings.Name != "阿澜" || !settings.NameSet {
+		t.Fatalf("unexpected settings: %+v", settings)
+	}
+
+	reloaded, _, err := config.Load([]string{"--config", cfg.ConfigPath})
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if reloaded.UserName != "阿澜" || !reloaded.NameSet {
+		t.Fatalf("name not persisted to yaml: %+v", reloaded)
+	}
+}
+
+func TestStatsAndSearchEndpoints(t *testing.T) {
+	handler, _ := newTestHandler(t)
+
+	rec := doRequest(handler, http.MethodGet, "/api/stats", "127.0.0.1:8080", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var stats struct {
+		TotalSearches int `json:"total_searches"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("decode stats: %v", err)
+	}
+	if stats.TotalSearches != 0 {
+		t.Fatalf("expected zero searches, got %d", stats.TotalSearches)
+	}
+
+	rec = doRequest(handler, http.MethodGet, "/api/notes?q=%E6%B5%8B%E8%AF%95", "127.0.0.1:8080", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var items struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode search items: %v", err)
+	}
+	if len(items.Items) != 0 {
+		t.Fatalf("expected empty result, got %v", items.Items)
+	}
+
+	rec = doRequest(handler, http.MethodGet, "/api/stats", "127.0.0.1:8080", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("decode stats after search: %v", err)
+	}
+	if stats.TotalSearches != 1 {
+		t.Fatalf("expected search recorded, got %d", stats.TotalSearches)
+	}
+}
+
+func TestMissingYamlUserSectionStillLoads(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "note.yaml")
+	if err := os.WriteFile(cfgPath, []byte("server:\n  addr: 127.0.0.1:8080\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, _, err := config.Load([]string{"--config", cfgPath})
+	if err != nil {
+		t.Fatalf("load legacy config: %v", err)
+	}
+	if cfg.NameSet {
+		t.Fatal("expected name_set false for legacy config")
 	}
 }

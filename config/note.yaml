@@ -1,6 +1,8 @@
 server:
   addr: 127.0.0.1:8080
   allow_remote: false
-
 database:
   path: ./data/notes.db
+user:
+  name: 张艳明
+  name_set: true

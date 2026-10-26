@@ -35,6 +35,11 @@ data/
 web/node_modules/
 internal/web/dist/
 
+# Locally installed agent skills (not part of the project)
+.agents/
+.claude/
+skills-lock.json
+
 # Built binary
 /note
 

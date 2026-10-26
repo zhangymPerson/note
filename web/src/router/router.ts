@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store'
 
 export type RouteName =
+  | 'home'
   | 'list'
   | 'new'
   | 'detail'
@@ -21,7 +22,8 @@ interface RoutePattern {
 }
 
 const patterns: RoutePattern[] = [
-  { name: 'list', pattern: /^\/$/, keys: [] },
+  { name: 'home', pattern: /^\/$/, keys: [] },
+  { name: 'list', pattern: /^\/notes$/, keys: [] },
   { name: 'new', pattern: /^\/notes\/new$/, keys: [] },
   { name: 'edit', pattern: /^\/notes\/([^/]+)\/edit$/, keys: ['id'] },
   { name: 'encrypt', pattern: /^\/notes\/([^/]+)\/encrypt$/, keys: ['id'] },

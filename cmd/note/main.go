@@ -49,7 +49,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           web.New(web.Options{Addr: cfg.Addr, AllowRemote: cfg.AllowRemote}, dist),
+		Handler:           web.New(cfg, st, dist),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

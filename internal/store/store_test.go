@@ -25,8 +25,8 @@ func TestOpenCreatesDatabaseAndAppliesMigrations(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("expected schema version 1, got %d", version)
+	if version != 2 {
+		t.Fatalf("expected schema version 2, got %d", version)
 	}
 
 	var mode string
@@ -69,8 +69,8 @@ func TestOpenExistingDatabaseIsIdempotent(t *testing.T) {
 	if err := second.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("expected schema version 1, got %d", version)
+	if version != 2 {
+		t.Fatalf("expected schema version 2, got %d", version)
 	}
 }
 

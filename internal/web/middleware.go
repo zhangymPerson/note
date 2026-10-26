@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"net"
@@ -8,6 +9,31 @@ import (
 	"strings"
 	"time"
 )
+
+// csrfProtect 对所有状态变更类 API 请求做双提交校验：
+// X-CSRF-Token 头必须与 csrf Cookie 一致，否则返回 403。
+func csrfProtect(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path != "/api" && !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		cookie, err := r.Cookie(csrfCookieName)
+		token := r.Header.Get("X-CSRF-Token")
+		if err != nil || cookie.Value == "" || token == "" ||
+			!validCSRFToken(cookie.Value) ||
+			subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(token)) != 1 {
+			writeError(w, http.StatusForbidden, "csrf_invalid", "缺少或无效的 CSRF 令牌，请重新打开页面")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func recoverPanics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

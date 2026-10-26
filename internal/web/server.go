@@ -6,22 +6,27 @@ import (
 	"net/http"
 	"path"
 	"strings"
+
+	"note/internal/config"
+	"note/internal/store"
 )
 
-type Options struct {
-	Addr        string
-	AllowRemote bool
-}
+func New(cfg config.Config, st *store.Store, dist fs.FS) http.Handler {
+	app := newApplication(cfg, st)
 
-func New(opts Options, dist fs.FS) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/csrf", handleCSRF)
+	mux.HandleFunc("GET /api/settings", app.handleGetSettings)
+	mux.HandleFunc("PUT /api/settings/name", app.handleSetName)
+	mux.HandleFunc("GET /api/notes", app.handleSearchNotes)
+	mux.HandleFunc("GET /api/stats", app.handleStats)
 	mux.Handle("GET /assets/", serveAssets(dist))
 	mux.HandleFunc("GET /", spaHandler(dist))
 
 	var handler http.Handler = mux
 	handler = recoverPanics(handler)
-	handler = hostGuard(opts.Addr, opts.AllowRemote, handler)
+	handler = csrfProtect(handler)
+	handler = hostGuard(cfg.Addr, cfg.AllowRemote, handler)
 	handler = securityHeaders(handler)
 	handler = accessLog(handler)
 	return handler

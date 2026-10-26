@@ -121,3 +121,52 @@ func TestLoadRejectsMissingExplicitConfig(t *testing.T) {
 		t.Fatal("expected missing explicit config to fail")
 	}
 }
+
+func TestLoadUserSection(t *testing.T) {
+	path := writeConfig(t, `server:
+  addr: 127.0.0.1:8080
+database:
+  path: ./data/notes.db
+user:
+  name: 阿澜
+  name_set: true
+`)
+
+	cfg, _, err := Load([]string{"--config", path})
+	if err != nil {
+		t.Fatalf("load user config: %v", err)
+	}
+	if cfg.UserName != "阿澜" || !cfg.NameSet {
+		t.Fatalf("unexpected user config: %+v", cfg)
+	}
+}
+
+func TestSaveUserNameRoundTrip(t *testing.T) {
+	path := writeConfig(t, `server:
+  addr: 127.0.0.1:9090
+database:
+  path: ./data/notes.db
+user:
+  name: ""
+  name_set: false
+`)
+
+	cfg, _, err := Load([]string{"--config", path})
+	if err != nil {
+		t.Fatalf("load before save: %v", err)
+	}
+	if err := cfg.SaveUserName("小北"); err != nil {
+		t.Fatalf("save name: %v", err)
+	}
+
+	reloaded, _, err := Load([]string{"--config", path})
+	if err != nil {
+		t.Fatalf("load after save: %v", err)
+	}
+	if reloaded.UserName != "小北" || !reloaded.NameSet {
+		t.Fatalf("name not persisted: %+v", reloaded)
+	}
+	if reloaded.Addr != "127.0.0.1:9090" || reloaded.DBPath != "./data/notes.db" {
+		t.Fatalf("save lost other settings: %+v", reloaded)
+	}
+}
