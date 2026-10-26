@@ -28,6 +28,20 @@ go.work.sum
 # env file
 .env
 
+# Runtime data
+data/
+
+# Frontend dependencies and embedded build output
+web/node_modules/
+internal/web/dist/
+
+# Built binary
+/note
+
+# OS files
+.DS_Store
+Thumbs.db
+
 # Editor/IDE
 # .idea/
 # .vscode/
