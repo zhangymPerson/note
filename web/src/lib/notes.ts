@@ -26,8 +26,19 @@ export interface NoteMeta {
   updated_at: string
 }
 
+// 列表项：后端只给截断后的摘要，加密笔记连摘要都没有。
+export interface NoteListItem {
+  id: string
+  title: string
+  encrypted: boolean
+  content?: string
+  category_id: number | null
+  category_name?: string
+  updated_at: string
+}
+
 export interface NotePage {
-  items: NoteMeta[]
+  items: NoteListItem[]
   total: number
   page: number
   per_page: number

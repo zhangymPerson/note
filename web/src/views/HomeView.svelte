@@ -1,20 +1,14 @@
 <script lang="ts">
   import ActivityHeatmap from '../components/ActivityHeatmap.svelte'
-  import { getJSON } from '../lib/api'
+  import { listNotes, type NoteListItem } from '../lib/notes'
   import { settings } from '../lib/settings'
   import { HEATMAP_WEEKS, loadStats, type Stats } from '../lib/stats'
   import { navigate } from '../router/router'
 
-  interface NoteHit {
-    id: string
-    title: string
-    updated_at: string
-  }
-
   let stats = $state<Stats | null>(null)
   let statsError = $state('')
   let query = $state('')
-  let results = $state<NoteHit[] | null>(null)
+  let results = $state<NoteListItem[] | null>(null)
   let searching = $state(false)
   let searchError = $state('')
 
@@ -40,8 +34,8 @@
     searching = true
     searchError = ''
     try {
-      const body = await getJSON<{ items: NoteHit[] }>(`/api/notes?q=${encodeURIComponent(q)}`)
-      results = body.items
+      const result = await listNotes({ q })
+      results = result.items
       await refreshStats()
     } catch (error) {
       searchError = error instanceof Error ? error.message : '查询失败，请稍后重试'
@@ -91,6 +85,9 @@
             <a href="/notes/{hit.id}" onclick={(e) => { e.preventDefault(); openNote(hit.id) }}>
               {hit.title}
             </a>
+            {#if hit.encrypted}
+              <span class="badge">已加密</span>
+            {/if}
           </li>
         {/each}
       </ul>
