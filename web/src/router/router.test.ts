@@ -17,8 +17,16 @@ describe('matchRoute', () => {
   it('parses ids for detail and action routes', () => {
     expect(matchRoute('/notes/abc')).toEqual({ name: 'detail', params: { id: 'abc' } })
     expect(matchRoute('/notes/abc/edit')).toEqual({ name: 'edit', params: { id: 'abc' } })
-    expect(matchRoute('/notes/abc/encrypt')).toEqual({ name: 'encrypt', params: { id: 'abc' } })
     expect(matchRoute('/notes/abc/forgot')).toEqual({ name: 'forgot', params: { id: 'abc' } })
+  })
+
+  it('解锁改在详情页内完成，encrypt 路由不再存在', () => {
+    expect(matchRoute('/notes/abc/encrypt')).toEqual({ name: 'notFound', params: {} })
+  })
+
+  it('matches the master password and category manager routes', () => {
+    expect(matchRoute('/master-password')).toEqual({ name: 'master', params: {} })
+    expect(matchRoute('/categories')).toEqual({ name: 'categories', params: {} })
   })
 
   it('decodes id segments', () => {

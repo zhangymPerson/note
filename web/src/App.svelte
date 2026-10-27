@@ -5,7 +5,8 @@
   import NoteListView from './views/NoteListView.svelte'
   import NoteDetailView from './views/NoteDetailView.svelte'
   import NoteEditorView from './views/NoteEditorView.svelte'
-  import EncryptView from './views/EncryptView.svelte'
+  import MasterPasswordView from './views/MasterPasswordView.svelte'
+  import CategoryManagerView from './views/CategoryManagerView.svelte'
   import ForgotPasswordView from './views/ForgotPasswordView.svelte'
   import NotFoundView from './views/NotFoundView.svelte'
   import { loadSettings, settings } from './lib/settings'
@@ -17,8 +18,9 @@
     new: '新建笔记',
     detail: '笔记详情',
     edit: '编辑笔记',
-    encrypt: '加密笔记',
     forgot: '忘记密码',
+    master: '主密码',
+    categories: '分类管理',
     notFound: '页面不存在',
   }
 
@@ -54,10 +56,12 @@
       <NoteDetailView id={$route.params.id ?? ''} />
     {:else if $route.name === 'edit'}
       <NoteEditorView id={$route.params.id ?? ''} />
-    {:else if $route.name === 'encrypt'}
-      <EncryptView id={$route.params.id ?? ''} />
     {:else if $route.name === 'forgot'}
       <ForgotPasswordView id={$route.params.id ?? ''} />
+    {:else if $route.name === 'master'}
+      <MasterPasswordView />
+    {:else if $route.name === 'categories'}
+      <CategoryManagerView />
     {:else}
       <NotFoundView />
     {/if}

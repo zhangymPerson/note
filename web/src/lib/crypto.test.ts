@@ -12,6 +12,7 @@ import {
   normalizePassword,
 } from './crypto'
 import { hasKey, lockSession, sessionKey, unlockKey, unlockWithPassword } from './session-key'
+import { editorDraft } from './draft'
 
 const SALT = bytesToB64(new Uint8Array(16).fill(7))
 
@@ -151,6 +152,17 @@ describe('session key holder', () => {
 
     lockSession()
     expect(sessionKey.current()).toBeNull()
+  })
+
+  it('lockSession 连带清掉内存草稿，锁定时不留明文', async () => {
+    const salt = generateSaltB64()
+    editorDraft.save({ title: '标题', content: '尚未保存的正文', categoryId: null, encrypt: true })
+
+    await unlockKey('会话密码', salt)
+    lockSession()
+
+    expect(sessionKey.current()).toBeNull()
+    expect(editorDraft.current()).toBeNull()
   })
 
   it('unlockWithPassword 没有试解密素材时只做派生', async () => {

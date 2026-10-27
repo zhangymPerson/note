@@ -2,6 +2,8 @@
   import type { Snippet } from 'svelte'
   import { navigate } from '../router/router'
   import { settings } from '../lib/settings'
+  import { hasKey, lockSession } from '../lib/session-key'
+  import { toast, toasts } from '../lib/toast'
   import ThemeSwitch from './ThemeSwitch.svelte'
 
   let { children }: { children: Snippet } = $props()
@@ -19,6 +21,11 @@
     event.preventDefault()
     navigate(path)
   }
+
+  function lock(): void {
+    lockSession()
+    toast('已锁定')
+  }
 </script>
 
 <div class="shell">
@@ -31,10 +38,21 @@
       <a href="/notes/new" onclick={(event) => link(event, '/notes/new')}>新建</a>
     </nav>
     <span class="who" title="当前用户">{$settings.name}</span>
+    {#if $hasKey}
+      <button class="button button-quiet" type="button" onclick={lock}>锁定</button>
+    {/if}
     <ThemeSwitch />
   </header>
 
   <main>
     {@render children()}
   </main>
+
+  {#if $toasts.length > 0}
+    <div class="toasts" role="status" aria-live="polite">
+      {#each $toasts as message, index (index)}
+        <div class="toast">{message}</div>
+      {/each}
+    </div>
+  {/if}
 </div>

@@ -62,6 +62,14 @@
     return () => clearTimeout(timer)
   })
 
+  // 从顶栏锁定时，本页内存里的解密正文也要一起清掉（设计文档 §5.1）。
+  $effect(() => {
+    if (!$hasKey && cipher !== '') {
+      content = ''
+      previewSource = ''
+    }
+  })
+
   $effect(() => {
     const handler = (event: BeforeUnloadEvent) => {
       if (dirty) event.preventDefault()

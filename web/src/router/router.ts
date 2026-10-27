@@ -6,8 +6,9 @@ export type RouteName =
   | 'new'
   | 'detail'
   | 'edit'
-  | 'encrypt'
   | 'forgot'
+  | 'master'
+  | 'categories'
   | 'notFound'
 
 export interface Route {
@@ -26,9 +27,10 @@ const patterns: RoutePattern[] = [
   { name: 'list', pattern: /^\/notes$/, keys: [] },
   { name: 'new', pattern: /^\/notes\/new$/, keys: [] },
   { name: 'edit', pattern: /^\/notes\/([^/]+)\/edit$/, keys: ['id'] },
-  { name: 'encrypt', pattern: /^\/notes\/([^/]+)\/encrypt$/, keys: ['id'] },
   { name: 'forgot', pattern: /^\/notes\/([^/]+)\/forgot$/, keys: ['id'] },
   { name: 'detail', pattern: /^\/notes\/([^/]+)$/, keys: ['id'] },
+  { name: 'master', pattern: /^\/master-password$/, keys: [] },
+  { name: 'categories', pattern: /^\/categories$/, keys: [] },
 ]
 
 function safeDecode(value: string): string {

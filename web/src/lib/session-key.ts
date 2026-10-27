@@ -52,6 +52,10 @@ export async function unlockWithPassword(
   return null
 }
 
+// 锁定即清掉内存草稿：里面可能已经装着解密出来的正文。
+import { editorDraft } from './draft'
+
 export function lockSession(): void {
   sessionKey.set(null)
+  editorDraft.clear()
 }
