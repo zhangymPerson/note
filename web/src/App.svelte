@@ -21,6 +21,7 @@
     forgot: '忘记密码',
     master: '主密码',
     categories: '分类管理',
+    info: '用户与信息',
     notFound: '页面不存在',
   }
 

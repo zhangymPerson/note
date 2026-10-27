@@ -11,11 +11,14 @@ import {
   getMasterPassword,
   getNote,
   listCategories,
+  listEncryptedCiphers,
   listNotes,
   newClientNoteID,
   renameCategory,
   setMasterPassword,
+  updateMasterQuestion,
   updateNote,
+  updateNoteCipher,
 } from './notes'
 
 interface Reply {
@@ -203,5 +206,44 @@ describe('正文长度按码点计', () => {
     expect(countCodePoints('')).toBe(0)
     expect(MAX_CONTENT_CODEPOINTS).toBe(2000)
     expect(countCodePoints('字'.repeat(2001))).toBe(2001)
+  })
+})
+
+// 信息页与改密迁移所需三个客户端方法；EncryptedItem 复用 reencrypt 的定义，不在此重复声明。
+describe('信息页客户端', () => {
+  it('listEncryptedCiphers GET /api/notes/encrypted 原样返回清单', async () => {
+    mockFetch([ok({ notes: [{ id: 'n1', cipher_b64: 'YWJj', kdf_params: '{}' }] })])
+    const result = await listEncryptedCiphers()
+    expect(calls[0].url).toBe('/api/notes/encrypted')
+    expect(calls[0].method).toBe('GET')
+    expect(result.notes[0].id).toBe('n1')
+  })
+
+  it('updateNoteCipher PUT 到 /api/notes/{id}/cipher 并带两个字段', async () => {
+    mockFetch([ok({ id: 'n1' })])
+    await updateNoteCipher('n 1', 'YWJj', '{"algo":"pbkdf2","iter":150000}')
+    const put = calls.find((call) => call.method === 'PUT')
+    expect(put?.url).toBe('/api/notes/n%201/cipher')
+    expect(JSON.parse(put?.body ?? '{}')).toEqual({
+      cipher_b64: 'YWJj',
+      kdf_params: '{"algo":"pbkdf2","iter":150000}',
+    })
+  })
+
+  it('updateNoteCipher 把 409 的 not_encrypted code 透出去', async () => {
+    mockFetch([
+      { status: 409, body: { error: { code: 'not_encrypted', message: '这条笔记不是加密笔记' } } },
+    ])
+    const error = await updateNoteCipher('n1', 'YWJj', '{}').catch((caught) => caught)
+    expect((error as ApiRequestError).code).toBe('not_encrypted')
+  })
+
+  it('updateMasterQuestion PUT /api/master-password/question 返回最新问题', async () => {
+    mockFetch([ok({ configured: true, question: '新问题' })])
+    const result = await updateMasterQuestion('新问题')
+    expect(result).toEqual({ configured: true, question: '新问题' })
+    const put = calls.find((call) => call.method === 'PUT')
+    expect(put?.url).toBe('/api/master-password/question')
+    expect(JSON.parse(put?.body ?? '{}')).toEqual({ question: '新问题' })
   })
 })

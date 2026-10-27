@@ -40,6 +40,12 @@ describe('matchRoute', () => {
     expect(matchRoute('/notes/abc#top')).toEqual({ name: 'detail', params: { id: 'abc' } })
   })
 
+  it('matches the info route', () => {
+    expect(matchRoute('/info')).toEqual({ name: 'info', params: {} })
+    expect(matchRoute('/info?x=1')).toEqual({ name: 'info', params: {} })
+    expect(matchRoute('/info/extra')).toEqual({ name: 'notFound', params: {} })
+  })
+
   it('decodes id segments', () => {
     expect(matchRoute('/notes/a%20b')).toEqual({ name: 'detail', params: { id: 'a b' } })
   })

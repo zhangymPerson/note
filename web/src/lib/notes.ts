@@ -1,5 +1,6 @@
 // 笔记与分类的前端 API 客户端：只搬运 JSON，密文对客户端同样是黑盒。
 import { deleteJSON, getJSON, postJSON, putJSON } from './api'
+import type { EncryptedItem } from './reencrypt'
 
 export interface NotePayload {
   title: string
@@ -124,4 +125,20 @@ export function getMasterPassword(): Promise<MasterPasswordState> {
 
 export function setMasterPassword(saltB64: string, question: string): Promise<void> {
   return postJSON<void>('/api/master-password', { salt_b64: saltB64, question })
+}
+
+// 改密迁移只用这三条：清单不含标题与正文，替换密文不动任何元数据。
+export function listEncryptedCiphers(): Promise<{ notes: EncryptedItem[] }> {
+  return getJSON<{ notes: EncryptedItem[] }>('/api/notes/encrypted')
+}
+
+export function updateNoteCipher(id: string, cipherB64: string, kdfParams: string): Promise<void> {
+  return putJSON<void>(`/api/notes/${encodeURIComponent(id)}/cipher`, {
+    cipher_b64: cipherB64,
+    kdf_params: kdfParams,
+  })
+}
+
+export function updateMasterQuestion(question: string): Promise<{ configured: boolean; question: string }> {
+  return putJSON<{ configured: boolean; question: string }>('/api/master-password/question', { question })
 }
