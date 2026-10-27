@@ -96,6 +96,7 @@
         <div>
           <label for="master-password">主密码</label>
           <input id="master-password" type="password" autocomplete="new-password" bind:value={password} />
+          <p class="muted">建议使用 12 个字符以上的长口令：密钥由它派生，弱口令会被离线爆破。</p>
           {#if fields.password}
             <p class="field-error" role="alert">{fields.password}</p>
           {/if}
