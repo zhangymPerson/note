@@ -87,19 +87,27 @@ ALTER TABLE notes ADD COLUMN category_id INTEGER REFERENCES categories(id);
 - 校验（400 + 字段级错误）：标题 1–200 字符；正文 ≤ 2000 字符（`utf8.RuneCountInString`）；分类名 1–30 字符非重复；密文 b64 ≤ 64 KiB；请求体上限沿用 decodeJSON。
 - 服务端永不明文参与：不校验密文内容合法性以外的任何密码字段；加密笔记的 cipher 对服务端是黑盒字节。
 
-## 5. 前端（Svelte 5，无新依赖）
+## 5. 前端（Svelte 5）
 
 - `lib/crypto.ts`：`deriveKey(password, salt, iter)`、`encryptNote/decryptNote`（WebCrypto，密钥仅内存变量）；`lib/session-key.ts` 持有当前会话密钥 + `lock()`。
 - 视图：列表（分类筛选条 + 搜索 + 分页 + 「已加密」标记）、详情（明文直显；加密未解锁显示密码框 + 助记问题折叠区 + 忘记密码说明）、编辑器（分类下拉、加密勾选、2000 字符计数、加密时若未配置主密码先跳设置页）、`/categories` 分类管理（增改删 + 计数 + 删除确认）、主密码设置页（密码/确认/助记问题 + 不可恢复警告勾选）。
 - 解锁后密钥驻留内存：同页浏览其他加密笔记不再询问；刷新或点顶栏「锁定」需重输。
 - 忘记密码页：展示问题文本，声明无找回，仅「返回」或「删除笔记」。
 
+### 5.1 Markdown 编写与预览
+
+- 新增依赖仅两个，随 Vite 构建内嵌，无外部请求：`marked`（Markdown→HTML）+ `dompurify`（HTML 净化）。
+- 后端零改动：`content`/密文明文态照旧存**原始 Markdown 文本**，2000 字符限制按 Markdown 源码计；渲染只发生在浏览器。
+- 编辑器：textarea 编写 + 实时预览（防抖 300ms）；窄屏（≤480px）切为「编写/预览」标签页。详情页同样渲染 Markdown。
+- 渲染管道是**全站唯一允许 `{@html}` 的位置**（`Markdown.svelte` 组件内）：`marked.parse(source)` → `DOMPurify.sanitize(html)` → `{@html}`；链接统一 `rel="noopener noreferrer"`；CSP `img-src 'self' data:` 已阻断外链图片。列表摘要与标题仍纯文本插值。
+- 不变量修订：AGENTS.md 与 TECH_DESIGN 1.2 的「前端禁止 `{@html}`」改为「`{@html}` 仅限 `Markdown.svelte`，输入必须经 `DOMPurify.sanitize`」；加密笔记解密后的正文同样走该管道。
+
 ## 6. 测试
 
 - Go：store（分类 CRUD/409/默认分类守卫、2000 字符边界、密文存取、迁移版本 4）、web httptest（全端点状态码、CSRF、加密笔记不返回 content、master-password 一次性）。
-- 前端 Vitest：crypto.ts 用 Node 内置 WebCrypto 做派生+加解密往返、错误密码拒绝、AAD 跨笔记移植失败、iter 边界；分类/列表 API 客户端映射。
-- 手工：Playwright 走「设主密码→加密→刷新→解锁→编辑→锁定→删分类被拒→CLI 解密同一笔记」全链路；`just test` + `just check` 为合入门槛。
+- 前端 Vitest：crypto.ts 用 Node 内置 WebCrypto 做派生+加解密往返、错误密码拒绝、AAD 跨笔记移植失败、iter 边界；markdown.ts 净化断言（`<img src=x onerror=...>` 无 onerror、`javascript:` 链接被剥、往返保真）；分类/列表 API 客户端映射。
+- 手工：Playwright 走「设主密码→加密→刷新→解锁→编辑→Markdown 预览→锁定→删分类被拒→CLI 解密同一笔记」全链路；`just test` + `just check` 为合入门槛。
 
 ## 7. 文档同步
 
-实现完成后：PRD 升 v1.3（上表偏离项 + 验收项增改：删 AC-10/16 会话类，增分类与 2k 验收），TECH_DESIGN 的 8.4/8.5 替换为本设计第 2、5 节内容。
+实现完成后：PRD 升 v1.3（上表偏离项 + Markdown 渲染移出非目标 + 验收项增改：删 AC-10/16 会话类，增分类、2k、Markdown 净化验收），TECH_DESIGN 的 8.4/8.5 替换为本设计第 2、5 节内容，1.2 不变量按 5.1 修订；AGENTS.md 同步「`{@html}` 仅限 Markdown.svelte」表述。
