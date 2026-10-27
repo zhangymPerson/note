@@ -32,6 +32,7 @@ func New(cfg config.Config, st *store.Store, dist fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/categories/{id}", app.handleDeleteCategory)
 	mux.HandleFunc("GET /api/master-password", app.handleGetMasterPassword)
 	mux.HandleFunc("POST /api/master-password", app.handleSetMasterPassword)
+	mux.HandleFunc("PUT /api/master-password/question", app.handleUpdateMasterQuestion)
 	mux.HandleFunc("GET /api/stats", app.handleStats)
 	mux.Handle("GET /assets/", serveAssets(dist))
 	mux.HandleFunc("GET /", spaHandler(dist))

@@ -7,10 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // masterSaltLen 是 PBKDF2 输入盐的字节数，与前端 crypto.ts 约定一致。
 const masterSaltLen = 16
+
+// maxMasterQuestionRunes 与 web 层 handleSetMasterPassword 的提示同值。
+const maxMasterQuestionRunes = 100
+
+// ErrInvalidMasterQuestion 表示助记问题为空或超长。
+var ErrInvalidMasterQuestion = errors.New("invalid master password question")
 
 // ErrMasterPasswordExists 表示主密码配置已写入（只允许配置一次）。
 var ErrMasterPasswordExists = errors.New("master password already configured")
@@ -72,6 +79,35 @@ func (s *Store) SetMasterPassword(ctx context.Context, salt []byte, question str
 	}
 	if n, err := res.RowsAffected(); err == nil && n != 1 {
 		return MasterPassword{}, ErrMasterPasswordExists
+	}
+	return master, nil
+}
+
+// UpdateMasterQuestion 只改助记问题：盐与创建时间绝不变动，否则尚未迁移的笔记当场不可解。
+func (s *Store) UpdateMasterQuestion(ctx context.Context, question string) (MasterPassword, error) {
+	trimmed := strings.TrimSpace(question)
+	if trimmed == "" || utf8.RuneCountInString(trimmed) > maxMasterQuestionRunes {
+		return MasterPassword{}, fmt.Errorf("master password question must be 1-%d characters: %w",
+			maxMasterQuestionRunes, ErrInvalidMasterQuestion)
+	}
+
+	res, err := s.db.ExecContext(ctx, `UPDATE master_password SET question = ? WHERE id = 1`, trimmed)
+	if err != nil {
+		return MasterPassword{}, fmt.Errorf("update master password question: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return MasterPassword{}, fmt.Errorf("update master password question rows affected: %w", err)
+	}
+	if n == 0 {
+		return MasterPassword{}, ErrMasterPasswordMissing
+	}
+	master, ok, err := s.GetMasterPassword(ctx)
+	if err != nil {
+		return MasterPassword{}, err
+	}
+	if !ok {
+		return MasterPassword{}, ErrMasterPasswordMissing
 	}
 	return master, nil
 }

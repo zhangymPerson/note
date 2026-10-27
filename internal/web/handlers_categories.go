@@ -14,6 +14,8 @@ import (
 const (
 	maxCategoryNameRunes = 30
 	masterSaltBytes      = 16
+	// maxMasterQuestionRunes 与 store 层同名常量同值，两处各自守卫。
+	maxMasterQuestionRunes = 100
 )
 
 // handleListCategories 返回全部分类及每个分类的笔记数。
@@ -173,7 +175,7 @@ func (app *application) handleSetMasterPassword(w http.ResponseWriter, r *http.R
 	question := strings.TrimSpace(body.Question)
 	if question == "" {
 		fields["question"] = "请填写助记问题"
-	} else if utf8.RuneCountInString(question) > 100 {
+	} else if utf8.RuneCountInString(question) > maxMasterQuestionRunes {
 		fields["question"] = "助记问题请控制在 100 个字以内"
 	}
 	if len(fields) > 0 {
@@ -183,11 +185,46 @@ func (app *application) handleSetMasterPassword(w http.ResponseWriter, r *http.R
 
 	if _, err := app.store.SetMasterPassword(r.Context(), salt, question); err != nil {
 		if errors.Is(err, store.ErrMasterPasswordExists) {
-			writeError(w, http.StatusConflict, "master_password_exists", "主密码已设置，无法再次修改")
+			writeError(w, http.StatusConflict, "master_password_exists", "主密码已设置，如需更换请到信息页的主密码卡片")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal", "保存主密码配置失败，请稍后重试")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"configured": true, "question": question})
+}
+
+// handleUpdateMasterQuestion 单独修改助记问题：问题本就是明文存储，不要求旧密码，
+// 也绝不改动盐——换盐会让尚未迁移的加密笔记当场不可解。
+func (app *application) handleUpdateMasterQuestion(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Question string `json:"question"`
+	}
+	if err := decodeJSON(w, r, &body, 4096); err != nil {
+		return
+	}
+
+	question := strings.TrimSpace(body.Question)
+	if question == "" {
+		writeValidationError(w, map[string]string{"question": "请填写助记问题"})
+		return
+	}
+	if utf8.RuneCountInString(question) > maxMasterQuestionRunes {
+		writeValidationError(w, map[string]string{"question": "助记问题请控制在 100 个字以内"})
+		return
+	}
+
+	master, err := app.store.UpdateMasterQuestion(r.Context(), question)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrMasterPasswordMissing):
+			writeError(w, http.StatusConflict, "master_password_missing", "请先设置主密码再修改助记问题")
+		case errors.Is(err, store.ErrInvalidMasterQuestion):
+			writeValidationError(w, map[string]string{"question": "助记问题请控制在 100 个字以内"})
+		default:
+			writeError(w, http.StatusInternalServerError, "internal", "保存助记问题失败，请稍后重试")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "question": master.Question})
 }
