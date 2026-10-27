@@ -43,14 +43,14 @@ export async function getJSON<T>(path: string): Promise<T> {
   return parseResponse<T>(response)
 }
 
-export async function putJSON<T>(path: string, payload: unknown): Promise<T> {
+async function sendJSON<T>(method: string, path: string, payload: unknown): Promise<T> {
   if (!csrfToken) {
     await fetchCsrfToken()
   }
 
   const send = () =>
     fetch(path, {
-      method: 'PUT',
+      method,
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       body: JSON.stringify(payload),
     })
@@ -62,4 +62,33 @@ export async function putJSON<T>(path: string, payload: unknown): Promise<T> {
     response = await send()
   }
   return parseResponse<T>(response)
+}
+
+export async function putJSON<T>(path: string, payload: unknown): Promise<T> {
+  return sendJSON<T>('PUT', path, payload)
+}
+
+export async function postJSON<T>(path: string, payload: unknown): Promise<T> {
+  return sendJSON<T>('POST', path, payload)
+}
+
+// deleteJSON 的 204 响应没有正文，不能走 parseResponse。
+export async function deleteJSON(path: string): Promise<void> {
+  if (!csrfToken) {
+    await fetchCsrfToken()
+  }
+
+  const send = () =>
+    fetch(path, { method: 'DELETE', headers: { 'X-CSRF-Token': csrfToken } })
+
+  let response = await send()
+  if (response.status === 403) {
+    await fetchCsrfToken()
+    response = await send()
+  }
+  if (!response.ok) {
+    await parseResponse<never>(response)
+  }
+  // DELETE 成功时是 204 无正文
+  await response.body?.cancel()
 }

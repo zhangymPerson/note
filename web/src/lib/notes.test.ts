@@ -1,0 +1,167 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { ApiRequestError } from './api'
+import {
+  createCategory,
+  createNote,
+  deleteCategory,
+  deleteNote,
+  getMasterPassword,
+  getNote,
+  listCategories,
+  listNotes,
+  renameCategory,
+  setMasterPassword,
+  updateNote,
+} from './notes'
+
+interface Reply {
+  status?: number
+  body?: unknown
+}
+
+interface Call {
+  url: string
+  method: string
+  headers: Record<string, string>
+  body?: string
+}
+
+let calls: Call[] = []
+let nextReply = 0
+
+function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+}
+
+function mockFetch(replies: Reply[]): void {
+  calls = []
+  nextReply = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.url
+      calls.push({
+        url,
+        method: (init?.method ?? 'GET').toUpperCase(),
+        headers: (init?.headers ?? {}) as Record<string, string>,
+        body: init?.body as string | undefined,
+      })
+
+      if (url.split('?')[0] === '/api/csrf') return jsonResponse({ token: 'tok-' + calls.length }, 200)
+
+      const reply = replies[nextReply] ?? {}
+      nextReply += 1
+      if (reply.status === 204) return new Response(null, { status: 204 })
+      return jsonResponse(reply.body ?? {}, reply.status ?? 200)
+    }),
+  )
+}
+
+const ok = (body: unknown): Reply => ({ status: 200, body })
+
+beforeEach(() => {
+  mockFetch([])
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('listNotes', () => {
+  it('只把非空条件拼进查询串', async () => {
+    mockFetch([ok({ items: [], total: 0, page: 1, per_page: 20 })])
+    const page = await listNotes({ q: '测试', category: 3, page: 2 })
+    expect(page.per_page).toBe(20)
+    expect(calls[0].url).toContain('q=' + encodeURIComponent('测试'))
+    expect(calls[0].url).toContain('category=3')
+    expect(calls[0].url).toContain('page=2')
+  })
+
+  it('全空条件不产生查询串', async () => {
+    mockFetch([ok({ items: [], total: 0, page: 1, per_page: 20 })])
+    await listNotes({})
+    expect(calls[0].url).toBe('/api/notes')
+  })
+})
+
+describe('createNote', () => {
+  it('POST 携带 CSRF 令牌与 JSON 正文', async () => {
+    mockFetch([ok({ id: 'n1', title: '标题', encrypted: false })])
+    const note = await createNote({ title: '标题', content: '正文' })
+    expect(note.id).toBe('n1')
+    const post = calls.find((call) => call.method === 'POST')
+    expect(post?.url).toBe('/api/notes')
+    expect(post?.headers['X-CSRF-Token']).toMatch(/^tok-/)
+    expect(JSON.parse(post?.body ?? '{}')).toEqual({ title: '标题', content: '正文' })
+  })
+
+  it('403 后刷新令牌并重试一次', async () => {
+    mockFetch([
+      { status: 403, body: { error: { code: 'csrf_invalid', message: '令牌失效' } } },
+      { status: 201, body: { id: 'n2' } },
+    ])
+    const note = await createNote({ title: '标题' })
+    expect(note.id).toBe('n2')
+    const posts = calls.filter((call) => call.method === 'POST')
+    expect(posts).toHaveLength(2)
+    expect(posts[1].headers['X-CSRF-Token']).not.toBe(posts[0].headers['X-CSRF-Token'])
+  })
+})
+
+describe('deleteNote', () => {
+  it('204 无响应体也返回 undefined', async () => {
+    mockFetch([{ status: 204 }])
+    await expect(deleteNote('n3')).resolves.toBeUndefined()
+    expect(calls.some((call) => call.method === 'DELETE' && call.url === '/api/notes/n3')).toBe(true)
+  })
+})
+
+describe('错误透传', () => {
+  it('后端 error.code 原样带出', async () => {
+    mockFetch([
+      { status: 409, body: { error: { code: 'category_not_empty', message: '分类下仍有 3 条笔记' } } },
+    ])
+    const error = await deleteCategory(4).catch((caught) => caught)
+    expect(error).toBeInstanceOf(ApiRequestError)
+    expect((error as ApiRequestError).code).toBe('category_not_empty')
+    expect((error as ApiRequestError).message).toBe('分类下仍有 3 条笔记')
+  })
+})
+
+describe('分类与主密码', () => {
+  it('listCategories 直接返回数组', async () => {
+    mockFetch([ok([{ id: 1, name: '未分类', note_count: 0 }])])
+    await expect(listCategories()).resolves.toEqual([{ id: 1, name: '未分类', note_count: 0 }])
+  })
+
+  it('createCategory POST、renameCategory PUT', async () => {
+    mockFetch([
+      { status: 201, body: { id: 5, name: '工作', note_count: 0 } },
+      ok([{ id: 5, name: '生活', note_count: 0 }]),
+    ])
+    await expect(createCategory('工作')).resolves.toMatchObject({ id: 5 })
+    await expect(renameCategory(5, '生活')).resolves.toEqual([{ id: 5, name: '生活', note_count: 0 }])
+    expect(calls.find((call) => call.method === 'POST')?.url).toBe('/api/categories')
+    expect(calls.find((call) => call.method === 'PUT')?.url).toBe('/api/categories/5')
+  })
+
+  it('getMasterPassword 带回公开盐', async () => {
+    mockFetch([ok({ configured: true, salt_b64: 'AAAAAAAAAAAAAAAAAAAAAA==', question: '生日' })])
+    await expect(getMasterPassword()).resolves.toMatchObject({ salt_b64: 'AAAAAAAAAAAAAAAAAAAAAA==' })
+  })
+
+  it('setMasterPassword POST 一次性写入', async () => {
+    mockFetch([{ status: 201, body: { configured: true, question: '生日' } }])
+    await setMasterPassword('AAAAAAAAAAAAAAAAAAAAAA==', '生日')
+    const post = calls.find((call) => call.method === 'POST')
+    expect(JSON.parse(post?.body ?? '{}')).toEqual({ salt_b64: 'AAAAAAAAAAAAAAAAAAAAAA==', question: '生日' })
+  })
+
+  it('getNote / updateNote 走 /api/notes/{id}', async () => {
+    mockFetch([ok({ id: 'n9', title: '旧', rev: 1 }), ok({ id: 'n9', title: '新', rev: 2 })])
+    await expect(getNote('n9')).resolves.toMatchObject({ rev: 1 })
+    await expect(updateNote('n9', { title: '新' })).resolves.toMatchObject({ rev: 2 })
+    expect(calls.some((call) => call.method === 'PUT' && call.url === '/api/notes/n9')).toBe(true)
+  })
+})
