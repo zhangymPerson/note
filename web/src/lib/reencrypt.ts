@@ -6,6 +6,8 @@ import { KDF_PARAMS, DecryptError } from './crypto'
 export interface EncryptedItem {
   id: string
   cipher_b64: string
+  // 迁移只把它写回库里，不据此派生旧密钥：旧/新密钥都由调用方按当前应用参数各派生一次。
+  // 因此上调 KDF_PARAMS 之后，改密会把改造前的笔记判为 failed_old_key（见设计文档 §4）。
   kdf_params?: string
 }
 
@@ -78,6 +80,25 @@ export async function planMigration(
     }
   }
   return pending
+}
+
+/** 新密钥还解不开几条。复核请求本身失败时退回 fallback，绝不把已经落地的迁移报成失败。 */
+export async function countRemaining(
+  items: EncryptedItem[],
+  newKey: CryptoKey,
+  deps: ReencryptDeps,
+  fallback: number,
+): Promise<number> {
+  try {
+    return (await planMigration(items, newKey, deps)).length
+  } catch {
+    return fallback
+  }
+}
+
+/** 报告里有 failed_old_key，说明这些条目仍受上一代口令保护，续跑必须输入它，新密码只会再失败一次。 */
+export function needsPreviousPassword(report: MigrationReport): boolean {
+  return report.rows.some((row) => row.outcome === 'failed_old_key')
 }
 
 export async function runMigration(

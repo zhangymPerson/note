@@ -9,7 +9,8 @@
     updateNoteCipher,
   } from '../lib/notes'
   import {
-    planMigration,
+    countRemaining,
+    needsPreviousPassword,
     runMigration,
     verifyOldPassword,
     type MigrationReport,
@@ -158,32 +159,44 @@
         if (progress !== null) progress = { done: progress.done + 1, total: items.length }
       })
       sessionKey.set(newKey)
+      // 迁移已经落库：报告先落地，后面两个附带步骤失败都不能让界面以为整次改密没成功
+      report = result
+      remaining = result.remaining
 
       const trimmedQuestion = newQuestion.trim()
       if (trimmedQuestion !== '') {
-        const updated = await updateMasterQuestion(trimmedQuestion)
-        question = updated.question
-        newQuestion = ''
+        try {
+          const updated = await updateMasterQuestion(trimmedQuestion)
+          question = updated.question
+          newQuestion = ''
+        } catch (cause) {
+          pwdError = `主密码已更新，但助记问题没改成功：${message(cause)}`
+        }
       }
 
-      // 复核：库里还剩几条新密钥解不开
-      const recheck = (await listEncryptedCiphers()).notes
-      const pending = await planMigration(recheck, newKey, deps)
-      report = result
-      remaining = pending.length
-      encryptedCount = recheck.length
+      // 复核：库里还剩几条新密钥解不开；清单请求失败就沿用迁移报告的计数
+      try {
+        const recheck = (await listEncryptedCiphers()).notes
+        encryptedCount = recheck.length
+        remaining = await countRemaining(recheck, newKey, deps, result.remaining)
+      } catch {
+        // 不去改动已经成立的结论，迁移状态卡照常按报告计数显示
+      }
 
-      if (pending.length === 0) {
+      if (remaining === 0) {
         toast(`主密码已更新，${result.done} 条笔记已重新加密`)
         oldPassword = ''
         newPassword = ''
         confirm = ''
         acknowledged = false
-        closePasswordForm()
+        if (pwdError === '') closePasswordForm()
+      } else if (needsPreviousPassword(result)) {
+        pwdError = `还有 ${remaining} 条笔记仍受上一个主密码保护，点「继续迁移」后请输入上一个主密码。`
       } else {
-        pwdError = `还有 ${pending.length} 条笔记没迁移完，可以点「继续迁移」重试。`
+        pwdError = `还有 ${remaining} 条笔记没迁移完，可以点「继续迁移」重试。`
       }
     } catch (cause) {
+      // 只有「迁移没跑完」才会走到这里：报告还没落地时保持原样，界面报失败是对的
       pwdError = message(cause)
     } finally {
       busy = false
@@ -191,9 +204,12 @@
     }
   }
 
-  // 中途退出后接着跑：新密码此刻就是旧密码。
+  // 中途退出后接着跑：全是提交失败时新密码此刻就是旧密码；
+  // 但 failed_old_key 那几条仍受上一代口令保护，预填新密码等于让用户再撞一次同样的失败。
+  const previousNeeded = $derived(report !== null && needsPreviousPassword(report))
+
   function resume(): void {
-    oldPassword = newPassword === '' ? oldPassword : newPassword
+    oldPassword = previousNeeded ? '' : newPassword === '' ? oldPassword : newPassword
     newPassword = ''
     confirm = ''
     formOpen = true
@@ -377,7 +393,9 @@
           {/each}
         </ul>
         <div class="actions">
-          <button class="button" type="button" onclick={resume}>继续迁移</button>
+          <button class="button" type="button" onclick={resume}>
+            {previousNeeded ? '继续迁移（请输入上一个主密码）' : '继续迁移'}
+          </button>
         </div>
       </div>
     {/if}

@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { ApiRequestError } from './api'
 import { KDF_PARAMS, bytesToB64, decryptNoteContent, deriveKey, encryptNoteContent } from './crypto'
 import {
+  countRemaining,
+  needsPreviousPassword,
   planMigration,
   runMigration,
   verifyOldPassword,
   type EncryptedItem,
+  type MigrationReport,
   type MigrationRow,
   type ReencryptDeps,
 } from './reencrypt'
@@ -260,5 +263,56 @@ describe('runMigration', () => {
 
     expect(seen).toEqual(report.rows)
     expect(seen.map((row) => row.outcome)).toEqual(['done', 'already_done'])
+  })
+})
+
+describe('countRemaining', () => {
+  it('复核请求本身失败时退回迁移报告的计数，不抛异常', async () => {
+    const fresh = await keyFor('新密码')
+    const rec = recorder()
+    rec.deps.decrypt = () => {
+      throw new Error('Failed to fetch')
+    }
+
+    const remaining = await countRemaining([await sealed(fresh, 'n-1', '甲')], fresh, rec.deps, 2)
+
+    expect(remaining).toBe(2)
+  })
+
+  it('复核成功时按新密钥实际解不开的条数计数', async () => {
+    const other = await keyFor('别的密码')
+    const fresh = await keyFor('新密码')
+    const items = [await sealed(fresh, 'n-1', '已迁移'), await sealed(other, 'n-2', '没迁移')]
+
+    expect(await countRemaining(items, fresh, recorder().deps, 0)).toBe(1)
+  })
+})
+
+describe('needsPreviousPassword', () => {
+  it('有 failed_old_key 时续跑要用上一个密码，新密码填进旧密码栏必然再失败', () => {
+    const report: MigrationReport = {
+      rows: [
+        { id: 'n-1', outcome: 'done' },
+        { id: 'n-2', outcome: 'failed_old_key' },
+      ],
+      done: 1,
+      skipped: 0,
+      failed: 1,
+      remaining: 1,
+    }
+
+    expect(needsPreviousPassword(report)).toBe(true)
+  })
+
+  it('只有 failed_network 时新密码已经是旧密码，可以直接续跑', () => {
+    const report: MigrationReport = {
+      rows: [{ id: 'n-1', outcome: 'failed_network', message: 'Failed to fetch' }],
+      done: 0,
+      skipped: 0,
+      failed: 1,
+      remaining: 1,
+    }
+
+    expect(needsPreviousPassword(report)).toBe(false)
   })
 })

@@ -662,16 +662,18 @@ key = PBKDF2-HMAC-SHA256(normalized, master_salt, iter=150000, keylen=32) → AE
 3. `verifyOldPassword`：按清单顺序逐条试解，**第一条能解开的即通过**。不能只试第一条——库里可能混着更早一次改密留下的笔记，先撞上那条就会把正确的旧口令误判成错误。全部试完仍无一可解才报「主密码不正确或数据已损坏」，此时不写入会话密钥、不写任何密文。清单为空则跳过验证（没有可验证的东西），退化为「新口令两次一致」。
 4. 用新口令派生密钥 → `planMigration` 先用**新**密钥逐条试解，能解开的判为 `already_done`，其余为待办。这一步让整条流程天然幂等。
 5. `runMigration` 逐条 `decrypt(旧) → encrypt(新) → PUT /api/notes/{id}/cipher`，带进度回调；单条失败记录后继续，不中断。落定归入五类：`done` / `already_done` / `skipped_gone`（PUT 返回 409 `not_encrypted` 或 404，迁移途中笔记被删）/ `failed_old_key` / `failed_network`。汇总为「成功 N · 跳过 M · 失败 K」，`remaining = failed_old_key + failed_network`。
-6. `sessionKey.set(新密钥)` 后重读清单再跑一次 `planMigration` 复核：`remaining === 0` 提示成功，否则界面出现迁移状态卡并给「继续迁移」。
+6. `sessionKey.set(新密钥)` 之后**先把迁移报告落地**（`report = result`、`remaining = result.remaining`），再跑两件附带的事：改助记问题、重读清单用 `countRemaining` 复核还剩几条解不开。这两步各自 `try/catch`，失败只追加一句提示，绝不把已经成功的改密报成失败——否则用户重试时会拿着真旧口令撞 `verifyOldPassword`，被界面告知「主密码不正确或加密数据已损坏」，而那条口令其实已经被新口令取代了。`countRemaining` 在复核请求自身失败（非 `DecryptError`）时退回迁移报告的计数。
+7. `remaining === 0` 提示成功并收起表单；否则界面出现迁移状态卡并给「继续迁移」。续跑该填哪个口令由 `needsPreviousPassword(report)` 判定：报告里有 `failed_old_key` 就说明这些条目仍受**上一代**口令保护，按钮写成「继续迁移（请输入上一个主密码）」且旧密码栏留空——预填刚设的新密码等于让用户再撞一次同样的失败；只有 `failed_network` 时新密码此刻就是旧密码，才预填它。
 
 设计取舍：
 
 - **独立端点而非 `PUT /api/notes/{id}` 加标志**：`store.UpdateNote` 无条件重写 `title`（`normalizeTitle` 要求非空）与 `updated_at`，加标志等于在同一校验函数里塞第二套语义；`UpdateNoteCipher` 只更新 `cipher / kdf_params / kdf_salt`。
 - **不动 `updated_at` 与 `rev`**：改一次口令不该让全部笔记在「按更新时间倒序」的列表里排到最前，那是对用户可见的假修订。
-- **不换全局盐**：`master_password.salt` 保持首次设置的值。换盐会让尚未迁移的笔记当场不可解（`notes.kdf_salt` 只是它的冗余副本），盐不变则该列无需迁移。重加密时把每条笔记的 `kdf_params` 刷成当前应用参数，KDF 强度可以借改密提升。
+- **不换全局盐**：`master_password.salt` 保持首次设置的值。换盐会让尚未迁移的笔记当场不可解（`notes.kdf_salt` 只是它的冗余副本），盐不变则该列无需迁移。重加密把每条笔记的 `kdf_params` 统一刷成当前应用参数——这只是**归一化**，不是提升：改密的旧密钥由调用方按当前 `KDF_PARAMS` 派生一次，从不读笔记各自的 `kdf_params`（`reencrypt.ts` 的 `EncryptedItem.kdf_params` 只回写不参与派生）。因此**上调 `KDF_PARAMS.iter` 会让改造前的笔记在改密时全部判为 `failed_old_key`**，即使用户输入的口令完全正确（单条笔记的解锁不受影响，那条路径按笔记自身参数派生，见 6.6）。真要借改密提升 KDF 强度，得先让迁移按笔记参数分别派生旧密钥。
 - **没有 `key_version` 列，也没有迁移状态机**：GCM 认证标签本身就是校验器，试解足以判定某条笔记当前由哪把口令保护；中断后重跑靠 `already_done` 分类自然续上，无需任何持久化状态。
 - **中断语义的实测边界**：中途关页面后把新口令填进「旧口令」栏能续跑，因为已迁移的笔记会被判成 `already_done` 原样跳过。但若清单里同时存在「更早一次口令保护的笔记」与「本次已迁移的笔记」，一次续跑只能推进其中一类，另一类以 `failed_old_key` 如实列在迁移状态卡里且不被写坏（实测：该分支跑完后两条密文字节逐字不变）。界面文案「这条笔记不是用刚才那个旧密码加密的」就是为此而写。
 - 口令与新派生密钥只活在函数局部变量：不进 toast、日志、`localStorage`/`sessionStorage`/IndexedDB；`PUT /cipher` 的请求体不会入日志（`accessLog` 从不记 body）；CSRF 令牌过期由 `api.ts` 的 403 重取重试兜住，逐条 PUT 天然继承。
+- **已知边界：迁移途中不防并发编辑**。`PUT /cipher` 不带 `rev` 校验，它把「迁移开始时读到的那份明文」重新加密后写回。若用户在同一时刻的另一个页签编辑并保存了某条笔记，那条编辑会被这次写回覆盖掉。规格 §10 明确不做并发保护（单用户、单机、监听回环），迁移窗口以秒计且界面要求勾选「过程中请勿关闭页面」，本版接受；真要收紧，给 `UpdateNoteCipher` 加 `rev` 条件即可。
 
 ---
 
@@ -1266,7 +1268,7 @@ Referrer-Policy: no-referrer
   - `lib/crypto.test.ts`：口令 NFC、加解密往返、错误口令与篡改密文归并为 `DecryptError`、KDF 参数边界、base64 工具；
   - `lib/markdown.test.ts`：GFM 渲染、脚本与 `onerror` 被净化、外链补 `noopener noreferrer`；
   - `lib/draft.test.ts`、`lib/notes.test.ts`、`lib/stats.test.ts`、`lib/theme.test.ts`、`lib/toast.test.ts`：内存草稿单槽语义、API 载荷与错误映射、热力图分桶、主题持久化与提示队列；
-  - `lib/reencrypt.test.ts`：注入假 `decrypt/encrypt/putCipher` 穷尽 6.9 的五类落定；幂等续跑（第二次跑全是 `already_done`）；无加密笔记时跳过旧口令验证；`remaining` 汇总正确；**旧口令只能解开清单靠后那条时验证仍须通过**（防「只试第一条」的回归）；整份报告序列化后不含正文；
+  - `lib/reencrypt.test.ts`：注入假 `decrypt/encrypt/putCipher` 穷尽 6.9 的五类落定；幂等续跑（第二次跑全是 `already_done`）；无加密笔记时跳过旧口令验证；`remaining` 汇总正确；**旧口令只能解开清单靠后那条时验证仍须通过**（防「只试第一条」的回归）；整份报告序列化后不含正文；`countRemaining` 在复核请求自身失败时退回迁移报告的计数（不把已成功的改密报成失败）；`needsPreviousPassword` 只在报告含 `failed_old_key` 时要求上一个口令；
   - `lib/info.test.ts`：`buildRows` 的 14 行中文键、缺失值统一「未知」、字节数与运行时长格式化、`allow_remote` 的是/否；
   - `lib/onboarding.test.ts`：`decideStep(nameSet, masterConfigured)` 的四个组合；
   - `lib/settings.test.ts`：并行读两个端点、主密码端点失败必须整体进 `error` 态（这条先用旧实现跑出 RED——引导判据不能建立在半套数据上）；
@@ -1284,11 +1286,11 @@ Referrer-Policy: no-referrer
 - 残留：哨兵串扫描 `.db` 与 `.db-wal`，加密正文不出现，对照的明文笔记正文照常出现。
 - 日志：抓取 access log，确认无正文、无口令、无密文、无 Cookie。
 
-v1.4 的信息页与改密链路由 `.run/info-e2e.mjs` 覆盖（同样 Playwright-core + Edge headless，独立端口与 `.run/e2e-info.db`，57 项断言），三次启动分别验证：
+v1.4 的信息页与改密链路由 `.run/info-e2e.mjs` 覆盖（同样 Playwright-core + Edge headless，独立端口与 `.run/e2e-info.db`，60 项断言），三次启动分别验证：
 
 - **空库引导**：步骤 1 只填名字就刷新，必须仍在引导页且直接落在步骤 2；两次口令不一致或未勾选确认时 `POST` 次数为 0；成功后 `master_password` 只有一行、16 字节盐与 `GET /api/master-password.salt_b64` 一致；浏览器存储里没有口令与密钥。
 - **已配置形态**：用两个页签确定性地复现「POST 已成功、解锁前刷新」—— parked 在步骤 1 的页签存名字时，另一页签已完成引导，此时步骤 2 必须渲染解锁输入框且 `POST` 次数为 0（重复 POST 会 409，缺这条分支就把用户永久卡在第二步）。老库（已配主密码、`name_set: false`）重启后填完名字直接进主界面，无死路。
-- **改密主链路**：`/info` 的 14 行运行信息含真实 commit hash 与 UTC 构建日期 → 改名（UI / `/api/settings` / 配置文件三处一致）→ 改助记问题（盐不变）→ 错误旧口令被拦下且两条密文的 `cipher`/`updated_at`/`rev` 全不变 → 正确旧口令跑完迁移（密文全换、元数据不动）→ 刷新后用新口令解锁两条 → **中断续跑**：用 `page.route` 让第二条 `PUT /cipher` 失败，界面给出「成功 1 · 跳过 0 · 失败 1（还有 1 条未迁移）」；刷新后状态卡不在任何浏览器存储留痕；用最新口令续跑时未迁移那条判为 `failed_old_key` 且字节不变，用它的真实旧口令续跑后状态卡消失、两条都可用新口令解开。收尾对 `.db` 与 `-wal` 检索本次用过的 4 个口令与 2 段加密正文，全部不出现，对照明文哨兵照常出现。
+- **改密主链路**：`/info` 的 14 行运行信息含真实 commit hash 与 UTC 构建日期 → 改名（UI / `/api/settings` / 配置文件三处一致）→ 改助记问题（盐不变）→ 错误旧口令被拦下且两条密文的 `cipher`/`updated_at`/`rev` 全不变 → 正确旧口令跑完迁移（密文全换、元数据不动）→ 刷新后用新口令解锁两条 → **中断续跑**：用 `page.route` 让第二条 `PUT /cipher` 失败，界面给出「成功 1 · 跳过 0 · 失败 1（还有 1 条未迁移）」；刷新后状态卡不在任何浏览器存储留痕；用最新口令续跑时未迁移那条判为 `failed_old_key` 且字节不变，此时在浏览器里点状态卡的「继续迁移」，断言按钮文案是「继续迁移（请输入上一个主密码）」且点完旧密码栏为空（不预填刚设的新密码）；再用它的真实旧口令续跑后状态卡消失、两条都可用新口令解开。收尾对 `.db` 与 `-wal` 检索本次用过的 4 个口令与 2 段加密正文，全部不出现，对照明文哨兵照常出现。
 
 ### 12.4 安全与其它检查
 
