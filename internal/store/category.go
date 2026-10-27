@@ -37,14 +37,16 @@ func (e ErrCategoryNotEmpty) Error() string {
 }
 
 // ListCategories 按 id 升序返回全部分类，含每个分类的笔记数。
+// 默认分类的笔记数包含 category_id IS NULL 的笔记——「未分类」就是这么存的。
 func (s *Store) ListCategories(ctx context.Context) ([]Category, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT c.id, c.name,
 		        COUNT(n.id) AS note_count
          FROM categories c
          LEFT JOIN notes n ON n.category_id = c.id
+                            OR (c.id = ? AND n.category_id IS NULL)
          GROUP BY c.id, c.name
-         ORDER BY c.id`)
+         ORDER BY c.id`, defaultCategoryID)
 	if err != nil {
 		return nil, fmt.Errorf("list categories: %w", err)
 	}

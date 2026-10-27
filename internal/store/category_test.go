@@ -77,7 +77,7 @@ func TestCategoryCRUDAndCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list categories after notes: %v", err)
 	}
-	if cats[0].NoteCount != 0 || cats[1].NoteCount != 2 || cats[2].NoteCount != 0 {
+	if cats[0].NoteCount != 1 || cats[1].NoteCount != 2 || cats[2].NoteCount != 0 {
 		t.Fatalf("unexpected note counts: %+v", cats)
 	}
 
@@ -97,6 +97,50 @@ func TestCategoryCRUDAndCounts(t *testing.T) {
 	}
 	if err := st.DeleteCategory(ctx, 999); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound deleting missing category, got %v", err)
+	}
+}
+
+// 「未分类」在库里是 notes.category_id IS NULL（见 sql/0004 头注释），与 id=1 行
+// 展示等价：计数与筛选都必须把 NULL 算进默认分类，否则未分类笔记既看不见也统计不到。
+func TestDefaultCategoryCoversUncategorizedNotes(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	work, err := st.CreateCategory(ctx, "work")
+	if err != nil {
+		t.Fatalf("create category work: %v", err)
+	}
+	insertTestNote(t, st, "n1", nil)
+	insertTestNote(t, st, "n2", nil)
+	insertTestNote(t, st, "n3", work.ID)
+
+	cats, err := st.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
+	if cats[0].ID != 1 || cats[0].NoteCount != 2 {
+		t.Fatalf("expected default category to count uncategorized notes, got %+v", cats[0])
+	}
+
+	uncat, err := st.ListNotes(ctx, "", defaultCategoryID, 1)
+	if err != nil {
+		t.Fatalf("list notes in default category: %v", err)
+	}
+	if uncat.Total != 2 || len(uncat.Items) != 2 {
+		t.Fatalf("expected 2 uncategorized notes, got total %d items %d", uncat.Total, len(uncat.Items))
+	}
+	for _, item := range uncat.Items {
+		if item.CategoryID != nil {
+			t.Fatalf("expected nil category id, got %+v", item)
+		}
+	}
+
+	all, err := st.ListNotes(ctx, "", 0, 1)
+	if err != nil {
+		t.Fatalf("list all notes: %v", err)
+	}
+	if all.Total != 3 {
+		t.Fatalf("expected 3 notes total, got %d", all.Total)
 	}
 }
 

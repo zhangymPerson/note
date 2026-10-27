@@ -246,7 +246,12 @@ func (s *Store) ListNotes(ctx context.Context, q string, categoryID int64, page 
 	}
 	if categoryID > 0 {
 		args = append(args, categoryID)
-		where = append(where, `n.category_id = ?`)
+		if categoryID == defaultCategoryID {
+			// 未分类的笔记存的是 category_id IS NULL，点默认分类时要把它们一起带出来
+			where = append(where, `(n.category_id = ? OR n.category_id IS NULL)`)
+		} else {
+			where = append(where, `n.category_id = ?`)
+		}
 	}
 	clause := strings.Join(where, " AND ")
 
