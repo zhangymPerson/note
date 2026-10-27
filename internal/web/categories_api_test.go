@@ -203,12 +203,16 @@ func TestCategoriesAPI(t *testing.T) {
 }
 
 func TestMasterPasswordStoreSeeded(t *testing.T) {
-	// 守护 seedStore 的用法：主密码写入后 POST 必须 409，且不回显任何密码学秘密
+	// 守护 seedStore 的用法：主密码写入后 POST 必须 409；GET 回显公开盐供浏览器派生密钥
 	handler, cfg := newTestHandler(t)
 	token := csrfTokenFor(t, handler)
 
 	st := seedStore(t, cfg)
-	if _, err := st.SetMasterPassword(context.Background(), make([]byte, 16), "问题"); err != nil {
+	salt := []byte("0123456789abcdef")
+	if len(salt) != 16 {
+		t.Fatalf("test salt must be 16 bytes, got %d", len(salt))
+	}
+	if _, err := st.SetMasterPassword(context.Background(), salt, "问题"); err != nil {
 		t.Fatalf("seed master password: %v", err)
 	}
 
@@ -219,7 +223,24 @@ func TestMasterPasswordStoreSeeded(t *testing.T) {
 	}
 
 	rec = apiRequest(t, handler, http.MethodGet, "/api/master-password", token, "")
-	if strings.Contains(rec.Body.String(), "salt") {
-		t.Fatalf("GET must not leak the salt, got %s", rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var master struct {
+		Configured bool   `json:"configured"`
+		SaltB64    string `json:"salt_b64"`
+		Question   string `json:"question"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &master); err != nil {
+		t.Fatalf("decode master: %v", err)
+	}
+	if !master.Configured || master.Question != "问题" {
+		t.Fatalf("unexpected master payload: %+v", master)
+	}
+	if master.SaltB64 != base64.StdEncoding.EncodeToString(salt) {
+		t.Fatalf("GET must echo the public salt for key derivation, got %q", master.SaltB64)
+	}
+	if strings.Contains(rec.Body.String(), "\"password\"") {
+		t.Fatalf("GET must not carry any password field, got %s", rec.Body.String())
 	}
 }

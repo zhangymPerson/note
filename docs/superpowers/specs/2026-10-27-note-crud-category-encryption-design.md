@@ -79,7 +79,7 @@ ALTER TABLE notes ADD COLUMN category_id INTEGER REFERENCES categories(id);
 | GET | `/api/notes/{id}` | 明文笔记含 content；加密笔记只返回元数据+`encrypted:true`（密文 b64 一并返回供前端解密） |
 | PUT | `/api/notes/{id}` | 同 POST 字段；rev+1；加密笔记只接受新密文 |
 | DELETE | `/api/notes/{id}` | 204；加密笔记删除不需要密码 |
-| GET | `/api/master-password` | `{configured, question}`（未配置时 question 为空） |
+| GET | `/api/master-password` | `{configured, salt_b64, question}`（未配置时后两字段为空串；盐是公开 KDF 参数，浏览器据此派生密钥，密码原文永不经服务端） |
 | POST | `/api/master-password` | `{salt_b64, question}`；仅一次，已存在返回 409 |
 | GET | `/api/categories` | 列表 + 每类笔记计数 |
 | POST / PUT / DELETE | `/api/categories[/{id}]` | 新增/改名/删除；id=1 拒改拒删 409；有笔记拒删 409 |

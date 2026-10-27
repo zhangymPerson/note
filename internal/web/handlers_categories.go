@@ -131,7 +131,8 @@ func categoryID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	return id, true
 }
 
-// handleGetMasterPassword 只暴露公开配置：是否已设置与助记问题，绝不回显盐。
+// handleGetMasterPassword 暴露公开配置：是否已设置、派生密钥用的盐、助记问题。
+// 盐是公开 KDF 参数，浏览器必须拿到它才能用主密码派生 AES 密钥；密码原文永不经过服务端。
 func (app *application) handleGetMasterPassword(w http.ResponseWriter, r *http.Request) {
 	master, configured, err := app.store.GetMasterPassword(r.Context())
 	if err != nil {
@@ -139,10 +140,14 @@ func (app *application) handleGetMasterPassword(w http.ResponseWriter, r *http.R
 		return
 	}
 	if !configured {
-		writeJSON(w, http.StatusOK, map[string]any{"configured": false, "question": ""})
+		writeJSON(w, http.StatusOK, map[string]any{"configured": false, "salt_b64": "", "question": ""})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "question": master.Question})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"configured": true,
+		"salt_b64":   master.SaltB64,
+		"question":   master.Question,
+	})
 }
 
 // handleSetMasterPassword 一次性写入盐与助记问题；密码原文永不离开浏览器。
