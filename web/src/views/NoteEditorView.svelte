@@ -1,7 +1,7 @@
 <script lang="ts">
   import Markdown from '../components/Markdown.svelte'
   import { ApiRequestError } from '../lib/api'
-  import { encryptNoteContent, KDF_PARAMS } from '../lib/crypto'
+  import { decryptNoteContent, encryptNoteContent, KDF_PARAMS } from '../lib/crypto'
   import { editorDraft } from '../lib/draft'
   import {
     createNote,
@@ -42,12 +42,14 @@
   let loading = $state(isEdit)
   let dirty = $state(false)
   let previewSource = $state('')
+  // 会话里的密钥可能解不开这一条：这时要回到解锁表单，而不是给一个空编辑器。
+  let revealFailed = $state(false)
 
   const contentLength = $derived(Array.from(content).length)
   const tooLong = $derived(contentLength > MAX_CONTENT)
   const unlocked = $derived($hasKey)
   // 加密笔记没密钥时读不出正文；勾选加密但还没派生密钥时需要临时输入。
-  const awaitingUnlock = $derived(cipher !== '' && !unlocked)
+  const awaitingUnlock = $derived(cipher !== '' && (!unlocked || revealFailed))
   const needsPassword = $derived((encrypt || awaitingUnlock) && !unlocked)
   const canSave = $derived(
     !busy && !loading && title.trim() !== '' && !tooLong && (!needsPassword || password !== ''),
@@ -67,6 +69,7 @@
     if (!$hasKey && cipher !== '') {
       content = ''
       previewSource = ''
+      revealFailed = false
     }
   })
 
@@ -118,8 +121,18 @@
     noteId = note.id
     if (note.encrypted) {
       cipher = note.cipher_b64 ?? ''
-      content = ''
       encrypt = true
+      const key = sessionKey.current()
+      if (key && cipher !== '') {
+        try {
+          content = await decryptNoteContent(key, note.id, cipher)
+        } catch {
+          content = ''
+          revealFailed = true
+        }
+      } else {
+        content = ''
+      }
     } else {
       content = note.content ?? ''
     }
@@ -140,6 +153,7 @@
       )
       if (plain !== null) content = plain
       password = ''
+      revealFailed = false
       notice = '已解锁，密钥只留在本页内存。'
       dirty = cipher !== ''
     } catch (error) {
