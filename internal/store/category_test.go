@@ -1,0 +1,183 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"testing"
+)
+
+func openTestStore(t *testing.T) *Store {
+	t.Helper()
+
+	st, err := Open(filepath.Join(t.TempDir(), "notes.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+	return st
+}
+
+// insertTestNote 直接写 notes 表：Task 4 的 CreateNote 还不存在。
+func insertTestNote(t *testing.T, st *Store, id string, categoryID any) {
+	t.Helper()
+	const ts = "2026-01-01T00:00:00Z"
+
+	_, err := st.db.Exec(
+		`INSERT INTO notes (id, title, content, created_at, updated_at, category_id)
+         VALUES (?, '标题', '正文', ?, ?, ?)`,
+		id, ts, ts, categoryID,
+	)
+	if err != nil {
+		t.Fatalf("insert note %s: %v", id, err)
+	}
+}
+
+func TestCategoryCRUDAndCounts(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	work, err := st.CreateCategory(ctx, "work")
+	if err != nil {
+		t.Fatalf("create category work: %v", err)
+	}
+	study, err := st.CreateCategory(ctx, "study")
+	if err != nil {
+		t.Fatalf("create category study: %v", err)
+	}
+	if work.ID <= 1 || study.ID <= work.ID {
+		t.Fatalf("unexpected ids: %d, %d", work.ID, study.ID)
+	}
+
+	cats, err := st.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
+	if len(cats) != 3 {
+		t.Fatalf("expected 3 categories, got %d", len(cats))
+	}
+	if cats[0].ID != 1 || cats[0].Name != "未分类" {
+		t.Fatalf("expected default category first, got %+v", cats[0])
+	}
+	for _, c := range cats {
+		if c.NoteCount != 0 {
+			t.Fatalf("expected empty note_count, got %+v", c)
+		}
+	}
+
+	insertTestNote(t, st, "n1", work.ID)
+	insertTestNote(t, st, "n2", work.ID)
+	insertTestNote(t, st, "n3", nil)
+
+	cats, err = st.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("list categories after notes: %v", err)
+	}
+	if cats[0].NoteCount != 0 || cats[1].NoteCount != 2 || cats[2].NoteCount != 0 {
+		t.Fatalf("unexpected note counts: %+v", cats)
+	}
+
+	if err := st.RenameCategory(ctx, study.ID, "阅读"); err != nil {
+		t.Fatalf("rename category: %v", err)
+	}
+	cats, err = st.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("list categories after rename: %v", err)
+	}
+	if cats[2].Name != "阅读" {
+		t.Fatalf("expected renamed category, got %+v", cats[2])
+	}
+
+	if err := st.RenameCategory(ctx, 999, "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound renaming missing category, got %v", err)
+	}
+	if err := st.DeleteCategory(ctx, 999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound deleting missing category, got %v", err)
+	}
+}
+
+func TestCategoryNameValidationAndUniqueness(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	if _, err := st.CreateCategory(ctx, "work"); err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	if _, err := st.CreateCategory(ctx, "WORK"); !errors.Is(err, ErrCategoryExists) {
+		t.Fatalf("expected ErrCategoryExists for case-insensitive duplicate, got %v", err)
+	}
+	if _, err := st.CreateCategory(ctx, "work"); !errors.Is(err, ErrCategoryExists) {
+		t.Fatalf("expected ErrCategoryExists for exact duplicate, got %v", err)
+	}
+	if _, err := st.CreateCategory(ctx, "未分类"); !errors.Is(err, ErrCategoryExists) {
+		t.Fatalf("expected ErrCategoryExists for default name, got %v", err)
+	}
+
+	cats, err := st.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
+	if len(cats) != 2 {
+		t.Fatalf("expected rejected duplicates to leave 2 categories, got %d", len(cats))
+	}
+
+	if err := st.RenameCategory(ctx, cats[1].ID, "未分类"); !errors.Is(err, ErrCategoryExists) {
+		t.Fatalf("expected ErrCategoryExists renaming onto default name, got %v", err)
+	}
+}
+
+func TestDeleteCategoryGuards(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	if err := st.DeleteCategory(ctx, 1); !errors.Is(err, ErrReservedCategory) {
+		t.Fatalf("expected ErrReservedCategory deleting default, got %v", err)
+	}
+	if err := st.RenameCategory(ctx, 1, "杂记"); !errors.Is(err, ErrReservedCategory) {
+		t.Fatalf("expected ErrReservedCategory renaming default, got %v", err)
+	}
+
+	work, err := st.CreateCategory(ctx, "work")
+	if err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	study, err := st.CreateCategory(ctx, "study")
+	if err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+
+	insertTestNote(t, st, "n1", work.ID)
+
+	var notEmpty ErrCategoryNotEmpty
+	if err := st.DeleteCategory(ctx, work.ID); !errors.As(err, &notEmpty) {
+		t.Fatalf("expected ErrCategoryNotEmpty, got %v", err)
+	}
+	if notEmpty.Count != 1 {
+		t.Fatalf("expected count 1, got %d", notEmpty.Count)
+	}
+
+	if _, err := st.db.Exec(`UPDATE notes SET category_id = ? WHERE id = 'n1'`, study.ID); err != nil {
+		t.Fatalf("move note: %v", err)
+	}
+	if err := st.DeleteCategory(ctx, work.ID); err != nil {
+		t.Fatalf("delete now-empty category: %v", err)
+	}
+
+	cats, err := st.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
+	if len(cats) != 2 {
+		t.Fatalf("expected 2 categories after delete, got %d", len(cats))
+	}
+}
+
+func TestErrCategoryNotEmptyMessage(t *testing.T) {
+	if got := (ErrCategoryNotEmpty{Count: 3}).Error(); got != "分类下仍有 3 条笔记" {
+		t.Fatalf("unexpected message: %q", got)
+	}
+}

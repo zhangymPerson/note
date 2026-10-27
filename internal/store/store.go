@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	migrations "note/sql"
 
@@ -65,6 +67,32 @@ func Open(path string) (*Store, error) {
 	}
 
 	return s, nil
+}
+
+// nowUTC 返回约定格式的 UTC 秒级时间戳文本，可直接按字符串排序。
+func nowUTC() string {
+	return time.Now().UTC().Format(timeLayoutUTC)
+}
+
+// inTx 在事务内执行 fn，fn 返回错误时回滚；错误原样返回以便 sentinel 判定。
+func (s *Store) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if err = fn(tx); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Close() error {
