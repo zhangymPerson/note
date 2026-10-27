@@ -1,6 +1,6 @@
 <script lang="ts">
   import Markdown from '../components/Markdown.svelte'
-  import { decryptNoteContent } from '../lib/crypto'
+  import { decryptNoteContent, paramsFromNote } from '../lib/crypto'
   import { deleteNote, getMasterPassword, getNote, type NoteMeta } from '../lib/notes'
   import { hasKey, lockSession, sessionKey, unlockWithPassword } from '../lib/session-key'
   import { navigate } from '../router/router'
@@ -76,7 +76,14 @@
     error = ''
     busy = true
     try {
-      const out = await unlockWithPassword(password, salt, note?.id, note?.cipher_b64)
+      // 派生用这条笔记自己声明的 kdf_params：被人手改过参数的笔记按数据损坏处理
+      const out = await unlockWithPassword(
+        password,
+        salt,
+        note?.id,
+        note?.cipher_b64,
+        paramsFromNote(note?.kdf_params),
+      )
       plain = out ?? ''
       password = ''
       decryptFailed = false

@@ -116,12 +116,14 @@ func TestCategoriesAPI(t *testing.T) {
 		t.Fatalf("unexpected created category: %+v", created)
 	}
 
+	// 撞名（NOCASE，只差大小写也算）是冲突而非输入错误：409 + code + fields.name，
+	// 与 id_conflict / category_reserved / category_not_empty 同族。
 	rec = apiRequest(t, handler, http.MethodPost, "/api/categories", token, `{"name":"工作"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for duplicate name, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate name, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "name") {
-		t.Fatalf("expected name field error, got %s", rec.Body.String())
+	if body := errorBody(t, rec); body.Error.Code != "category_exists" || body.Error.Fields["name"] == "" {
+		t.Fatalf("expected category_exists with name field, got %+v", body.Error)
 	}
 
 	for _, payload := range []string{`{"name":""}`, `{"name":"   "}`, `{"name":"` + strings.Repeat("名", 31) + `"}`} {
@@ -242,5 +244,44 @@ func TestMasterPasswordStoreSeeded(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "\"password\"") {
 		t.Fatalf("GET must not carry any password field, got %s", rec.Body.String())
+	}
+}
+
+// 撞名（含只差大小写）是状态冲突而不是输入格式错误：与 category_not_empty、
+// id_conflict 同族走 409，同时保留 fields.name 让前端把提示标在输入框上。
+func TestCategoriesAPIDuplicateNameIsConflict(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	token := csrfTokenFor(t, handler)
+
+	create := func(name string) int64 {
+		t.Helper()
+		rec := apiRequest(t, handler, http.MethodPost, "/api/categories", token, `{"name":"`+name+`"}`)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %q: got %d: %s", name, rec.Code, rec.Body.String())
+		}
+		var cat struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &cat); err != nil {
+			t.Fatalf("decode %q: %v", name, err)
+		}
+		return cat.ID
+	}
+
+	work := create("Work")
+	temp := create("Temp")
+
+	// 改名撞进别人的 NOCASE 唯一键：不能让 SQLite 约束错误冒成 500
+	rec := apiRequest(t, handler, http.MethodPut, categoryPath(temp), token, `{"name":"work"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 renaming onto a case-variant name, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := errorBody(t, rec); body.Error.Code != "category_exists" || body.Error.Fields["name"] == "" {
+		t.Fatalf("expected category_exists with name field on rename, got %+v", body.Error)
+	}
+
+	rec = apiRequest(t, handler, http.MethodPut, categoryPath(work), token, `{"name":"未分类"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 renaming onto the default name, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

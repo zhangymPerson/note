@@ -23,7 +23,7 @@ const (
 	minCipherBytes  = 29
 	maxCipherBytes  = 65536
 
-	kdfAlgo   = "pbkdf2"
+	kdfAlgo    = "pbkdf2"
 	minKDFIter = 100_000
 	maxKDFIter = 1_000_000
 	kdfKeyLen  = 32

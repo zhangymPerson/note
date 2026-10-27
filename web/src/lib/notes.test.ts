@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiRequestError } from './api'
 import {
+  MAX_CONTENT_CODEPOINTS,
+  countCodePoints,
   createCategory,
   createNote,
   deleteCategory,
@@ -189,5 +191,17 @@ describe('分类与主密码', () => {
     await expect(getNote('n9')).resolves.toMatchObject({ rev: 1 })
     await expect(updateNote('n9', { title: '新' })).resolves.toMatchObject({ rev: 2 })
     expect(calls.some((call) => call.method === 'PUT' && call.url === '/api/notes/n9')).toBe(true)
+  })
+})
+
+// 后端按 utf8.RuneCountInString 数，前端必须按 Unicode 码点（Array.from）数：
+// 代理对（emoji / 生僻字）若按 UTF-16 长度算，两端判定会不一致。
+describe('正文长度按码点计', () => {
+  it('代理对算一个字，上限与后端常量一致', () => {
+    expect(countCodePoints('🚀a')).toBe(2)
+    expect(countCodePoints('𠮷野家')).toBe(3)
+    expect(countCodePoints('')).toBe(0)
+    expect(MAX_CONTENT_CODEPOINTS).toBe(2000)
+    expect(countCodePoints('字'.repeat(2001))).toBe(2001)
   })
 })

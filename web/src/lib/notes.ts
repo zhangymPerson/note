@@ -67,6 +67,14 @@ export function newClientNoteID(): string {
   return crypto.randomUUID()
 }
 
+// 与后端 maxContentRunes 同步的正文上限；按 Unicode 码点数（Array.from），代理对算一个字，
+// 这样 emoji / 生僻字在 Go 的 utf8.RuneCountInString 与这里的判定一致。
+export const MAX_CONTENT_CODEPOINTS = 2000
+
+export function countCodePoints(value: string): number {
+  return Array.from(value).length
+}
+
 // 只把非空条件拼进查询串，避免后端把空值当条件。
 export function listNotes(filter: ListNotesFilter): Promise<NotePage> {
   const params = new URLSearchParams()

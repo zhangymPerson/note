@@ -43,7 +43,7 @@ func (app *application) handleCreateCategory(w http.ResponseWriter, r *http.Requ
 
 	created, err := app.store.CreateCategory(r.Context(), strings.TrimSpace(body.Name))
 	if err != nil {
-		writeCategoryError(w, err, fields)
+		writeCategoryError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
@@ -65,7 +65,7 @@ func (app *application) handleRenameCategory(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := app.store.RenameCategory(r.Context(), id, strings.TrimSpace(body.Name)); err != nil {
-		writeCategoryError(w, err, fields)
+		writeCategoryError(w, err)
 		return
 	}
 	app.handleListCategories(w, r)
@@ -87,7 +87,7 @@ func (app *application) handleDeleteCategory(w http.ResponseWriter, r *http.Requ
 			}})
 			return
 		}
-		writeCategoryError(w, err, nil)
+		writeCategoryError(w, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -105,14 +105,16 @@ func validateCategoryName(name string) map[string]string {
 	return nil
 }
 
-func writeCategoryError(w http.ResponseWriter, err error, fields map[string]string) {
+func writeCategoryError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrCategoryExists):
-		if fields == nil {
-			fields = map[string]string{}
-		}
-		fields["name"] = "该分类名已存在"
-		writeValidationError(w, fields)
+		// 撞名是状态冲突（与 category_not_empty 同族），不是输入格式错误：409 + fields.name
+		// 让前端仍能把提示标在输入框上。
+		writeJSON(w, http.StatusConflict, apiErrorBody{Error: apiError{
+			Code:    "category_exists",
+			Message: "该分类名已存在",
+			Fields:  map[string]string{"name": "该分类名已存在"},
+		}})
 	case errors.Is(err, store.ErrReservedCategory):
 		writeError(w, http.StatusConflict, "category_reserved", "默认分类不可改名或删除")
 	case errors.Is(err, store.ErrNotFound):

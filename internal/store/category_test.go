@@ -172,6 +172,14 @@ func TestCategoryNameValidationAndUniqueness(t *testing.T) {
 	if err := st.RenameCategory(ctx, cats[1].ID, "未分类"); !errors.Is(err, ErrCategoryExists) {
 		t.Fatalf("expected ErrCategoryExists renaming onto default name, got %v", err)
 	}
+	// 改名同样要走 NOCASE 唯一约束：把另一个分类改成只差大小写的同名，是撞名不是改名。
+	temp, err := st.CreateCategory(ctx, "temp")
+	if err != nil {
+		t.Fatalf("create category temp: %v", err)
+	}
+	if err := st.RenameCategory(ctx, temp.ID, "WORK"); !errors.Is(err, ErrCategoryExists) {
+		t.Fatalf("expected ErrCategoryExists for case-differing rename, got %v", err)
+	}
 }
 
 func TestDeleteCategoryGuards(t *testing.T) {

@@ -10,8 +10,16 @@ import {
   encryptNoteContent,
   generateSaltB64,
   normalizePassword,
+  paramsFromNote,
 } from './crypto'
-import { hasKey, lockSession, sessionKey, unlockKey, unlockWithPassword } from './session-key'
+import {
+  hasKey,
+  lockSession,
+  passwordMismatch,
+  sessionKey,
+  unlockKey,
+  unlockWithPassword,
+} from './session-key'
 import { editorDraft } from './draft'
 
 const SALT = bytesToB64(new Uint8Array(16).fill(7))
@@ -88,6 +96,56 @@ describe('kdf parameters', () => {
   })
 })
 
+describe('笔记声明的 KDF 参数', () => {
+  it('缺省与合法参数返回可用副本，越界或畸形一律按数据损坏拒绝', () => {
+    expect(paramsFromNote(undefined)).toEqual(KDF_PARAMS)
+    expect(paramsFromNote('')).toEqual(KDF_PARAMS)
+    expect(paramsFromNote(JSON.stringify(KDF_PARAMS))).toEqual(KDF_PARAMS)
+    expect(paramsFromNote(JSON.stringify({ ...KDF_PARAMS, iter: 200_000 })).iter).toBe(200_000)
+
+    // 手改库里的 iter（1 或 1e9+）必须解不开，而不是照改后的弱参数派生
+    expect(() => paramsFromNote(JSON.stringify({ ...KDF_PARAMS, iter: 1 }))).toThrow(DecryptError)
+    expect(() => paramsFromNote(JSON.stringify({ ...KDF_PARAMS, iter: 1_000_001 }))).toThrow(
+      DecryptError,
+    )
+    expect(() => paramsFromNote(JSON.stringify({ ...KDF_PARAMS, keylen: 16 }))).toThrow(DecryptError)
+    expect(() => paramsFromNote(JSON.stringify({ ...KDF_PARAMS, algo: 'argon2id' }))).toThrow(
+      DecryptError,
+    )
+    expect(() => paramsFromNote('{"iter":')).toThrow(DecryptError)
+  })
+
+  it('按笔记声明的 iter 派生：声明与加密时不一致就解不开且不落密钥', async () => {
+    const salt = generateSaltB64()
+    const key = await deriveKey('主密码', salt, KDF_PARAMS)
+    const cipher = await encryptNoteContent(key, 'note-p', '正文')
+    lockSession()
+    await expect(
+      unlockWithPassword('主密码', salt, 'note-p', cipher, { ...KDF_PARAMS, iter: 200_000 }),
+    ).rejects.toThrow('密码错误或数据损坏')
+    expect(sessionKey.current()).toBeNull()
+
+    await expect(
+      unlockWithPassword(
+        '主密码',
+        salt,
+        'note-p',
+        cipher,
+        paramsFromNote(JSON.stringify(KDF_PARAMS)),
+      ),
+    ).resolves.toBe('正文')
+    lockSession()
+  })
+})
+
+describe('首次加密的口令确认', () => {
+  it('没有可试解密的素材时必须两次输入一致', () => {
+    expect(passwordMismatch('主密码', '')).toBe('请再输入一次主密码')
+    expect(passwordMismatch('主密码', '错一次')).toBe('两次输入的主密码不一致')
+    expect(passwordMismatch('主密码', '主密码')).toBeNull()
+  })
+})
+
 describe('salt and encoding helpers', () => {
   it('generates distinct 16-byte salts', () => {
     const first = generateSaltB64()
@@ -156,7 +214,13 @@ describe('session key holder', () => {
 
   it('lockSession 连带清掉内存草稿，锁定时不留明文', async () => {
     const salt = generateSaltB64()
-    editorDraft.save({ title: '标题', content: '尚未保存的正文', categoryId: null, encrypt: true })
+    editorDraft.save({
+      noteId: '',
+      title: '标题',
+      content: '尚未保存的正文',
+      categoryId: null,
+      encrypt: true,
+    })
 
     await unlockKey('会话密码', salt)
     lockSession()

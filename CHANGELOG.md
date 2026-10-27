@@ -64,6 +64,11 @@
 
 ### Fixed
 
+- 首次加密可能把笔记永久锁死：主密码已配置但本会话还没有密钥时，编辑器只要求「输入非空」就用它派生密钥并加密——打错一个字母照样保存成功，刷新后再也解不开，而且当场没有任何异常。现在这条路径必须两次输入主密码且比对一致（`session-key.passwordMismatch`）才继续；已有密文可当场试解的路径不变（由 GCM 标签验证）。
+- 浏览器忽略笔记自己声明的 KDF 参数：`kdf_params` 列被写入却从未被读取，手改库里的 `iter` 不影响解锁，PRD AC-23 与技术方案 §6.2/§6.3 的承诺都落空。新增 `crypto.paramsFromNote()`：按该笔记声明的参数派生，越界（`iter` 不在 [100000,1000000]、`keylen≠32`、`algo≠pbkdf2`、JSON 畸形）一律按数据损坏拒绝解密；详情页与编辑器的解锁都改用它，重加密时把同一份参数写回去。顺带修正「`kdf_salt` 供客户端比对」的说法——接口从不返回该列，它只是满足 0001 `CHECK` 的冗余副本。
+- 内存草稿会被别的笔记消费：`editorDraft.take()` 在挂载时无条件取走草稿，随后 `loadNote()` 用库里的正文覆盖，结果是「跳去设置主密码时存下的草稿」在下次打开任意已有笔记时被吃掉并注入那条形编辑器的第一条笔记（保存即覆盖）。草稿现在带 `noteId`，`take(noteId)` 只交给同一条笔记的编辑器；离开编辑器（组件卸载）清空草稿，只有跳 `/master-password?next=…` 的交棒除外。
+- 分类重名的状态码从 400 改为 409 `category_exists`（仍带 `fields.name`）：名字被占用是状态冲突，与 `category_not_empty`、`id_conflict`、`category_reserved` 同族；此前只有字段级 400，客户端只能靠字符串猜是「太长」还是「重名」。同时补齐此前缺失的用例：改名撞进只差大小写的同名（store 与 API 两层）、`%`/`_`/`\` 作为搜索词必须按字面匹配、前端正文长度改由 `notes.countCodePoints()` 计算并断言与后端 2000 码点上限同源。
+
 - 「未分类」既看不见也统计不到：库里未选分类的笔记存的是 `notes.category_id IS NULL`，而 `ListCategories` 只按 `n.category_id = c.id` 计数、`ListNotes` 只按 `n.category_id = ?` 过滤，导致分类 chip 永远是 0、「全部」少算、点「未分类」列表为空。改为默认分类（`id=1`）计数与筛选都并入 `IS NULL`（`LEFT JOIN ... OR (c.id = ? AND n.category_id IS NULL)`、`(n.category_id = ? OR n.category_id IS NULL)`）。先以 `TestDefaultCategoryCoversUncategorizedNotes` 复现（RED：`NoteCount:0`，期望 2）再修复（GREEN）。
 - 编辑已加密笔记时正文一片空白：`NoteEditorView` 拉到笔记后只置 `cipher`、没有尝试用会话里的派生密钥解密，已解锁的会话也要重新走一遍解锁表单。改为有密钥就直接 `decryptNoteContent` 回填，解不开（密钥属于别的密码）才回落到解锁表单并给出提示，切换笔记与重新解锁时清理 `revealFailed`。
 - 搜索词长度上限只写在文档里没有实现：`GET /api/notes` 现在校验 `q` ≤ 200 字（`maxQueryRunes`），超限返回 400 + `fields.q`，前端两处搜索框（首页与列表页）同步 `maxlength="200"`，`writeValidationError` 的字段优先级纳入 `q`。

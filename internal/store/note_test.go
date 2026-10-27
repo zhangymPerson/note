@@ -136,7 +136,7 @@ func TestCreateNotePlaintextAndEncrypted(t *testing.T) {
 		t.Fatal("expected stored content to be NULL for encrypted note")
 	}
 
-	// kdf_salt 落的是 master_password.salt 的冗余副本（满足 0001 CHECK，客户端比对用）
+	// kdf_salt 落的是 master_password.salt 的冗余副本（只为满足 0001 的 CHECK；解密一律以 master_password.salt 为准）
 	var kdfSalt []byte
 	if err := st.db.QueryRow(`SELECT kdf_salt FROM notes WHERE id = ?`, enc.ID).Scan(&kdfSalt); err != nil {
 		t.Fatalf("query kdf_salt: %v", err)
@@ -280,6 +280,39 @@ func TestListNotesSearchOrdersTitleHitsFirst(t *testing.T) {
 	}
 	if count == 0 {
 		t.Fatal("expected ListNotes with q to record one activity")
+	}
+}
+
+func TestListNotesSearchTreatsLikeWildcardsAsLiterals(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	body := "正文"
+	for _, title := range []string{"100% 完成", "a_b 下划线", "反斜杠 \\ 用法", "普通笔记"} {
+		if _, err := st.CreateNote(ctx, NoteInput{Title: title, Content: &body}); err != nil {
+			t.Fatalf("create %q: %v", title, err)
+		}
+	}
+
+	// % 与 _ 是 LIKE 的通配符，没转义就会把「100% 完成」这类查询扩散成全部笔记
+	for _, tc := range []struct {
+		q    string
+		want int
+	}{
+		{"%", 1},
+		{"_", 1},
+		{`\`, 1},
+		{"100% 完成", 1},
+		{"a_b", 1},
+		{"普通", 1},
+	} {
+		page, err := st.ListNotes(ctx, tc.q, 0, 1)
+		if err != nil {
+			t.Fatalf("list %q: %v", tc.q, err)
+		}
+		if page.Total != tc.want || len(page.Items) != tc.want {
+			t.Fatalf("query %q: expected %d hit, got total %d items %+v", tc.q, tc.want, page.Total, page.Items)
+		}
 	}
 }
 

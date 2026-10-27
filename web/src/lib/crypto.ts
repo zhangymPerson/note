@@ -79,6 +79,42 @@ export async function deriveKey(
   )
 }
 
+/**
+ * 读取笔记自己声明的 KDF 参数（notes.kdf_params）用于派生。缺省时回落到当前应用参数；
+ * 越界、畸形 JSON、算法不符一律按数据损坏拒绝——密文是谁写的就该按谁的参数解。
+ */
+export function paramsFromNote(raw: string | undefined | null): KdfParams {
+  const text = (raw ?? '').trim()
+  if (text === '') return KDF_PARAMS
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new DecryptError()
+  }
+  if (typeof parsed !== 'object' || parsed === null) throw new DecryptError()
+
+  const declared = parsed as Record<string, unknown>
+  if (
+    declared.algo !== KDF_PARAMS.algo ||
+    typeof declared.iter !== 'number' ||
+    !Number.isInteger(declared.iter) ||
+    declared.iter < MIN_ITER ||
+    declared.iter > MAX_ITER ||
+    declared.keylen !== KDF_PARAMS.keylen
+  ) {
+    throw new DecryptError()
+  }
+
+  return {
+    algo: KDF_PARAMS.algo,
+    prf: KDF_PARAMS.prf,
+    iter: declared.iter,
+    keylen: KDF_PARAMS.keylen,
+  }
+}
+
 function aadFor(noteId: string) {
   return new TextEncoder().encode(AAD_PREFIX + noteId)
 }

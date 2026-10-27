@@ -584,7 +584,7 @@ key = PBKDF2-HMAC-SHA256(normalized, master_salt, iter=150000, keylen=32) → AE
 
 #### 新建加密笔记
 
-1. 编辑器已有会话密钥（页面内存里的 `CryptoKey`）；没有则先去 `/master-password?next=/notes/new` 输入口令派生。
+1. 编辑器已有会话密钥（页面内存里的 `CryptoKey`）；没有则就地输入口令，或先去 `/master-password?next=/notes/new` 派生。这条笔记还没有密文可以当场验证口令时，必须两次输入一致才继续（口令记错派生的密钥会永久锁死这条笔记，且当时毫无症状）。
 2. 浏览器生成笔记 UUID，用该 id 作为 AAD 加密正文，得到 `cipher_b64` 与 `kdf_params`。
 3. `POST /api/notes` 提交 `id`、`title`、`category_id`、`cipher_b64`、`kdf_params`（不带 `content`）。
 4. 服务端校验后写入 `content=NULL`、`is_encrypted=1`、`kdf_salt=master.salt`，返回 201。
@@ -645,7 +645,7 @@ web/src/lib/session-key.ts
 - 没有服务端会话、没有 TTL、没有空闲计时器，也没有 `note_sess` 之类的 Cookie——服务端从未有能力判断「是否已解锁」，因此也不存在 401。
 - 手动锁定：详情页与编辑器的「锁定」调用 `lockSession()`，置空密钥并清掉内存草稿；已经渲染到屏幕的明文随视图切换消失。
 - 刷新或关闭页签即失效（内存被回收），这是唯一的自动过期路径。
-- 未保存草稿同样只在内存：`lib/draft.ts` 用模块级单槽变量保存 `{title, content, categoryId, encrypt}`，`take()` 取出即清空，供跳去 `/master-password?next=…` 再回来时续写；不跨笔记并存，也不落盘。
+- 未保存草稿同样只在内存：`lib/draft.ts` 用模块级单槽变量保存 `{noteId, title, content, categoryId, encrypt}`；`take(noteId)` 只把草稿交给**同一条笔记**的编辑器（把甲的正文灌进乙的编辑器，保存就是拿甲覆盖乙），取出即清空。离开编辑器（组件卸载）一律清草稿，只有跳 `/master-password?next=…` 那次例外——那是交棒，不是离开。不跨笔记并存，也不落盘。
 - 忘记口令：`/notes/{id}/forgot` 只展示助记问题原文，没有「重置」入口——口令无法找回，忘记即加密笔记永久打不开。
 
 ### 7.2 CSRF
@@ -827,7 +827,7 @@ GET /api/csrf
 | 笔记请求体声明长度超限 | 413 `body_too_large`（分类/主密码/姓名超限表现为 400 `body_invalid`） |
 | 其它 | 500 `internal` |
 
-分类名重复走 400 `validation_failed` + `fields.name = 该分类名已存在`，与「必填、过长」同一套字段级反馈。没有 401 家族：不存在服务端会话，解密失败只在浏览器里表现为一句 `密码错误或数据损坏`。
+分类名重复走 409 `category_exists` + `fields.name = 该分类名已存在`（与 `category_not_empty`、`id_conflict` 同族：名字被占是状态冲突，不是输入格式错误），前端仍按字段级反馈标红输入框。没有 401 家族：不存在服务端会话，解密失败只在浏览器里表现为一句 `密码错误或数据损坏`。
 
 ---
 
