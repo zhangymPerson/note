@@ -417,3 +417,152 @@ func TestCreateNoteValidatesStructure(t *testing.T) {
 		t.Fatal("expected duplicate id to be rejected")
 	}
 }
+
+// createEncryptedNote 建一条加密笔记，供改密迁移的清单与替换测试复用。
+func createEncryptedNote(t *testing.T, st *Store, ctx context.Context, title string, categoryID *int64) Note {
+	t.Helper()
+
+	note, err := st.CreateNote(ctx, NoteInput{
+		Title:      title,
+		CipherB64:  base64.StdEncoding.EncodeToString(testCipher()),
+		KDFParams:  testKDFParams,
+		CategoryID: categoryID,
+	})
+	if err != nil {
+		t.Fatalf("create encrypted note %q: %v", title, err)
+	}
+	return note
+}
+
+func TestListEncryptedCiphers(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+	configureMaster(t, st)
+
+	body := "这条不该出现在清单里"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "明文", Content: &body}); err != nil {
+		t.Fatalf("create plaintext note: %v", err)
+	}
+	first := createEncryptedNote(t, st, ctx, "第一条", nil)
+	second := createEncryptedNote(t, st, ctx, "第二条", nil)
+
+	items, err := st.ListEncryptedCiphers(ctx)
+	if err != nil {
+		t.Fatalf("list encrypted ciphers: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected only the 2 encrypted rows, got %+v", items)
+	}
+
+	wantCipher := base64.StdEncoding.EncodeToString(testCipher())
+	seen := map[string]EncryptedCipher{}
+	for _, item := range items {
+		seen[item.ID] = item
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		item, ok := seen[id]
+		if !ok {
+			t.Fatalf("missing %q in %+v", id, items)
+		}
+		if item.CipherB64 != wantCipher {
+			t.Errorf("cipher_b64 of %q = %q, want %q", id, item.CipherB64, wantCipher)
+		}
+		if item.KDFParams != testKDFParams {
+			t.Errorf("kdf_params of %q = %q, want原样回显 %q", id, item.KDFParams, testKDFParams)
+		}
+	}
+}
+
+func TestListEncryptedCiphersEmpty(t *testing.T) {
+	st := noteTestStore(t)
+
+	items, err := st.ListEncryptedCiphers(context.Background())
+	if err != nil {
+		t.Fatalf("list encrypted ciphers on empty store: %v", err)
+	}
+	// 前端直接 JSON.stringify，nil 会输出 null 而不是空数组
+	if items == nil {
+		t.Fatal("expected non-nil empty slice so the API emits []")
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no rows, got %+v", items)
+	}
+}
+
+func TestUpdateNoteCipherKeepsMetadata(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+	master, err := st.SetMasterPassword(ctx, make([]byte, masterSaltLen), "你的生日是多少？")
+	if err != nil {
+		t.Fatalf("configure master password: %v", err)
+	}
+	category, err := st.CreateCategory(ctx, "工作")
+	if err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+
+	note := createEncryptedNote(t, st, ctx, "改密前", &category.ID)
+	newCipher := append(append([]byte{}, testCipher()...), 'x')
+	newParams := `{"algo":"pbkdf2","prf":"HMAC-SHA256","iter":200000,"keylen":32}`
+
+	updated, err := st.UpdateNoteCipher(ctx, note.ID, base64.StdEncoding.EncodeToString(newCipher), newParams)
+	if err != nil {
+		t.Fatalf("update note cipher: %v", err)
+	}
+
+	if updated.CipherB64 != base64.StdEncoding.EncodeToString(newCipher) {
+		t.Errorf("cipher_b64 = %q, want the new cipher", updated.CipherB64)
+	}
+	if updated.KDFParams == nil || *updated.KDFParams != newParams {
+		t.Errorf("kdf_params = %v, want it refreshed to %q", updated.KDFParams, newParams)
+	}
+	if !updated.Encrypted {
+		t.Error("note must stay encrypted")
+	}
+	// 改密不是用户可见的修订：标题、分类、rev 与两个时间戳都不许动
+	if updated.Title != note.Title {
+		t.Errorf("title = %q, want %q", updated.Title, note.Title)
+	}
+	if updated.CategoryID == nil || *updated.CategoryID != category.ID {
+		t.Errorf("category_id = %v, want %d", updated.CategoryID, category.ID)
+	}
+	if updated.Rev != note.Rev {
+		t.Errorf("rev = %d, want it unchanged at %d", updated.Rev, note.Rev)
+	}
+	if updated.CreatedAt != note.CreatedAt || updated.UpdatedAt != note.UpdatedAt {
+		t.Errorf("timestamps changed: created %q->%q updated %q->%q",
+			note.CreatedAt, updated.CreatedAt, note.UpdatedAt, updated.UpdatedAt)
+	}
+
+	var salt []byte
+	if err := st.db.QueryRowContext(ctx, `SELECT kdf_salt FROM notes WHERE id = ?`, note.ID).Scan(&salt); err != nil {
+		t.Fatalf("read kdf_salt: %v", err)
+	}
+	if base64.StdEncoding.EncodeToString(salt) != master.SaltB64 {
+		t.Errorf("kdf_salt copy must track master_password.salt")
+	}
+}
+
+func TestUpdateNoteCipherRejectsPlaintextAndMissing(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+	body := "明文笔记"
+	plain, err := st.CreateNote(ctx, NoteInput{Title: "明文", Content: &body})
+	if err != nil {
+		t.Fatalf("create plaintext note: %v", err)
+	}
+
+	newCipher := base64.StdEncoding.EncodeToString(testCipher())
+	if _, err := st.UpdateNoteCipher(ctx, plain.ID, newCipher, testKDFParams); !errors.Is(err, ErrNotEncrypted) {
+		t.Errorf("plaintext note: err = %v, want ErrNotEncrypted", err)
+	}
+
+	ghost := NewNoteID()
+	if _, err := st.UpdateNoteCipher(ctx, ghost, newCipher, testKDFParams); !errors.Is(err, ErrNoteNotFound) {
+		t.Errorf("unknown id: err = %v, want ErrNoteNotFound", err)
+	}
+
+	if _, err := st.UpdateNoteCipher(ctx, plain.ID, base64.StdEncoding.EncodeToString([]byte("short")), testKDFParams); !errors.Is(err, ErrInvalidNote) {
+		t.Errorf("too short cipher: err = %v, want ErrInvalidNote", err)
+	}
+}

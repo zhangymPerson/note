@@ -26,6 +26,8 @@ var (
 	ErrNoteNotFound = errors.New("note not found")
 	// ErrEncryptedImmutable 表示试图把加密笔记改回明文（0001 约定加密后不可取消）。
 	ErrEncryptedImmutable = errors.New("encrypted note cannot be converted back to plaintext")
+	// ErrNotEncrypted 表示对明文笔记调用只适用于加密笔记的操作。
+	ErrNotEncrypted = errors.New("note is not encrypted")
 	// ErrInvalidNote 表示明文/密文结构不合法。
 	ErrInvalidNote = errors.New("invalid note payload")
 )
@@ -200,6 +202,105 @@ func (s *Store) UpdateNote(ctx context.Context, id string, in NoteInput) (Note, 
 	return s.GetNote(ctx, id)
 }
 
+// EncryptedCipher 是改密迁移要搬运的一条密文，只带 id 与密文，不含标题或正文。
+type EncryptedCipher struct {
+	ID        string `json:"id"`
+	CipherB64 string `json:"cipher_b64"`
+	KDFParams string `json:"kdf_params"`
+}
+
+// ListEncryptedCiphers 一次返回全部加密笔记，供浏览器端逐条重加密；
+// 空库返回非 nil 空切片，让 API 输出 [] 而不是 null。
+func (s *Store) ListEncryptedCiphers(ctx context.Context) ([]EncryptedCipher, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, cipher, kdf_params FROM notes WHERE is_encrypted = 1 ORDER BY created_at, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list encrypted ciphers: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]EncryptedCipher, 0)
+	for rows.Next() {
+		var (
+			item   EncryptedCipher
+			cipher []byte
+			params *string
+		)
+		if err := rows.Scan(&item.ID, &cipher, &params); err != nil {
+			return nil, fmt.Errorf("scan encrypted cipher: %w", err)
+		}
+		item.CipherB64 = base64.StdEncoding.EncodeToString(cipher)
+		if params != nil {
+			item.KDFParams = *params
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate encrypted ciphers: %w", err)
+	}
+	return items, nil
+}
+
+// UpdateNoteCipher 只替换密文与派生参数：改密不是用户可见的修订，
+// title / content / category_id / rev / updated_at 一概不动（设计文档 §4）。
+func (s *Store) UpdateNoteCipher(ctx context.Context, id, cipherB64, kdfParams string) (Note, error) {
+	raw, err := decodeCipher(cipherB64)
+	if err != nil {
+		return Note{}, err
+	}
+	params := strings.TrimSpace(kdfParams)
+	if params == "" {
+		return Note{}, fmt.Errorf("encrypted note requires kdf_params: %w", ErrInvalidNote)
+	}
+
+	// 先探一次目标：主密码未配置只是前置条件错误，不能盖掉「这条笔记不存在/不是加密笔记」。
+	// kdf_salt 的读取也必须在事务外——连接池只有一条连接，事务内再查会自锁。
+	var probe int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT is_encrypted FROM notes WHERE id = ?`, id,
+	).Scan(&probe); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Note{}, ErrNoteNotFound
+		}
+		return Note{}, fmt.Errorf("probe note for cipher update: %w", err)
+	}
+	if probe != 1 {
+		return Note{}, ErrNotEncrypted
+	}
+
+	salt, err := s.kdfSaltFor(ctx, true)
+	if err != nil {
+		return Note{}, err
+	}
+
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		var encrypted int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT is_encrypted FROM notes WHERE id = ?`, id,
+		).Scan(&encrypted); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNoteNotFound
+			}
+			return fmt.Errorf("load note for cipher update: %w", err)
+		}
+		if encrypted != 1 {
+			return ErrNotEncrypted
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE notes SET cipher = ?, kdf_params = ?, kdf_salt = ? WHERE id = ?`,
+			raw, params, salt, id,
+		); err != nil {
+			return fmt.Errorf("update note cipher: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Note{}, err
+	}
+	return s.GetNote(ctx, id)
+}
+
 // DeleteNote 删除笔记，提交后立刻 TRUNCATE WAL，避免已删正文在日志文件里残留。
 func (s *Store) DeleteNote(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM notes WHERE id = ?`, id)
@@ -350,15 +451,24 @@ func normalizeBody(in NoteInput) (*string, []byte, *string, error) {
 	if strings.TrimSpace(in.KDFParams) == "" {
 		return nil, nil, nil, fmt.Errorf("encrypted note requires kdf_params: %w", ErrInvalidNote)
 	}
-	raw, err := base64.StdEncoding.DecodeString(in.CipherB64)
+	raw, err := decodeCipher(in.CipherB64)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("decode cipher: %w", err)
-	}
-	if len(raw) < minCipherBytes || len(raw) > maxCipherBytes {
-		return nil, nil, nil, fmt.Errorf("cipher must be %d-%d bytes: %w", minCipherBytes, maxCipherBytes, ErrInvalidNote)
+		return nil, nil, nil, err
 	}
 	params := in.KDFParams
 	return nil, raw, &params, nil
+}
+
+// decodeCipher 解开线上传来的 base64 密文并做长度守卫，越界一律拒绝。
+func decodeCipher(cipherB64 string) ([]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(cipherB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode cipher: %w", err)
+	}
+	if len(raw) < minCipherBytes || len(raw) > maxCipherBytes {
+		return nil, fmt.Errorf("cipher must be %d-%d bytes: %w", minCipherBytes, maxCipherBytes, ErrInvalidNote)
+	}
+	return raw, nil
 }
 
 // kdfSaltFor 返回加密笔记要落库的 kdf_salt：master_password.salt 的冗余副本，
