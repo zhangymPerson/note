@@ -1,18 +1,21 @@
-:root {
-  --bg: #f3f4f1;
-  --surface: #fbfbf8;
-  --text: #1d2521;
-  --muted: #67716a;
-  --border: #d9ddd2;
-  --accent: #20655a;
-  --accent-contrast: #f7faf6;
-  --heat-0: #e7ebe2;
-  --heat-1: #c2d7ca;
-  --heat-2: #82b399;
-  --heat-3: #428668;
-  --heat-4: #1a5a42;
+/* 三主题：亮/暗取自 GitHub Primer 官方色板，护眼为低饱和米绿纸色。
+   data-theme 由 lib/theme.ts 在启动时写入 <html>（localStorage 优先，否则跟随系统）。 */
+:root,
+:root[data-theme='light'] {
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+  --text: #1f2328;
+  --muted: #656d76;
+  --border: #d0d7de;
+  --accent: #0969da;
+  --accent-contrast: #ffffff;
+  --heat-0: #ebedf0;
+  --heat-1: #9be9a8;
+  --heat-2: #40c463;
+  --heat-3: #30a14e;
+  --heat-4: #216e39;
 
-  color-scheme: light dark;
+  color-scheme: light;
   font-family:
     system-ui,
     -apple-system,
@@ -31,21 +34,38 @@
   --cell: 11px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #141815;
-    --surface: #1b211d;
-    --text: #e6eae4;
-    --muted: #96a299;
-    --border: #2d3730;
-    --accent: #7cc3a4;
-    --accent-contrast: #12181a;
-    --heat-0: #232b26;
-    --heat-1: #31493c;
-    --heat-2: #3f6b53;
-    --heat-3: #55926e;
-    --heat-4: #7fbd8f;
-  }
+:root[data-theme='dark'] {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --text: #e6edf3;
+  --muted: #7d8590;
+  --border: #30363d;
+  --accent: #1f6feb;
+  --accent-contrast: #ffffff;
+  --heat-0: #2d333b;
+  --heat-1: #0e4429;
+  --heat-2: #006d32;
+  --heat-3: #26a641;
+  --heat-4: #39d353;
+
+  color-scheme: dark;
+}
+
+:root[data-theme='eye-care'] {
+  --bg: #e9efdf;
+  --surface: #f2f6e9;
+  --text: #33402f;
+  --muted: #66735f;
+  --border: #c6d0b8;
+  --accent: #3f7a54;
+  --accent-contrast: #f4f7ee;
+  --heat-0: #dfe7d2;
+  --heat-1: #b5cfa0;
+  --heat-2: #86b274;
+  --heat-3: #5d9155;
+  --heat-4: #3f7a54;
+
+  color-scheme: light;
 }
 
 * {
@@ -117,6 +137,37 @@ nav {
   margin-left: auto;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.theme-switch {
+  display: flex;
+  align-self: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.theme-option {
+  padding: 2px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.theme-option[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.theme-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 main {

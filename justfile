@@ -31,6 +31,9 @@ start:
 stop:
     {{ if os() == "windows" { "powershell.exe -NoLogo -ExecutionPolicy Bypass -File scripts/dev.ps1 stop" } else { "bash scripts/dev.sh stop" } }}
 
+# 重启后台开发服务：先 stop 再 start（依赖按顺序执行）
+restart: stop start
+
 # 拉取所有远程并变基到远端最新提交；有冲突则中止（保留 rebase 现场手工解决）
 pull:
     git fetch --all --prune

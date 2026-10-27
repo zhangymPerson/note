@@ -33,9 +33,18 @@ function Stop-DevProcess([string]$name) {
         return
     }
     $procId = Get-Content $pidfile
-    # /T 杀整棵进程树：go run 与 npm(cmd) 都派生子进程
-    & taskkill.exe /T /F /PID $procId 2>$null | Out-Null
-    Write-Host "已停止 $name (pid $procId)"
+    if (Get-Process -Id $procId -ErrorAction SilentlyContinue) {
+        # /T 杀整棵进程树：go run 与 npm(cmd) 都派生子进程。
+        # taskkill 的报错走 stderr，在 $ErrorActionPreference='Stop' 下会被升级为
+        # 终止性错误（NativeCommandError），故局部放宽，避免进程恰好已退出时抛异常。
+        $ErrorActionPreference = 'Continue'
+        & taskkill.exe /T /F /PID $procId 2>$null | Out-Null
+        $ErrorActionPreference = 'Stop'
+        Write-Host "已停止 $name (pid $procId)"
+    }
+    else {
+        Write-Host "$name 进程已退出 (pid $procId)，清理 pid 文件"
+    }
     Remove-Item $pidfile -Force
 }
 

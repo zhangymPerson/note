@@ -8,11 +8,17 @@
 
 ### Added
 
+- 前端三主题切换（亮色 / 暗色 / 护眼，实现逻辑与关键决策）：
+  - 机制：`web/src/lib/theme.ts` 提供纯函数 `resolveTheme(存储值, 系统是否暗色)`——合法存储值优先，否则跟随 `prefers-color-scheme`；writable store 订阅时把结果写入 `<html data-theme>`，`setTheme` 同步存 `localStorage('note.theme')`。纯前端偏好，不落 `note.yaml`、不加后端 API。
+  - 样式：`app.css` 移除 `prefers-color-scheme` 暗色块，改为 `:root[data-theme=...]` 三块变量——亮/暗直接采用 GitHub Primer 官方色板（亮 `#ffffff/#f6f8fa/#d0d7de/#1f2328/#0969da`，暗 `#0d1117/#161b22/#30363d/#e6edf3/#1f6feb`），热力图绿阶同步 GitHub 贡献图五级色；护眼为自定低饱和米绿纸色（`#e9efdf` 底、深橄榄字、苔绿 accent）。
+  - 入口：`ThemeSwitch.svelte` 分段控件（亮色/暗色/护眼，`aria-pressed` 标记当前项、键盘可达）挂在 `Layout` 顶栏右上角；引导页不放置，主题在模块加载时已生效。
+  - 验证：新增 `theme.test.ts` 3 项（前端共 14 项）与 `just check` 通过；Playwright 驱动 Edge 实测——初始跟随系统、三主题点击切换后 `data-theme`/前景色/`aria-pressed` 全部正确、刷新后保持护眼、键盘 Enter 可切换、全新上下文系统暗色回退 dark；截图见 `.run/shot-{light,dark,eye-care}.png`。
 - `just pull` / `just push` 多远程同步任务：
   - `pull` 先 `git fetch --all --prune` 再 `git pull --rebase`；`push` 复用同样的 fetch + rebase 前置，rebase 有冲突时该行非零退出、just 立即中止，不会带着冲突推送。
   - 推送遍历 `git remote` 的全部远程（本仓库为 gitcode/gitee/origin 三个），Windows 用 PowerShell `ForEach-Object`、Unix 用 `xargs -n1`，按 `os()` 分发。
   - 验证：`just --dry-run pull|push` 展开命令正确；`just test`（Go 22 项 + 前端 11 项）与 `just check` 通过，未实际执行网络推送。
-- `just start` / `just stop` 后台开发任务（跨平台脚本，实现逻辑与关键决策）：
+- `just start` / `just stop` / `just restart` 后台开发任务（跨平台脚本，实现逻辑与关键决策）：
+  - `restart` 用 just 依赖顺序 `restart: stop start` 实现，先杀旧进程树再拉起；实测重启后前后端均 200。
   - 接口层：`justfile` 按 `os()` 分发——Windows 调 `scripts/dev.ps1`，Unix 调 `scripts/dev.sh`；start 后台拉起 `go run ./cmd/note`（:8080）与 `npm --prefix web run dev`（:5173，/api 已代理到后端），stop 按 `.run/*.pid` 停止。
   - 守护逻辑：首次 start 自动补 `npm ci` 与前端 build；PID 文件存在且进程存活则跳过重复启动；stop 用 `taskkill /T /F`（Windows）或递归 `pkill -P`+`kill`（Unix）杀整棵进程树，因 `go run` 与 npm 都会派生子进程。
   - 关键决策：Windows 端进程经 WMI `Win32_Process.Create` 创建，父进程是 WmiPrvSE，不继承 just 传入的 stdout 管道句柄——此前 `Start-Process` 方案让存活子进程持有该句柄，调用方永远等不到管道 EOF 导致 `just start` 挂起；日志重定向改由子 cmd 内部完成，统一写 `.run/<name>.log`。
@@ -48,6 +54,7 @@
 
 ### Fixed
 
+- `just stop` 在记录的 PID 已不存在时报 `NativeCommandError`：PowerShell 5.1 下 `$ErrorActionPreference='Stop'` 会把 taskkill 写到 stderr 的 "process not found" 升级为终止性错误（`2>$null` 也不能豁免），异常还导致 pid 文件残留、下次 stop 再次失败。`Stop-DevProcess` 改为先 `Get-Process` 判存活：已退出则只提示并清理 pid 文件；taskkill 调用局部放宽为 `Continue`，覆盖检查与击杀之间进程恰好退出的竞态。实测陈旧 pid 文件 stop 干净退出（exit 0）、真实 pid 杀树正常。
 - Windows 构建输出改为 `note.exe`，避免无扩展名的二进制无法在 Nushell、PowerShell 中直接执行。
 
 ### Security

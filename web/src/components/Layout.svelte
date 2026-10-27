@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte'
   import { navigate } from '../router/router'
   import { settings } from '../lib/settings'
+  import ThemeSwitch from './ThemeSwitch.svelte'
 
   let { children }: { children: Snippet } = $props()
 
@@ -29,6 +30,7 @@
       <a href="/notes/new" onclick={(event) => link(event, '/notes/new')}>新建</a>
     </nav>
     <span class="who" title="当前用户">{$settings.name}</span>
+    <ThemeSwitch />
   </header>
 
   <main>
