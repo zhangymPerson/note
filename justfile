@@ -31,6 +31,17 @@ start:
 stop:
     {{ if os() == "windows" { "powershell.exe -NoLogo -ExecutionPolicy Bypass -File scripts/dev.ps1 stop" } else { "bash scripts/dev.sh stop" } }}
 
+# 拉取所有远程并变基到远端最新提交；有冲突则中止（保留 rebase 现场手工解决）
+pull:
+    git fetch --all --prune
+    git pull --rebase
+
+# 推送到所有远程：先像 pull 一样 fetch + rebase，有冲突立即停止，再逐个远程推送
+push:
+    git fetch --all --prune
+    git pull --rebase
+    {{ if os() == "windows" { "git remote | ForEach-Object { git push $_ }" } else { "git remote | xargs -n1 git push" } }}
+
 # 构建单二进制
 build: frontend
     go build -trimpath -ldflags "-s -w" -o {{binary}} ./cmd/note
