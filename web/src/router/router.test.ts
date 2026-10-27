@@ -29,6 +29,17 @@ describe('matchRoute', () => {
     expect(matchRoute('/categories')).toEqual({ name: 'categories', params: {} })
   })
 
+  // 编辑器交棒去设置主密码时用的是 navigate('/master-password?next=...')，
+  // 带查询串就匹配不上路径，用户会看到「页面不存在」。
+  it('带查询串或锚点的站内跳转仍按路径匹配', () => {
+    expect(matchRoute('/master-password?next=%2Fnotes%2Fnew')).toEqual({
+      name: 'master',
+      params: {},
+    })
+    expect(matchRoute('/notes/abc?from=list')).toEqual({ name: 'detail', params: { id: 'abc' } })
+    expect(matchRoute('/notes/abc#top')).toEqual({ name: 'detail', params: { id: 'abc' } })
+  })
+
   it('decodes id segments', () => {
     expect(matchRoute('/notes/a%20b')).toEqual({ name: 'detail', params: { id: 'a b' } })
   })

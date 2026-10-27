@@ -15,7 +15,7 @@
   - 浏览器端加密：`web/src/lib/crypto.ts` 用 WebCrypto `PBKDF2-HMAC-SHA256`（NFC 口令 + 库中公盐，iter 150000、keylen 32）派生 `AES-256-GCM` 密钥（`extractable:false`），密文格式 `nonce(12) ‖ ciphertext ‖ tag(16)`，AAD 绑 `note:v1:<noteId>` 防跨笔记挪用密文；派生密钥只存在 `web/src/lib/session-key.ts` 的页面内存，无服务端会话、无自动过期，锁定即 `set(null)` 并清空草稿。派生失败、tag 校验失败、编码错误统一收敛为「密码错误或数据损坏」，不区分原因以免泄露可判定信息。
   - Markdown：`web/src/lib/markdown.ts` + `web/src/components/Markdown.svelte` 用 `marked` 解析、`DOMPurify.sanitize` 清洗后才 `{@html}`，外链补 `rel="noopener noreferrer"`；后端只保存原始 Markdown 文本，编辑器左侧写原文、右侧实时预览，`web/src/lib/draft.ts` 单槽内存草稿保证解锁表单回填不会吞掉已输入正文。
   - 界面：新增/编辑 `NoteEditorView`、列表 `NoteListView`（分类筛选 + 分页 + 删除确认）、详情 `NoteDetailView`（已加密笔记先解锁）、设置主密码 `MasterPasswordView`、忘记密码 `ForgotPasswordView`、分类管理 `CategoryManagerView`；路由 `/notes`、`/notes/new`、`/notes/:id`、`/notes/:id/edit`、`/notes/:id/forgot`、`/master-password`、`/categories`。
-  - 验证：`just test`（Go 5 个包 + 前端 54 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；Playwright 驱动 Edge 在隔离实例（`127.0.0.1:8099` + `.run/e2e-notes.db`）跑通 29 项端到端断言；`node:sqlite` + `node:crypto` 写的独立 CLI 直读同一个库解密，正文与浏览器原文逐字一致、错误密码被 GCM 拒绝；二进制扫描确认加密正文未落盘（同库明文笔记的对照串确实出现在 WAL 中，说明扫描方法有效）。
+  - 验证：`just test`（Go 5 个包 + 前端 54 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；Playwright 驱动 Edge 在隔离实例（`127.0.0.1:8099` + `.run/e2e-notes.db`）跑通 29 项端到端断言；`node:sqlite` + `node:crypto` 写的独立 CLI 直读同一个库解密，正文与浏览器原文逐字一致、错误密码被 GCM 拒绝；二进制扫描确认加密正文未落盘（同库明文笔记的对照串确实出现在 WAL 中，说明扫描方法有效）。修补后又跑了一遍浏览器实测（`.run/fix-verify.mjs`，26 项断言全绿）：两次密码不一致/漏填都被拦下且没写出半成品笔记、交棒设置主密码后草稿原样回到编辑页、另一篇笔记的编辑器拿不到这份草稿、库里 `is_encrypted=1` 且 `kdf_params` 就是应用参数、手改该行 `iter` 后连正确密码也报「密码错误或数据损坏」（改回即恢复）、错误密码与损坏仍是同一句提示、未分类 chip 计数与筛选都含两篇、分类新增与改名撞名都显示「该分类名已存在」、`q` 恰好 200 字通过 / 201 字 400 + `fields.q`。
 - 前端三主题切换（亮色 / 暗色 / 护眼，实现逻辑与关键决策）：
   - 机制：`web/src/lib/theme.ts` 提供纯函数 `resolveTheme(存储值, 系统是否暗色)`——合法存储值优先，否则跟随 `prefers-color-scheme`；writable store 订阅时把结果写入 `<html data-theme>`，`setTheme` 同步存 `localStorage('note.theme')`。纯前端偏好，不落 `note.yaml`、不加后端 API。
   - 样式：`app.css` 移除 `prefers-color-scheme` 暗色块，改为 `:root[data-theme=...]` 三块变量——亮/暗直接采用 GitHub Primer 官方色板（亮 `#ffffff/#f6f8fa/#d0d7de/#1f2328/#0969da`，暗 `#0d1117/#161b22/#30363d/#e6edf3/#1f6feb`），热力图绿阶同步 GitHub 贡献图五级色；护眼为自定低饱和米绿纸色（`#e9efdf` 底、深橄榄字、苔绿 accent）。
@@ -63,6 +63,8 @@
 - Go 模块版本提升到 1.26，SQLite 使用纯 Go 驱动，构建全程关闭 CGO。
 
 ### Fixed
+
+- 勾选「用主密码加密」的新笔记在保存后跳到「页面不存在」：编辑器交棒用的是站内跳转 `navigate('/master-password?next=…')`，而 `router.matchRoute()` 拿整串（含查询串）去匹配 `^/master-password$`，匹配失败落到 `notFound`。第一次加密这条主路径因此在真实浏览器里完全走不通（直接地址栏输入或用新标签打开反而正常，所以单元测试与此前的 e2e 都没发现）。`matchRoute()` 改为先剥掉 `?`/`#` 之后的部分再匹配路径；`router.test.ts` 先以 `/master-password?next=…`、`/notes/abc?from=list`、`/notes/abc#top` 三例复现（RED：`notFound`）再修复（GREEN）。
 
 - 首次加密可能把笔记永久锁死：主密码已配置但本会话还没有密钥时，编辑器只要求「输入非空」就用它派生密钥并加密——打错一个字母照样保存成功，刷新后再也解不开，而且当场没有任何异常。现在这条路径必须两次输入主密码且比对一致（`session-key.passwordMismatch`）才继续；已有密文可当场试解的路径不变（由 GCM 标签验证）。
 - 浏览器忽略笔记自己声明的 KDF 参数：`kdf_params` 列被写入却从未被读取，手改库里的 `iter` 不影响解锁，PRD AC-23 与技术方案 §6.2/§6.3 的承诺都落空。新增 `crypto.paramsFromNote()`：按该笔记声明的参数派生，越界（`iter` 不在 [100000,1000000]、`keylen≠32`、`algo≠pbkdf2`、JSON 畸形）一律按数据损坏拒绝解密；详情页与编辑器的解锁都改用它，重加密时把同一份参数写回去。顺带修正「`kdf_salt` 供客户端比对」的说法——接口从不返回该列，它只是满足 0001 `CHECK` 的冗余副本。

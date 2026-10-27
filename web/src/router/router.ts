@@ -41,7 +41,10 @@ function safeDecode(value: string): string {
   }
 }
 
-export function matchRoute(pathname: string): Route {
+export function matchRoute(pathWithQuery: string): Route {
+  // navigate() 传进来的可能是 '/master-password?next=...' 这种带查询串的整串，
+  // 只在路径部分匹配，否则会落到 notFound。
+  const pathname = pathWithQuery.split(/[?#]/)[0] ?? pathWithQuery
   for (const candidate of patterns) {
     const match = candidate.pattern.exec(pathname)
     if (!match) continue
