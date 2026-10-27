@@ -16,6 +16,7 @@
 
 ```text
 cmd/note/          入口与优雅退出
+internal/build/    版本与构建信息（ldflags 注入，未注入时回落 debug.ReadBuildInfo）
 internal/config/   三级配置加载（内置默认值 → YAML → 命令行），严格解析
 internal/store/    SQLite 打开、迁移与应用数据访问
 internal/web/      HTTP 处理器、中间件、内嵌前端
@@ -38,6 +39,9 @@ docs/              PRD、技术方案、构建指南
 - 状态变更类 API（PUT/POST/DELETE）必须通过 CSRF 双提交校验；前端经 `web/src/lib/api.ts` 统一携带 `X-CSRF-Token`。
 - 安全不变量（见 TECH_DESIGN 1.2）：密码与派生密钥不落盘、不进任何浏览器存储；日志不含正文/密码/Cipher；`{@html}` 只允许出现在 `web/src/components/Markdown.svelte`，且输入必须先过 `DOMPurify.sanitize`；解密与含正文响应 `Cache-Control: no-store`。
 - 加解密全在浏览器端 WebCrypto（PBKDF2 + AES-256-GCM），服务端零密码学代码；数据库只存密文 BLOB 与公盐，因此 CLI 直读库解密是允许的扩展路径。
+- 主密码**可修改但不可找回**：改密时旧口令是否正确只由浏览器试解已有密文的 GCM 认证标签判定，服务端不得新增任何口令校验/解密端点。迁移只走 `PUT /api/notes/{id}/cipher`，它有意不动 `title/content/category_id/rev/updated_at`（改一次口令不该让全部笔记在按更新时间倒序的列表里排到最前），也不换全局盐——不要「顺手」把它对齐成 `PUT /api/notes/{id}`。
+- `GET /api/info` 与其它 API 一样 `Cache-Control: no-store`，响应只能是标准库运行时与配置值，不得含正文、密文、盐、密码或令牌；`just build` 用 `-ldflags -X` 注入 `internal/build` 的四个变量，git 不可用时必须退化为空值而不是让构建失败。
+- 引导完成判据是纯函数 `decideStep(nameSet, masterConfigured)`（`web/src/lib/onboarding.ts`），`App.svelte` 的门槛与 `document.title` 必须共用它；引导页第二步在库中已有主密码时只解锁、绝不重复 `POST /api/master-password`（重复提交会 409，会把用户永久卡在第二步）。
 - 配置文件写入必须原子（临时文件 + rename），且保持 YAML 严格解析（未知键报错）。
 
 ## 开发流程规则

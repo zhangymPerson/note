@@ -2,10 +2,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档版本 | v1.3 |
+| 文档版本 | v1.4 |
 | 日期 | 2026-10-27 |
-| 状态 | 已实现（与本文件第 6、7.1、9 节一致；偏离来源见 PRD 2.4） |
-| 关联文档 | [产品需求文档 v1.3](./PRD.md)、[已实现设计说明](./superpowers/specs/2026-10-27-note-crud-category-encryption-design.md) |
+| 状态 | 已实现（与本文件第 6、7.1、9 节一致；偏离来源见 PRD 2.4 与 2.5） |
+| 关联文档 | [产品需求文档 v1.4](./PRD.md)、[信息页与改密设计](./superpowers/specs/2026-10-27-user-info-page-design.md)、[已实现设计说明](./superpowers/specs/2026-10-27-note-crud-category-encryption-design.md) |
 | 目标 | 将 PRD 落地为可实现的 Go + SQLite + Svelte 5 技术方案 |
 
 ---
@@ -14,7 +14,7 @@
 
 ### 1.1 实现目标
 
-- 实现 PRD v1.3 的 MVP 范围：Markdown 笔记 CRUD、列表分页与分类筛选、模糊查询、分类管理、全局主密码 + 浏览器端不可逆加密、助记问题、忘记密码。
+- 实现 PRD v1.4 的 MVP 范围：Markdown 笔记 CRUD、列表分页与分类筛选、模糊查询、分类管理、全局主密码 + 浏览器端不可逆加密、助记问题、忘记密码、用户信息页（运行信息 + 改名 + 改助记问题 + 改主密码与浏览器端批量重加密）。
 - 运行时为单个 Go 可执行文件；前端在构建阶段编译并嵌入，不单独部署。
 - 数据只保存在本地 SQLite 文件中，默认仅监听 `127.0.0.1`。
 - 加密笔记在数据库中只保存密文字节；不保存密码、密码哈希或可用于重置的密钥。**加解密在浏览器完成，服务端零密码学代码。**
@@ -31,10 +31,11 @@
 6. `{@html}` 只允许出现在 `components/Markdown.svelte`，其输入必须先经 `DOMPurify.sanitize`；标题、摘要、分类名、助记问题只通过文本插值渲染。
 7. 日志不包含正文、密文、密码、助记问题、完整查询串、Cookie 或请求体。
 8. 服务端不参与加解密：`cipher` 对服务端是不透明字节，因此不存在解密端点，也没有服务端解锁会话。
+9. 主密码可修改，但仍不可找回。「旧密码是否正确」只由浏览器试解已有密文的 GCM 认证标签判定，服务端永远不具备验证口令的能力；改密全程密码与派生密钥都不落盘、不进任何浏览器存储，`PUT /api/notes/{id}/cipher` 的密文请求体也不入日志（`accessLog` 从不记 body）。
 
 ### 1.3 非目标
 
-多用户、云同步、分享、移动端原生应用、附件、标签、回收站、密码找回/重置、修改主密码、取消加密、加密正文搜索、公网认证与 TLS 终止。Markdown/富文本渲染已在 v1.3 移出非目标（仅支持 Markdown 源码存储 + 浏览器端渲染，不做所见即所得编辑器）。详见 PRD 第 2.2 节。
+多用户、云同步、分享、移动端原生应用、附件、标签、回收站、密码找回/重置、取消加密、加密正文搜索、公网认证与 TLS 终止。Markdown/富文本渲染已在 v1.3 移出非目标（仅支持 Markdown 源码存储 + 浏览器端渲染，不做所见即所得编辑器）。修改主密码已在 v1.4 移出非目标：需旧密码，由浏览器端批量重加密实现（见 6.9），与「找回」仍是两件事。详见 PRD 第 2.2 与 2.5 节。
 
 ---
 
@@ -99,18 +100,21 @@ note/
 │   ├── 0003_note_fields.sql      # kind/remark/rev
 │   └── 0004_note_app.sql         # categories、master_password、notes.category_id
 ├── internal/
+│   ├── build/info.go             # 版本/git hash/构建日期变量（ldflags 注入）+ vcs 回落
 │   ├── config/config.go          # 加载、合并、校验 note.yaml
 │   ├── store/
-│   │   ├── store.go              # 打开、PRAGMA、迁移、关闭 checkpoint
-│   │   ├── note.go               # 笔记 CRUD、搜索、删除后 checkpoint
+│   │   ├── store.go              # 打开、PRAGMA、迁移、关闭 checkpoint、SchemaVersion
+│   │   ├── note.go               # 笔记 CRUD、搜索、加密清单、密文替换、删除后 checkpoint
 │   │   ├── category.go           # 分类 CRUD、默认分类与占用守卫
-│   │   ├── master.go             # 主密码单行（盐 + 助记问题）
+│   │   ├── master.go             # 主密码单行（盐 + 助记问题）与问题单独修改
 │   │   └── activity.go           # 搜索记录与统计
 │   └── web/
 │       ├── server.go             # 路由、静态资源、SPA 回退
 │       ├── middleware.go         # 恢复、Host、安全头、日志、CSRF
 │       ├── handlers_notes.go
+│       ├── handlers_note_cipher.go # 密文清单与单条替换（改密迁移用）
 │       ├── handlers_categories.go # 分类与主密码端点
+│       ├── handlers_info.go      # GET /api/info
 │       ├── handlers_settings.go
 │       ├── handlers_stats.go
 │       ├── handlers_csrf.go
@@ -121,14 +125,17 @@ note/
 │   ├── src/
 │   │   ├── lib/
 │   │   │   ├── api.ts            # fetch 封装、CSRF 刷新重试、错误映射
-│   │   │   ├── notes.ts          # 笔记/分类/主密码领域客户端
+│   │   │   ├── notes.ts          # 笔记/分类/主密码领域客户端（含密文清单与单条替换）
 │   │   │   ├── crypto.ts         # PBKDF2 + AES-GCM、密文编解码
+│   │   │   ├── reencrypt.ts      # 改密迁移引擎（纯函数 + 依赖注入，五类落定）
+│   │   │   ├── info.ts           # /api/info 摊成界面可读行、字节与时长格式化
+│   │   │   ├── onboarding.ts     # 两步引导判据 decideStep(nameSet, masterConfigured)
 │   │   │   ├── session-key.ts    # 页面内存密钥、unlockKey/lockSession
 │   │   │   ├── draft.ts          # 编辑器内存草稿
 │   │   │   ├── markdown.ts       # marked + DOMPurify 净化
 │   │   │   ├── stats.ts / theme.ts / toast.ts / settings.ts
 │   │   ├── components/           # Layout、Markdown、ActivityHeatmap、ThemeSwitch
-│   │   ├── views/                # 列表、详情、编辑器、分类、主密码、忘记密码、概览、引导、404
+│   │   ├── views/                # 列表、详情、编辑器、分类、主密码、信息、忘记密码、概览、引导、404
 │   │   ├── router/               # 约 60 行 History 路由
 │   │   ├── app.css               # 全局样式与三主题变量
 │   │   ├── App.svelte
@@ -240,18 +247,29 @@ database:
 
 ```text
 GET    /api/csrf
+GET    /api/info
+GET    /api/settings
+PUT    /api/settings/name
 GET    /api/notes
 POST   /api/notes
+GET    /api/notes/encrypted       # 密文清单（改密迁移用），静态段优先于 {id}
 GET    /api/notes/{id}
 PUT    /api/notes/{id}
+PUT    /api/notes/{id}/cipher     # 只替换密文（需 CSRF）
 DELETE /api/notes/{id}
-POST   /api/notes/{id}/encrypt
-POST   /api/notes/{id}/unlock
-POST   /api/notes/{id}/lock
-POST   /api/lock
+GET    /api/categories
+POST   /api/categories
+PUT    /api/categories/{id}
+DELETE /api/categories/{id}
+GET    /api/master-password
+POST   /api/master-password       # 仅首次配置
+PUT    /api/master-password/question
+GET    /api/stats
 GET    /assets/*
 GET    /*                     # 非 API GET → index.html
 ```
+
+没有 `POST /api/notes/{id}/encrypt`、`/unlock`、`/lock`：加解密与锁定都是浏览器本地动作（见 8.3）。
 
 中间件顺序：
 
@@ -280,9 +298,13 @@ GET    /*                     # 非 API GET → index.html
 | `POST /api/notes` | 创建明文笔记或写入浏览器密文 | 标题、正文或密文二选一、`kdf_params`、`category_id`、可选客户端 `id` |
 | `GET /api/notes/{id}` | 详情；加密笔记返回元数据 + base64 密文，永不含 `content` | UUID 合法；否则 404 |
 | `PUT /api/notes/{id}` | 更新标题/正文或提交新密文 | 同 POST；加密笔记不允许改回明文 |
+| `PUT /api/notes/{id}/cipher` | 改密迁移：只替换单条笔记的密文与派生参数 | 只接受 `cipher_b64` + `kdf_params`，其余字段不接受；长度与 base64 语义同 POST（共用 `decodeCipher`）；明文笔记 409 `not_encrypted`，不存在 404 |
+| `GET /api/notes/encrypted` | 全部加密笔记的 `{id, cipher_b64, kdf_params}` 清单，按 `created_at, id` 稳定排序 | 无；不含标题与正文，空清单序列化为 `[]` |
 | `DELETE /api/notes/{id}` | 永久删除，不要求密码 | UUID 合法 |
 | `GET /api/master-password` | 返回 `{configured, salt_b64, question}` | 无；盐是公开 KDF 参数 |
-| `POST /api/master-password` | 一次性设置盐与助记问题 | `salt_b64` 解码后恰好 16 字节；`question` 1–100 字符；已存在返回 409 |
+| `POST /api/master-password` | 首次设置盐与助记问题（引导页步骤 2） | `salt_b64` 解码后恰好 16 字节；`question` 1–100 字符；已存在返回 409 |
+| `PUT /api/master-password/question` | 只改助记问题，不换盐 | `question` 去空白后 1–100 码点；未配置主密码返回 409 `master_password_missing` |
+| `GET /api/info` | 运行信息与构建版本（见 8.6） | 无；只读标准库运行时与配置，失败时仅 `PRAGMA user_version` 读错会 500 |
 | `GET /api/categories` | 分类列表 + 每类笔记数 | 无 |
 | `POST /api/categories` | 新增分类 | 名称 1–30 字符、忽略大小写唯一 |
 | `PUT /api/categories/{id}` | 改名 | `id=1` 返回 409；重名 400 字段错误 |
@@ -511,6 +533,7 @@ SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.update
 - 每次非空搜索写一条 `activities(kind='search')`，供首页热力图与高频词统计；查询词本身只进数据库，不进日志。
 - 查询词通过 URL 参数传递，会进入浏览器历史。
 - 数据量增长后评估 FTS5 `trigram`，仅索引明文笔记；当前不引入。
+- 改密迁移用的两条查询在 `note.go`：`ListEncryptedCiphers` 只选 `id / cipher / kdf_params`，按 `created_at, id` 稳定排序（迁移过程中新增或删除笔记不会让分页错位）；`UpdateNoteCipher` 只写 `cipher / kdf_params / kdf_salt`，先在事务外做只读探针区分「不存在」与「未加密」（`SetMaxOpenConns(1)` 下事务内再开第二条查询会死锁，全局盐也必须事务外取）。语义与取舍见 6.9。
 
 ### 5.5 备份、删除与残留
 
@@ -518,6 +541,7 @@ SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.update
 - 删除为永久删除；不提供回收站。
 - 全局 `secure_delete=ON`；`DeleteNote` 提交后立即执行 `PRAGMA wal_checkpoint(TRUNCATE)`，`Store.Close()` 再执行一次。
 - 明文可能留在 WAL 的窗口：从一次写入（或明文转加密、编辑重加密）到下一次 checkpoint 之间。应用只在删除与退出时主动压缩，接受这个窗口；退出后 WAL 已截断。
+- 改密迁移同样只在 WAL 里留下**旧密文**（对它没有口令，也不打算解），明文一侧不产生任何新残留：新密文由浏览器用旧密钥解密后重新加密，明文与两把派生密钥都只在页面内存。
 - `VACUUM` 作为可选维护操作；不自动执行，避免大库启动耗时。
 - 边界：旧备份、文件系统快照、SSD 磨损均衡层可能保留旧明文；应用只保证运行时数据库逻辑删除与 WAL 清理。
 - 已验证：哨兵字符串扫描 `.db` 与 `.db-wal`，加密笔记正文不落盘，明文笔记正文照常可见。
@@ -576,11 +600,11 @@ key = PBKDF2-HMAC-SHA256(normalized, master_salt, iter=150000, keylen=32) → AE
 
 ### 6.4 主密码与加密笔记的流程
 
-#### 配置主密码（只此一次）
+#### 配置主密码（仅首次）
 
 1. 浏览器生成 16 字节盐，`POST /api/master-password` 提交 `salt_b64` 与助记问题——**不提交口令**。
 2. 服务端以单行 `INSERT` 写入；已存在则返回 409 `master_password_exists`。
-3. 口令从此只存在于用户记忆：无法找回、无法重置、没有后台通道。忘记它，加密笔记永久打不开。
+3. 口令从此只存在于用户记忆：无法找回、无法重置、没有后台通道。忘记它，加密笔记永久打不开。修改它（6.9）要求先给出旧口令，因此「忘记」和「想换」是两件事。
 
 #### 新建加密笔记
 
@@ -608,7 +632,7 @@ key = PBKDF2-HMAC-SHA256(normalized, master_salt, iter=150000, keylen=32) → AE
 ### 6.6 编辑重加密
 
 - 编辑器要求当前页面持有会话密钥，否则先跳解锁。
-- 保存时用同一把密钥、新的 12 字节 nonce 重新加密，`PUT /api/notes/{id}` 只带 `cipher_b64`；盐与 `kdf_params` 不变，改不了口令。
+- 保存时用同一把密钥、新的 12 字节 nonce 重新加密，`PUT /api/notes/{id}` 只带 `cipher_b64`；常规编辑不改盐也不改口令（换口令见 6.9，那条路径才会把 `kdf_params` 刷成当前应用参数）。
 - 加密笔记不可逆转回明文：PUT 提交 `content` 而库里已是 `is_encrypted=1` 时返回 409 `encrypted_immutable`。
 - 明文只作为 JS 字符串存在于编辑器状态与草稿里；离开编辑器即清草稿，无法保证 GC 已擦除字节，文档不夸大这一点。
 
@@ -626,6 +650,28 @@ key = PBKDF2-HMAC-SHA256(normalized, master_salt, iter=150000, keylen=32) → AE
 - 口令、派生密钥不写 `localStorage`/`sessionStorage`/`IndexedDB`；会话密钥与未保存草稿只在页面内存。
 - 旧备份、快照、SSD 层不在应用控制范围；文档提示用户自行保护。
 - 验收时对主库与 WAL 执行哨兵标记检索：加密正文不可见，明文正文照常可见。
+
+### 6.9 修改主密码与浏览器端批量重加密
+
+换口令的动作全在浏览器：`web/src/lib/reencrypt.ts` 是纯函数 + 依赖注入（`decrypt`、`encrypt`、`putCipher` 都可替换，因此可在 Vitest 里穷尽失败分支），`views/InfoView.svelte` 只做状态编排。服务端仍然零密码学，只提供两个搬运字节的端点。
+
+流程：
+
+1. `GET /api/master-password` 取全局盐 → 用旧口令派生密钥。
+2. `GET /api/notes/encrypted` 取全部加密笔记的 `{id, cipher_b64, kdf_params}`（不含标题与正文），避免逐条 `GET /api/notes/{id}` 的 N+1。
+3. `verifyOldPassword`：按清单顺序逐条试解，**第一条能解开的即通过**。不能只试第一条——库里可能混着更早一次改密留下的笔记，先撞上那条就会把正确的旧口令误判成错误。全部试完仍无一可解才报「主密码不正确或数据已损坏」，此时不写入会话密钥、不写任何密文。清单为空则跳过验证（没有可验证的东西），退化为「新口令两次一致」。
+4. 用新口令派生密钥 → `planMigration` 先用**新**密钥逐条试解，能解开的判为 `already_done`，其余为待办。这一步让整条流程天然幂等。
+5. `runMigration` 逐条 `decrypt(旧) → encrypt(新) → PUT /api/notes/{id}/cipher`，带进度回调；单条失败记录后继续，不中断。落定归入五类：`done` / `already_done` / `skipped_gone`（PUT 返回 409 `not_encrypted` 或 404，迁移途中笔记被删）/ `failed_old_key` / `failed_network`。汇总为「成功 N · 跳过 M · 失败 K」，`remaining = failed_old_key + failed_network`。
+6. `sessionKey.set(新密钥)` 后重读清单再跑一次 `planMigration` 复核：`remaining === 0` 提示成功，否则界面出现迁移状态卡并给「继续迁移」。
+
+设计取舍：
+
+- **独立端点而非 `PUT /api/notes/{id}` 加标志**：`store.UpdateNote` 无条件重写 `title`（`normalizeTitle` 要求非空）与 `updated_at`，加标志等于在同一校验函数里塞第二套语义；`UpdateNoteCipher` 只更新 `cipher / kdf_params / kdf_salt`。
+- **不动 `updated_at` 与 `rev`**：改一次口令不该让全部笔记在「按更新时间倒序」的列表里排到最前，那是对用户可见的假修订。
+- **不换全局盐**：`master_password.salt` 保持首次设置的值。换盐会让尚未迁移的笔记当场不可解（`notes.kdf_salt` 只是它的冗余副本），盐不变则该列无需迁移。重加密时把每条笔记的 `kdf_params` 刷成当前应用参数，KDF 强度可以借改密提升。
+- **没有 `key_version` 列，也没有迁移状态机**：GCM 认证标签本身就是校验器，试解足以判定某条笔记当前由哪把口令保护；中断后重跑靠 `already_done` 分类自然续上，无需任何持久化状态。
+- **中断语义的实测边界**：中途关页面后把新口令填进「旧口令」栏能续跑，因为已迁移的笔记会被判成 `already_done` 原样跳过。但若清单里同时存在「更早一次口令保护的笔记」与「本次已迁移的笔记」，一次续跑只能推进其中一类，另一类以 `failed_old_key` 如实列在迁移状态卡里且不被写坏（实测：该分支跑完后两条密文字节逐字不变）。界面文案「这条笔记不是用刚才那个旧密码加密的」就是为此而写。
+- 口令与新派生密钥只活在函数局部变量：不进 toast、日志、`localStorage`/`sessionStorage`/IndexedDB；`PUT /cipher` 的请求体不会入日志（`accessLog` 从不记 body）；CSRF 令牌过期由 `api.ts` 的 403 重取重试兜住，逐条 PUT 天然继承。
 
 ---
 
@@ -745,15 +791,19 @@ web/src/lib/session-key.ts
 | GET | `/api/notes/{id}` | 无 | 200 全量笔记 |
 | PUT | `/api/notes/{id}` | 笔记载荷 | 200 全量笔记 |
 | DELETE | `/api/notes/{id}` | 无 | 204 |
+| GET | `/api/notes/encrypted` | 无 | 200 `{"notes":[{"id","cipher_b64","kdf_params"}]}`，空清单为 `[]`；静态段优先于 `{id}` 通配 |
+| PUT | `/api/notes/{id}/cipher` | `{"cipher_b64":"…","kdf_params":"…"}` | 200 全量笔记；只换密文，`title/content/category_id/rev/updated_at` 逐字不变 |
 | GET | `/api/categories` | 无 | 200 分类数组 |
 | POST | `/api/categories` | `{"name":"…"}` | 201 分类 |
 | PUT | `/api/categories/{id}` | `{"name":"…"}` | 200 分类数组 |
 | DELETE | `/api/categories/{id}` | 无 | 204 |
 | GET | `/api/master-password` | 无 | 200 主密码配置 |
-| POST | `/api/master-password` | `{"salt_b64":"…","question":"…"}` | 201 `{"configured":true,"question":"…"}` |
+| POST | `/api/master-password` | `{"salt_b64":"…","question":"…"}` | 201 `{"configured":true,"question":"…"}`；仅首次配置 |
+| PUT | `/api/master-password/question` | `{"question":"…"}` | 200 主密码配置（盐不变） |
+| GET | `/api/info` | 无 | 200 运行信息与构建版本（见 8.6） |
 | GET | `/api/stats?days=` | 查询参数（默认 370 天） | 200 统计 |
 
-没有 `/encrypt`、`/decrypt`、`/unlock`、`/lock` 这类端点：加解密在浏览器里完成，锁定是前端清内存密钥的本地动作。
+没有 `/encrypt`、`/decrypt`、`/unlock`、`/lock` 这类端点：加解密在浏览器里完成，锁定是前端清内存密钥的本地动作。也没有口令校验端点——改密时的旧口令由浏览器试解已有密文来判定（6.9）。
 
 ### 8.4 请求示例
 
@@ -820,7 +870,9 @@ GET /api/csrf
 | 笔记/分类不存在 | 404 `not_found` |
 | 加密笔记改回明文 | 409 `encrypted_immutable` |
 | 未设置主密码就存加密笔记 | 409 `master_password_missing` |
-| 重复设置主密码 | 409 `master_password_exists` |
+| 重复设置主密码 | 409 `master_password_exists`（改密走信息页，不重复 POST） |
+| 对明文笔记替换密文 | 409 `not_encrypted` |
+| 未设置主密码就改助记问题 | 409 `master_password_missing` |
 | 客户端 id 撞库 | 409 `id_conflict` |
 | 默认分类改名/删除 | 409 `category_reserved` |
 | 删除非空分类 | 409 `category_not_empty` + `fields.note_count` |
@@ -828,6 +880,30 @@ GET /api/csrf
 | 其它 | 500 `internal` |
 
 分类名重复走 409 `category_exists` + `fields.name = 该分类名已存在`（与 `category_not_empty`、`id_conflict` 同族：名字被占是状态冲突，不是输入格式错误），前端仍按字段级反馈标红输入框。没有 401 家族：不存在服务端会话，解密失败只在浏览器里表现为一句 `密码错误或数据损坏`。
+
+`PUT /api/notes/{id}/cipher` 的校验只剩「必须带密文与派生参数，其余不接受」——base64 与 29–65536 字节的密文长度语义与 `normalizeBody` 共用 `decodeCipher`，因此两条路径同值。`store.UpdateNoteCipher` 先在事务外做只读探针，把「笔记不存在」和「笔记未加密」明确区分成 `ErrNoteNotFound` / `ErrNotEncrypted`：`db.SetMaxOpenConns(1)` 下事务内再开第二条查询会死锁，全局盐也必须事务外取。
+
+### 8.6 运行信息响应
+
+`GET /api/info` 输出 18 个字段，全部来自标准库运行时与已加载配置，`Cache-Control: no-store`：
+
+```json
+{
+  "version": "1.4.0", "git_hash": "805b6a1", "git_dirty": false,
+  "build_date": "2026-10-27T12:45:05Z", "build_label": "1.4.0 (805b6a1, 2026-10-27T12:45:05Z)",
+  "go_version": "go1.27.0", "goos": "windows", "goarch": "amd64",
+  "hostname": "LAPTOP-XXXX", "cpu_count": 8,
+  "mem_alloc_bytes": 808392, "mem_sys_bytes": 11321400,
+  "started_at": "2026-10-27T12:50:00Z", "uptime_seconds": 20,
+  "db_path": ".run/e2e-info.db", "schema_version": 4,
+  "addr": "127.0.0.1:8099", "allow_remote": false
+}
+```
+
+- `version / git_hash / git_dirty / build_date` 来自 `internal/build`：`just build` 用 `-ldflags -X` 注入，未注入时 `Describe()` 回落到 `debug.ReadBuildInfo()` 的 `vcs.revision / vcs.time / vcs.modified`，此时 `build_label` 是「1.4.0（开发构建）」。
+- `started_at` 在 `newApplication` 里记 `time.Now().UTC()`，以 RFC3339 输出，UTC 时形如 `2006-01-02T15:04:05Z`，遵守时间戳约定。
+- `schema_version` 由 `Store.SchemaVersion` 读 `PRAGMA user_version`。
+- 响应里没有密文、盐、助记问题、口令或令牌；`hostname`、`db_path`、`addr` 是本机自用信息的展示，不构成对外泄露面（应用只监听回环，除非显式 `--allow-remote`）。
 
 ---
 
@@ -863,12 +939,15 @@ web/src/
 │   ├── ActivityHeatmap.svelte # 首页贡献图风格热力图
 │   ├── Markdown.svelte        # 全仓唯一允许 {@html} 的组件
 │   └── ThemeSwitch.svelte     # 亮色 / 暗色 / 护眼
-├── views/                     # 9 个视图，见 9.3 路由表
+├── views/                     # 10 个视图，见 9.3 路由表
 ├── router/router.ts           # 自写 History 路由
 ├── lib/
 │   ├── api.ts                 # fetch、CSRF、错误映射
-│   ├── notes.ts               # 笔记/分类/主密码接口的类型与调用
+│   ├── notes.ts               # 笔记/分类/主密码接口的类型与调用（含密文清单与替换）
 │   ├── crypto.ts              # WebCrypto PBKDF2 + AES-256-GCM
+│   ├── reencrypt.ts           # 改密迁移引擎（纯函数 + 依赖注入）
+│   ├── info.ts                # /api/info → 界面可读行
+│   ├── onboarding.ts          # decideStep(nameSet, masterConfigured)
 │   ├── session-key.ts         # 页面内存里的会话密钥
 │   ├── draft.ts               # 页面内存里的未保存草稿
 │   ├── markdown.ts            # marked → DOMPurify
@@ -879,7 +958,7 @@ web/src/
 └── main.ts
 ```
 
-纯函数与管道（`crypto`、`markdown`、`draft`、`notes`、`stats`、`theme`、`toast`、`router`）都有同名 Vitest 用例；`session-key.ts` 的用例并在 `crypto.test.ts` 里（它断言的是密钥与口令派生的同一套语义）。视图组件本身不写单测，靠端到端验证覆盖。
+纯函数与管道（`crypto`、`markdown`、`draft`、`notes`、`stats`、`theme`、`toast`、`router`、`settings`、`reencrypt`、`info`、`onboarding`）都有同名 Vitest 用例；`session-key.ts` 的用例并在 `crypto.test.ts` 里（它断言的是密钥与口令派生的同一套语义）。改密迁移引擎之所以必须是纯函数 + 依赖注入，是因为它的五类落定（6.9）要在没有浏览器和没有服务端的情况下穷尽；视图组件本身不写单测，靠端到端验证覆盖。
 
 ### 9.3 路由
 
@@ -891,7 +970,8 @@ web/src/
 | `/notes/:id` | 详情（含解锁） |
 | `/notes/:id/edit` | 编辑 |
 | `/notes/:id/forgot` | 忘记主密码 |
-| `/master-password` | 设置或解锁主密码，支持 `?next=` 回跳 |
+| `/master-password` | 首次设置主密码，支持 `?next=` 回跳；已配置时转为只读卡并指向信息页 |
+| `/info` | 用户信息页：运行信息、用户名、主密码与助记问题、迁移状态 |
 | `/categories` | 分类管理 |
 | 其它 | 前端 404 视图 |
 
@@ -925,6 +1005,7 @@ sendJSON(method, path, payload)
 ### 9.5 状态与数据流
 
 - 跨视图状态只有三样：路由（`writable<Route>`）、toast 队列（`lib/toast.ts`）、姓名与主题（`lib/settings.ts`、`lib/theme.ts`）。其余全是视图局部 `$state`。
+- `lib/settings.ts` 的 `SettingsState` 同时带 `nameSet` 与 `masterConfigured`：`loadSettings()` 用 `Promise.all` 并行读 `/api/settings` 与 `/api/master-password`，任一个失败整体进 `error` 态——引导判据不能建立在半套数据上。`saveName()` 只回写 `name/nameSet`，不重读主密码（引导页步骤 1 靠它本地推进）。
 - 两个模块级单例活在页面内存：`session-key.ts` 的会话密钥与 `draft.ts` 的未保存草稿。浏览器持久存储只用于主题偏好（`localStorage`），密码、正文、派生密钥一律不落任何浏览器存储。
 - 刷新或新开页签后密钥即失效，加密笔记重新要求口令——没有服务端会话可以续。
 - 「锁定」是纯前端动作：`lockSession()` 置空密钥并清草稿，当前视图里已解密的正文同步清空；不发请求、不调 API。
@@ -935,22 +1016,24 @@ sendJSON(method, path, payload)
 | 视图 | 行为 |
 | --- | --- |
 | 首页 | 拉取统计渲染热力图与查询账簿；搜索框就地列出命中并计入一次查询 |
-| 引导页 | 只填一个称呼，`PUT /api/settings/name` 后进入正常界面 |
+| 引导页 | 两步：步骤 1 只填称呼（`PUT /api/settings/name`，成功后本地推进、不重读设置）；步骤 2 收**必填**的初始主密码（口令 + 确认 + 助记问题 + 不可逆勾选，生成盐 → `POST` → `unlockKey`），没有「暂时跳过」。挂载时先 `GET /api/master-password`：已配置则变成「输入口令解锁」单输入框，绝不重复 POST |
+| 信息页 | 四张卡：运行信息（`GET /api/info` 摊成只读键值行，缺失显示「未知」）、用户名（`PUT /api/settings/name`）、主密码（当前助记问题 + 内联改问题 + 改密表单）、迁移状态（`remaining > 0` 时列出未迁移条目与原因并给「继续迁移」）；全部文本插值 |
 | 列表 | 解析 `q`/`category`/`page`，分类 chips 带笔记数；行内显示明文摘要或「密文内容不在列表展示」；删除有二次确认 |
 | 详情 | 明文直接渲染 Markdown；加密且无密钥时显示口令框与助记问题入口；解密成功后可编辑、删除、锁定 |
 | 编辑器 | 标题、分类（含「未分类」）、正文与防抖预览；勾选加密时若无会话密钥先就地解锁或跳 `/master-password?next=…`，跳转前把内容存进内存草稿；离开时有未保存提醒 |
-| 主密码 | 未配置：口令 + 确认 + 助记问题 + 不可逆勾选；已配置：只输口令派生密钥，成功回跳 `next` |
+| 主密码 | 未配置：口令 + 确认 + 助记问题 + 不可逆勾选，成功后派生密钥并回跳 `next`；已配置：只读展示助记问题并给一个去 `/info` 的按钮，改密与改问题都在信息页，本页不再重复表单 |
 | 忘记主密码 | 展示助记问题与「无法找回」说明；唯一出路是确认删除这条加密笔记，不要求口令 |
 | 分类管理 | 新增、改名、删除；删除有确认，非空时把服务端返回的笔记数显示出来 |
 | 404 | 说明路径不存在，给返回列表链接 |
 
-`App.svelte` 在最外层把关：设置载入中显示 `role="status"` 提示，载入失败给出「重新载入」按钮，`name_set` 为假时无论访问哪个路径都渲染引导页——命名是进入应用的第一道门，而不是某个页面上的提示条。
+`App.svelte` 在最外层把关：设置载入中显示 `role="status"` 提示，载入失败给出「重新载入」按钮；引导完成的判据是纯函数 `decideStep(nameSet, masterConfigured)`（返回 0 才渲染 `Layout`，否则渲染引导页并按这两个布尔决定从哪一步开始），`document.title` 用同一判定，避免出现「还在引导却显示『XX的笔记』」。只按 `nameSet` 判断会漏掉「名字存好、主密码还没设就刷新」这个半态，用户会绕过必填进主界面。
 
 ### 9.7 前端安全约束
 
 - `{@html}` 只出现在 `components/Markdown.svelte`，其唯一输入来自 `lib/markdown.ts` 的 `renderMarkdown()`——`marked` 解析（`gfm`，同步模式）后交 `DOMPurify.sanitize`，并用 `afterSanitizeAttributes` 钩子给所有 `<a>` 补 `noopener noreferrer`。其它地方一律 `{...}` 文本插值。
 - 口令输入框：解锁用 `autocomplete="current-password"`，设置主密码用 `autocomplete="new-password"`；不预填 `value`，提交后清空内存状态。派生密钥 `exportable: false`，无法被脚本序列化。
-- 不把口令、正文明文、助记问题答案写进 URL、日志、分析埋点或浏览器存储；未保存草稿只在内存。
+- 不把口令、正文明文、助记问题答案写进 URL、日志、分析埋点或浏览器存储；未保存草稿只在内存。改密流程同样：旧口令、新口令、两个派生密钥只作局部变量，不进 toast 文案、不进 `MigrationRow.message`（用例断言整份迁移报告序列化后不含正文）。
+- 旧口令是否正确只由浏览器试解 GCM 认证标签判定（6.9）。服务端没有口令校验端点，信息页的「改密」不构成任何找回通道。
 - 不使用外部 CDN、字体、图片或脚本；CSP 为 `default-src 'self'`。
 - 服务端响应带 `Cache-Control: no-store`，含正文的响应同样不缓存；前端不额外设置 `cache` 选项。
 - 破坏性操作（删除笔记、删除分类、忘记主密码后删笔记）都要 `window.confirm` 二次确认；主密码的不可逆勾选默认不勾，未勾选时提交按钮禁用。
@@ -1050,7 +1133,7 @@ frontend: install
     npm --prefix web run build
 
 build: frontend
-    go build -trimpath -ldflags "-s -w" -o {{binary}} ./cmd/note
+    go build -trimpath -ldflags "-s -w {{ldflags}}" -o {{binary}} ./cmd/note
 
 test: frontend
     go test ./...
@@ -1062,6 +1145,7 @@ check:
 ```
 
 - 发布统一使用 `just build`：`npm ci` → 前端构建 → Go 编译；Windows 产出 `note.exe`，其它平台 `note`。
+- `ldflags` 是 just 表达式，按 `os()` 分两支（Windows 走 PowerShell、其余走 bash 命令替换），拼出四个 `-X note/internal/build.*` 注入变量：`GitHash`、`BuildDate`（UTC 秒级）、`GitDirty`（`git status --porcelain` 非空才加）、以及源码里已有的 `Version`。两个要点：不在 git 仓库内或 `git` 不存在时命令失败**必须退化成空值**，不能让构建挂掉（`internal/build.Describe()` 会回落到 `debug.ReadBuildInfo()`）；just 在 Windows 上把命令包成 `cmd /C "powershell -Command …"` 且只保留最后一行输出，因此 PowerShell 分支必须以裸 `$a` 结尾。
 - `just test` 依赖 `frontend`，因此跑 Go 测试前会重建 `internal/web/dist`——embed 的产物永远与被测代码一致。
 - `internal/web/dist` 为生成物，不提交；缺失时 `go build` 因 embed 失败而中止。
 - 另有 `just start` / `just stop` / `just restart`（后台开发服务，日志与 pid 写入 `.run/`）与 `just pull` / `just push`（多远程同步）。
@@ -1071,7 +1155,7 @@ check:
 
 1. 干净目录执行 `npm ci` 与前端构建。
 2. `go test ./...` 与 `go test -race ./...`。
-3. `just build` 产出单二进制。
+3. `just build` 产出单二进制，并确认 `GET /api/info` 返回真实 commit hash 与 UTC 构建日期（`go run` 下应显示「开发构建」）。
 4. 将二进制复制到未安装 Node 的机器，验证页面、深链接、API。
 5. 在空数据目录首次启动，确认自动建库与迁移；修改 `config/note.yaml` 与命令行覆盖的优先级符合 4.2。
 6. 执行 PRD 第 9 节验收项，特别是明文残留检查。
@@ -1099,7 +1183,9 @@ check:
 | 跨站写请求 | 是 | CSRF 双提交（HttpOnly Cookie + 头，常量时间比较）+ 不启用 CORS + Host 白名单 |
 | DNS Rebinding | 是 | Host 白名单 + 默认只监听回环；非回环绑定需显式 `--allow-remote` |
 | 存储型 XSS | 是 | Markdown 必经 `DOMPurify.sanitize`，`{@html}` 只在一处，CSP `default-src 'self'`，外链补 `noopener noreferrer` |
-| 口令遗忘 | 无解 | 主密码不可找回、不可重置；唯一出路是确认删除该加密笔记 |
+| 口令遗忘 | 无解 | 主密码不可找回、不可重置；唯一出路是确认删除该加密笔记。修改主密码（6.9）不改变这一条：它要求先给出旧口令，服务端始终没有验证口令的能力 |
+| 迁移途中关页面 | 是 | 每条笔记的落定只由试解判定，已迁移的判为 `already_done` 可续跑；没迁完的条目如实列在迁移状态卡里，不会被写坏（实测：失败分支跑完后库里密文字节逐字不变） |
+| 信息页暴露运行信息 | 部分 | `/api/info` 只给标准库运行时与已加载配置（主机名、数据文件路径、监听地址、内存），同源、`no-store`，不含密文、盐、口令或令牌；默认只监听回环 |
 | SSD 物理残留 / 旧备份 | 否 | 应用只做逻辑删除与 WAL checkpoint，其余由用户自行保护 |
 
 ### 11.2 响应头
@@ -1158,8 +1244,12 @@ Referrer-Policy: no-referrer
 | `internal/config/config_test.go` | 内置默认值、YAML 解析、命令行覆盖、未知键拒绝、非回环绑定需 `--allow-remote`、缺失显式配置报错、用户段读写往返 |
 | `internal/store/store_test.go` | 空库自动建表并跑完 4 个迁移、重复打开幂等、`user_version` 高于程序时拒绝启动、非法文件拒绝启动、0004 对象存在、0003 扩展列默认值与 CHECK |
 | `internal/store/category_test.go` | 分类 CRUD 与笔记数、大小写不敏感重名、默认分类守卫（改名/删除）、非空分类删除返回条数、**未分类（`category_id IS NULL`）计入默认分类并可被筛出** |
-| `internal/store/master_test.go` | 主密码只写一次、盐长度与空问题拒绝 |
-| `internal/store/note_test.go` | id 形态、明文/密文建改删、明文转加密、`rev`/`updated_at`、分页、标题命中排前、分类筛选与空查询、按码点计数的 2000 边界、结构非法拒绝 |
+| `internal/store/master_test.go` | 主密码只写一次、盐长度与空问题拒绝、`UpdateMasterQuestion` 只改问题列（空/超 100 码点拒绝、未配置时报 `master_password_missing`、盐与 `created_at` 不动） |
+| `internal/store/note_test.go` | id 形态、明文/密文建改删、明文转加密、`rev`/`updated_at`、分页、标题命中排前、分类筛选与空查询、按码点计数的 2000 边界、结构非法拒绝、`ListEncryptedCiphers` 只含加密行且不带 `content`、`UpdateNoteCipher` 只换密文（`title/content/category_id/rev/updated_at` 逐字不变） |
+| `internal/build/info_test.go` | `Describe()` 的「已注入」与「回落到 vcs 信息」两分支、`Label()` 的开发构建标注 |
+| `internal/web/handlers_info_test.go` | `/api/info` 字段齐全、`no-store`、时间戳形如 `2006-01-02T15:04:05Z` |
+| `internal/web/note_cipher_api_test.go` | 清单不含 title/content、缺 `kdf_params` 与非法 base64 各返回对应字段错误、对明文笔记 409 `not_encrypted`、不存在的 id 404、不带 `X-CSRF-Token` 的 PUT 403 且库里密文未变、`/api/notes/encrypted` 不被 `{id}` 通配吃掉 |
+| `internal/web/master_question_api_test.go` | `PUT /api/master-password/question` 的成功、字段校验与 CSRF 拒绝 |
 | `internal/web/server_test.go` | SPA 回退与安全头、`/assets` 长缓存与缺失 404、未知 API 返回 JSON 404、CSRF 签发与复用、Host 白名单、带扩展名非 HTML 路径 404、设置门禁与改名、统计与搜索端点 |
 | `internal/web/notes_api_test.go` | 创建与字段级校验、密文笔记往返、客户端自带 id、列表分页与筛选、`q` 超长 400、读改删与 404/409 映射 |
 | `internal/web/categories_api_test.go` | 主密码 GET/POST 与重复设置 409、分类增删改与错误码、非空删除 409 带 `note_count` |
@@ -1175,7 +1265,12 @@ Referrer-Policy: no-referrer
   - `router/router.test.ts`：路径匹配、参数解析、`edit`/`forgot` 优先于 `detail`、未知路径；
   - `lib/crypto.test.ts`：口令 NFC、加解密往返、错误口令与篡改密文归并为 `DecryptError`、KDF 参数边界、base64 工具；
   - `lib/markdown.test.ts`：GFM 渲染、脚本与 `onerror` 被净化、外链补 `noopener noreferrer`；
-  - `lib/draft.test.ts`、`lib/notes.test.ts`、`lib/stats.test.ts`、`lib/theme.test.ts`、`lib/toast.test.ts`：内存草稿单槽语义、API 载荷与错误映射、热力图分桶、主题持久化与提示队列。
+  - `lib/draft.test.ts`、`lib/notes.test.ts`、`lib/stats.test.ts`、`lib/theme.test.ts`、`lib/toast.test.ts`：内存草稿单槽语义、API 载荷与错误映射、热力图分桶、主题持久化与提示队列；
+  - `lib/reencrypt.test.ts`：注入假 `decrypt/encrypt/putCipher` 穷尽 6.9 的五类落定；幂等续跑（第二次跑全是 `already_done`）；无加密笔记时跳过旧口令验证；`remaining` 汇总正确；**旧口令只能解开清单靠后那条时验证仍须通过**（防「只试第一条」的回归）；整份报告序列化后不含正文；
+  - `lib/info.test.ts`：`buildRows` 的 14 行中文键、缺失值统一「未知」、字节数与运行时长格式化、`allow_remote` 的是/否；
+  - `lib/onboarding.test.ts`：`decideStep(nameSet, masterConfigured)` 的四个组合；
+  - `lib/settings.test.ts`：并行读两个端点、主密码端点失败必须整体进 `error` 态（这条先用旧实现跑出 RED——引导判据不能建立在半套数据上）；
+  - `lib/notes.test.ts` 另含密文清单与单条替换的载荷与错误映射；`router/router.test.ts` 另含 `/info` 与 `/info?x=1`。
 - `just check` 跑 `svelte-check --tsconfig ./tsconfig.app.json` 与 `tsc -p tsconfig.node.json`，构建脚本 `npm run build` 会先跑同一套检查。
 - 视图组件不在单测里渲染，由 12.4 的端到端脚本覆盖。
 
@@ -1188,6 +1283,12 @@ Referrer-Policy: no-referrer
 - 跨客户端解密：用 `node:sqlite` 直接读库、`node:crypto` 按 `kdf_params` + `master_password.salt` 派生密钥解密，明文与浏览器输入逐字一致；换一个字符的口令被 GCM tag 拒掉。
 - 残留：哨兵串扫描 `.db` 与 `.db-wal`，加密正文不出现，对照的明文笔记正文照常出现。
 - 日志：抓取 access log，确认无正文、无口令、无密文、无 Cookie。
+
+v1.4 的信息页与改密链路由 `.run/info-e2e.mjs` 覆盖（同样 Playwright-core + Edge headless，独立端口与 `.run/e2e-info.db`，57 项断言），三次启动分别验证：
+
+- **空库引导**：步骤 1 只填名字就刷新，必须仍在引导页且直接落在步骤 2；两次口令不一致或未勾选确认时 `POST` 次数为 0；成功后 `master_password` 只有一行、16 字节盐与 `GET /api/master-password.salt_b64` 一致；浏览器存储里没有口令与密钥。
+- **已配置形态**：用两个页签确定性地复现「POST 已成功、解锁前刷新」—— parked 在步骤 1 的页签存名字时，另一页签已完成引导，此时步骤 2 必须渲染解锁输入框且 `POST` 次数为 0（重复 POST 会 409，缺这条分支就把用户永久卡在第二步）。老库（已配主密码、`name_set: false`）重启后填完名字直接进主界面，无死路。
+- **改密主链路**：`/info` 的 14 行运行信息含真实 commit hash 与 UTC 构建日期 → 改名（UI / `/api/settings` / 配置文件三处一致）→ 改助记问题（盐不变）→ 错误旧口令被拦下且两条密文的 `cipher`/`updated_at`/`rev` 全不变 → 正确旧口令跑完迁移（密文全换、元数据不动）→ 刷新后用新口令解锁两条 → **中断续跑**：用 `page.route` 让第二条 `PUT /cipher` 失败，界面给出「成功 1 · 跳过 0 · 失败 1（还有 1 条未迁移）」；刷新后状态卡不在任何浏览器存储留痕；用最新口令续跑时未迁移那条判为 `failed_old_key` 且字节不变，用它的真实旧口令续跑后状态卡消失、两条都可用新口令解开。收尾对 `.db` 与 `-wal` 检索本次用过的 4 个口令与 2 段加密正文，全部不出现，对照明文哨兵照常出现。
 
 ### 12.4 安全与其它检查
 
@@ -1287,7 +1388,7 @@ Referrer-Policy: no-referrer
 ### 15.2 M2：加密与笔记应用（已完成，方案改为浏览器端）
 
 - 浏览器 WebCrypto：PBKDF2-HMAC-SHA256 + AES-256-GCM，`lib/crypto.ts` / `lib/session-key.ts`。
-- 全局主密码一次性配置、助记问题、忘记口令后唯一出路是删除笔记。
+- 全局主密码首次配置（`POST` 只允许一次）、助记问题、忘记口令后唯一出路是删除笔记（修改口令自 v1.4 起提供，见 15.5）。
 - 加密创建、编辑重加密、加密不可逆；服务端只搬运密文。
 - 分类：`sql/0004` + store 分类层 + CRUD API + 分类管理视图 + 列表筛选 chips。
 - Markdown 写作与预览：`marked` + `DOMPurify`，正文只存原始 Markdown。
@@ -1304,8 +1405,16 @@ Referrer-Policy: no-referrer
 
 - 跨浏览器手工验证（Chrome/Firefox）与响应式的真机走查。
 - 数据量基准（10k 笔记列表/搜索）与冷启动计时。
-- 明文笔记的回收站、导出导入、修改主密码（当前语义明确不提供后者）。
+- 明文笔记的回收站、导出导入。
 - `go test -race` 与 fuzz 目标尚未纳入 `just test`。
+
+### 15.5 M5：信息页与改密（v1.4，已完成）
+
+- `internal/build` + `justfile` 的 `ldflags` 注入与 `debug.ReadBuildInfo` 回落；`GET /api/info` 与 `Store.SchemaVersion`。
+- 密文迁移端点：`GET /api/notes/encrypted` 清单与 `PUT /api/notes/{id}/cipher` 单条替换（`store.ListEncryptedCiphers` / `UpdateNoteCipher`）。
+- 助记问题单独修改：`PUT /api/master-password/question`（不换盐）。
+- 前端：`/info` 四张卡、`lib/reencrypt.ts` 迁移引擎、`lib/info.ts` 展示摊平、引导页两步式与 `lib/onboarding.ts` 判据、`settings` 并行读两端点。
+- 验证：Go 与前端单测（`just test`）、`just check`、`.run/info-e2e.mjs` 的 57 项端到端断言（含中断续跑与口令残留检索）。
 
 ---
 
@@ -1314,7 +1423,7 @@ Referrer-Policy: no-referrer
 | 编号 | 决策 | 理由 | 代价 |
 | --- | --- | --- | --- |
 | ADR-01 | 前端使用 Svelte 5 + Vite，不使用 SvelteKit | 轻量、无 SSR/文件路由负担，产物直接嵌入 Go | 需要自写路由 |
-| ADR-02 | 自写约 85 行 History 路由，不引入路由库 | 9 个视图，减少依赖与体积 | 路由功能有限，复杂需求需扩展 |
+| ADR-02 | 自写约 85 行 History 路由，不引入路由库 | 10 个视图，减少依赖与体积 | 路由功能有限，复杂需求需扩展 |
 | ADR-03 | JSON API + SPA 回退 | 前后端解耦，便于独立前端构建 | 需要维护 API 契约 |
 | ADR-04 | SQLite 单连接 | 避免并发写与 PRAGMA 状态问题，个人场景足够 | 查询串行化 |
 | ADR-05 | 不保存口令哈希或校验值 | 减少离线爆破目标；GCM tag 已能验证口令 | 校验口令必须完整派生 + 解密 |
@@ -1323,11 +1432,15 @@ Referrer-Policy: no-referrer
 | ADR-08 | PBKDF2-HMAC-SHA256 150k 迭代，而非 Argon2id | WebCrypto 原生支持、零依赖、跨客户端易复现 | 抗 GPU 爆破弱于内存硬化 KDF；弱口令风险更高（PRD 风险 R4） |
 | ADR-09 | 标题、分类名、时间、助记问题为明文 | 支持列表、筛选、搜索与提示展示 | 元数据泄露 |
 | ADR-10 | `dist` 不提交，构建时生成 | 避免产物与源码漂移，单二进制发布 | 直接 `go build` 前必须先构建前端 |
-| ADR-11 | 不提供修改主密码/取消加密 | 符合不可逆加密语义，实现与心智都更简单 | 需新建笔记迁移内容 |
+| ADR-11 | 不提供取消加密；修改主密码自 v1.4 移出非目标（ADR-16） | 取消加密会破坏「存储侧不可逆」的语义；改密不破坏它，因为明文始终只在浏览器内存里 | 仍需新建笔记才能把某条加密笔记换成明文 |
 | ADR-12 | 错误口令与数据损坏统一为一句提示 | 避免泄露解密细节 | 用户无法区分两者 |
 | ADR-13 | 未分类既存为 `category_id IS NULL`，又在 `categories` 里放一行 id=1「未分类」 | 老库无需回填即可工作；分类管理、chips 与筛选有一致的展示锚点 | 两处表示同一含义，列表与计数必须把 NULL 归入默认分类（见 5.4，本轮修复的缺陷） |
 | ADR-14 | 默认分类的「不可改名、不可删除」守卫放在应用层，不写 SQL 触发器 | 触发器无法向用户回传语义化错误码 | 守卫只在经由应用的写入路径上生效，手工改库不受约束 |
 | ADR-15 | Markdown 渲染只用 `marked` + `dompurify`，`{@html}` 全仓唯一出口 | 依赖面小、净化点单一、审计容易 | 富文本能力受这两个库限制 |
+| ADR-16 | 改密用「浏览器逐条试解」当校验器与进度判据，不加 `key_version` 列、不做迁移状态机 | GCM 认证标签已经是可靠的口令校验器；试解同时给出「这条笔记当前由哪把口令保护」，天然幂等、可续跑，无需任何持久化状态与新迁移 | 验证与规划各需一次派生与解密；清单里混着多代口令时，一次续跑只能推进一类，另一类如实列为失败 |
+| ADR-17 | 换口令只走 `PUT /api/notes/{id}/cipher` 独立端点，且不动 `updated_at`/`rev`、不换全局盐 | `UpdateNote` 无条件重写标题与更新时间，加 `reencrypt` 标志等于在一个校验函数里塞第二套语义；改一次口令不该造成列表顺序的假修订；换盐会让未迁移的笔记当场不可解 | 多一个端点与一条 store 方法；密文替换的校验与 `normalizeBody` 必须保持同值（共用 `decodeCipher`） |
+| ADR-18 | 版本注入用 `-ldflags -X`，未注入时回落 `debug.ReadBuildInfo()` 的 vcs 字段 | `just build` 产物有真实 hash 与构建日期，`go run`/`go test` 也拿得到可用信息，信息页不会空白；不在仓库内构建时命令失败退化为空值，不阻断构建 | 两个来源的 hash 长度与 dirty 语义需对齐（`shortRevision` 收成 7 位）；just 在 Windows 只保留末行输出，分支写法受限 |
+| ADR-19 | 引导页两步、初始主密码必填，半态由「已配置则只解锁」分支兜住 | 避免「想加密时才发现还没主密码」的断链；只按 `nameSet` 判断会让用户绕过必填 | 启动多读一个端点；步骤 2 有两种形态，需要端到端脚本用双页签才能确定性地复现 |
 
 ---
 
@@ -1338,10 +1451,10 @@ PRD 第 13 节的开放问题在本轮已全部落定，技术方案按结论实
 | 编号 | 问题 | 结论 |
 | --- | --- | --- |
 | Q1 | 单向加密的语义 | 口令正确才能查看；无找回、无后门 |
-| Q2 | 独立口令还是全局主密码 | 全局主密码，只配置一次，会话级解锁 |
+| Q2 | 独立口令还是全局主密码 | 全局主密码，首次配置一次后在信息页可修改（v1.4），会话级解锁 |
 | Q3 | 元数据明文 | 接受：标题、分类、时间、助记问题明文，界面明确告知 |
 | Q4 | 解锁后搜索加密正文 | 不做；密文对服务端是黑盒 |
-| Q5 | 修改口令 / 导出加密备份 | 不做 |
+| Q5 | 修改口令 / 导出加密备份 | 修改口令 v1.4 起做（需旧口令，浏览器端批量重加密，仍无找回）；导出加密备份不做 |
 | Q6 | 应用启动口令 | 不做，仅回环监听 |
 | Q7 | 加解密放哪儿 | 浏览器端 WebCrypto，服务端零密码学代码，CLI 可直读库解密 |
 
