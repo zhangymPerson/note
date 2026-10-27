@@ -446,6 +446,10 @@ input {
 .heat-month {
   grid-row: 1;
   align-self: end;
+  /* 网格列只有 --cell 宽，不换行并撑出内容宽度，否则月份文本会被裁掉 */
+  justify-self: start;
+  width: max-content;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 0.7rem;
   line-height: 1;

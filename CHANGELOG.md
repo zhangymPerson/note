@@ -64,6 +64,8 @@
 
 ### Fixed
 
+- 首页「近一年使用频率」热力图的月份标签显示不全：`.heat-field` 的周列只有 `calc(var(--cell) + 3px)`（14px）宽，`.heat-month` 作为网格项默认 `justify-self: stretch` 被压成同样宽度，而 CSS 自动换行允许在数字与汉字之间断行，于是「10月」折成两行；行高只有 18px 且 `align-self: end`，上面那行数字被 `.heatmap` 的 `overflow-x: auto`（隐含 `overflow-y: auto`）裁掉，页面上只剩一个「月」字。给 `.heat-month` 加 `white-space: nowrap; width: max-content; justify-self: start`，标签按内容宽度单行渲染并向右溢出到第 1 行的空白区（相邻月份至少隔 4 列约 56px，不会重叠）。
+  - 验证：`just test`（Go 50 项 + 前端 60 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；用无头 Edge 对同一页面截图对比——修复前月份只剩「月」且数字行被裁，修复后 `10月 12月 1月 … 10月` 完整单行显示，且截图取自 `just build` 产出的内嵌前端二进制。
 - 勾选「用主密码加密」的新笔记在保存后跳到「页面不存在」：编辑器交棒用的是站内跳转 `navigate('/master-password?next=…')`，而 `router.matchRoute()` 拿整串（含查询串）去匹配 `^/master-password$`，匹配失败落到 `notFound`。第一次加密这条主路径因此在真实浏览器里完全走不通（直接地址栏输入或用新标签打开反而正常，所以单元测试与此前的 e2e 都没发现）。`matchRoute()` 改为先剥掉 `?`/`#` 之后的部分再匹配路径；`router.test.ts` 先以 `/master-password?next=…`、`/notes/abc?from=list`、`/notes/abc#top` 三例复现（RED：`notFound`）再修复（GREEN）。
 
 - 首次加密可能把笔记永久锁死：主密码已配置但本会话还没有密钥时，编辑器只要求「输入非空」就用它派生密钥并加密——打错一个字母照样保存成功，刷新后再也解不开，而且当场没有任何异常。现在这条路径必须两次输入主密码且比对一致（`session-key.passwordMismatch`）才继续；已有密文可当场试解的路径不变（由 GCM 标签验证）。
