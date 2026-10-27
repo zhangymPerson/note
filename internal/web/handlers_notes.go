@@ -19,6 +19,7 @@ const (
 
 	maxTitleRunes   = 200
 	maxContentRunes = 2000
+	maxQueryRunes   = 200
 	minCipherBytes  = 29
 	maxCipherBytes  = 65536
 
@@ -153,10 +154,15 @@ func writeNoteStoreError(w http.ResponseWriter, err error, fields map[string]str
 
 func (app *application) handleListNotes(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	q := query.Get("q")
+	if utf8.RuneCountInString(q) > maxQueryRunes {
+		writeValidationError(w, map[string]string{"q": "查询词请控制在 200 个字以内"})
+		return
+	}
 	page := atoiOr(query.Get("page"), 1)
 	categoryID := atoiOr(query.Get("category"), 0)
 
-	result, err := app.store.ListNotes(r.Context(), query.Get("q"), int64(categoryID), page)
+	result, err := app.store.ListNotes(r.Context(), q, int64(categoryID), page)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "查询失败，请稍后重试")
 		return

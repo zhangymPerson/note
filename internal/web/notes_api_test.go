@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -331,6 +332,27 @@ func TestNotesAPIListPagingAndFilter(t *testing.T) {
 	}
 	if stats.TotalSearches < 1 {
 		t.Fatalf("expected search activity recorded, got %d", stats.TotalSearches)
+	}
+}
+
+func TestNotesAPISearchQueryLengthLimit(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	token := csrfTokenFor(t, handler)
+
+	rec := apiRequest(t, handler, http.MethodGet,
+		"/api/notes?q="+url.QueryEscape(strings.Repeat("查", 201)), token, "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for oversized query, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := errorBody(t, rec)
+	if body.Error.Fields["q"] == "" {
+		t.Fatalf("expected field error for q, got %+v", body.Error)
+	}
+
+	rec = apiRequest(t, handler, http.MethodGet,
+		"/api/notes?q="+url.QueryEscape(strings.Repeat("查", 200)), token, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a 200-rune query, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -130,6 +130,7 @@
       class="search-input"
       type="search"
       placeholder="按标题或正文搜索…"
+      maxlength="200"
       bind:value={query}
     />
     <button class="button" type="submit" disabled={loading}>搜索</button>

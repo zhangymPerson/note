@@ -66,6 +66,7 @@
       class="search-input"
       type="search"
       placeholder="查询笔记标题或内容…"
+      maxlength="200"
       bind:value={query}
     />
     <button class="button" type="submit" disabled={query.trim() === '' || searching}>
