@@ -37,7 +37,9 @@
       <a href="/categories" onclick={(event) => link(event, '/categories')}>分类</a>
       <a href="/notes/new" onclick={(event) => link(event, '/notes/new')}>新建</a>
     </nav>
-    <span class="who" title="当前用户">{$settings.name}</span>
+    <a class="who" href="/info" title="用户与信息" onclick={(event) => link(event, '/info')}>
+      {$settings.name}
+    </a>
     {#if $hasKey}
       <button class="button button-quiet" type="button" onclick={lock}>锁定</button>
     {/if}

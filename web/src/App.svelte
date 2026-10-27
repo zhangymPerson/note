@@ -7,6 +7,7 @@
   import NoteEditorView from './views/NoteEditorView.svelte'
   import MasterPasswordView from './views/MasterPasswordView.svelte'
   import CategoryManagerView from './views/CategoryManagerView.svelte'
+  import InfoView from './views/InfoView.svelte'
   import ForgotPasswordView from './views/ForgotPasswordView.svelte'
   import NotFoundView from './views/NotFoundView.svelte'
   import { loadSettings, settings } from './lib/settings'
@@ -63,6 +64,8 @@
       <MasterPasswordView />
     {:else if $route.name === 'categories'}
       <CategoryManagerView />
+    {:else if $route.name === 'info'}
+      <InfoView />
     {:else}
       <NotFoundView />
     {/if}

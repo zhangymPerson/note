@@ -140,6 +140,12 @@ nav {
   margin-left: auto;
   color: var(--muted);
   font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.who:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .theme-switch {
@@ -531,6 +537,35 @@ input {
 
 .top-query {
   overflow-wrap: anywhere;
+}
+
+/* 信息页：卡片纵向堆叠标题 / 说明 / 表单，键值行的值可能很长（路径、地址） */
+.info-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-rows dd {
+  font-size: 0.95rem;
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.migration-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.migration-rows li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px dotted var(--border);
+  font-size: 0.92rem;
 }
 
 @media (prefers-reduced-motion: no-preference) {
