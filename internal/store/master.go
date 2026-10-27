@@ -15,6 +15,9 @@ const masterSaltLen = 16
 // ErrMasterPasswordExists 表示主密码配置已写入（只允许配置一次）。
 var ErrMasterPasswordExists = errors.New("master password already configured")
 
+// ErrMasterPasswordMissing 表示尚未配置主密码，无法保存加密笔记。
+var ErrMasterPasswordMissing = errors.New("master password is not configured")
+
 // MasterPassword 是全局主密码的公开配置：盐 + 助记问题，绝不含密码本身。
 type MasterPassword struct {
 	SaltB64   string `json:"salt_b64"`
