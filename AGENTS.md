@@ -36,7 +36,8 @@ docs/              PRD、技术方案、构建指南
 - 时间戳统一为 UTC 秒级文本 `2006-01-02T15:04:05Z`，可直接按字符串排序。
 - 数据库结构变更只能新增 `sql/NNNN_*.sql` 迁移，禁止手改既有迁移。
 - 状态变更类 API（PUT/POST/DELETE）必须通过 CSRF 双提交校验；前端经 `web/src/lib/api.ts` 统一携带 `X-CSRF-Token`。
-- 安全不变量（见 TECH_DESIGN 1.2）：密码不落盘；日志不含正文/密码/Cookie；前端禁止 `{@html}`；解密与含正文响应 `Cache-Control: no-store`。
+- 安全不变量（见 TECH_DESIGN 1.2）：密码与派生密钥不落盘、不进任何浏览器存储；日志不含正文/密码/Cipher；`{@html}` 只允许出现在 `web/src/components/Markdown.svelte`，且输入必须先过 `DOMPurify.sanitize`；解密与含正文响应 `Cache-Control: no-store`。
+- 加解密全在浏览器端 WebCrypto（PBKDF2 + AES-256-GCM），服务端零密码学代码；数据库只存密文 BLOB 与公盐，因此 CLI 直读库解密是允许的扩展路径。
 - 配置文件写入必须原子（临时文件 + rename），且保持 YAML 严格解析（未知键报错）。
 
 ## 开发流程规则

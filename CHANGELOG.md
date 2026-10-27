@@ -8,6 +8,14 @@
 
 ### Added
 
+- 笔记 CRUD + 分类管理 + 全局主密码浏览器端加密 + Markdown 编写预览（实现过程与关键逻辑）：
+  - 数据层：迁移 `sql/0004_note_app.sql` 新增 `categories`（保留 `id=1`「未分类」、`name` NOCASE 唯一）、`master_password`（单行，只存 16 字节公盐 `salt` 与助记问题 `question`，密码与派生密钥都不落库）以及 `notes.category_id` 外键、`notes.cipher` BLOB、`notes.kdf_params` JSON。「不选分类」在库里存成 `category_id IS NULL`，与 `id=1` 行展示等价。
+  - 存储层：`internal/store/category.go` 分类 CRUD——删除时若仍有笔记返回 `category_not_empty` 并带 `fields.note_count`，`id=1` 禁止改名与删除（`category_reserved`）；`internal/store/note.go` 笔记 CRUD 与分页搜索（`q` LIKE 通配符转义、按分类过滤、`updated_at` 倒序）；`internal/store/master.go` 主密码一次性设置（重复设置 `master_password_exists`，未设置时加密返回 `master_password_missing`）。
+  - 接口层：`GET/POST/PUT/DELETE /api/notes[/{id}]`、`GET/POST /api/categories`、`PUT/DELETE /api/categories/{id}`、`GET/POST /api/master-password`。正文与密文必须二选一（`content` ≤ 2000 码点；`cipher_b64` StdEncoding、29–65536 字节；`kdf_params` 校验 algo/iter/keylen）；已加密笔记不允许改回明文（409 `encrypted_immutable`）。服务端全程零密码学代码，只校验与透传，因此 CLI 直读 SQLite 解密是可行的扩展路径。
+  - 浏览器端加密：`web/src/lib/crypto.ts` 用 WebCrypto `PBKDF2-HMAC-SHA256`（NFC 口令 + 库中公盐，iter 150000、keylen 32）派生 `AES-256-GCM` 密钥（`extractable:false`），密文格式 `nonce(12) ‖ ciphertext ‖ tag(16)`，AAD 绑 `note:v1:<noteId>` 防跨笔记挪用密文；派生密钥只存在 `web/src/lib/session-key.ts` 的页面内存，无服务端会话、无自动过期，锁定即 `set(null)` 并清空草稿。派生失败、tag 校验失败、编码错误统一收敛为「密码错误或数据损坏」，不区分原因以免泄露可判定信息。
+  - Markdown：`web/src/lib/markdown.ts` + `web/src/components/Markdown.svelte` 用 `marked` 解析、`DOMPurify.sanitize` 清洗后才 `{@html}`，外链补 `rel="noopener noreferrer"`；后端只保存原始 Markdown 文本，编辑器左侧写原文、右侧实时预览，`web/src/lib/draft.ts` 单槽内存草稿保证解锁表单回填不会吞掉已输入正文。
+  - 界面：新增/编辑 `NoteEditorView`、列表 `NoteListView`（分类筛选 + 分页 + 删除确认）、详情 `NoteDetailView`（已加密笔记先解锁）、设置主密码 `MasterPasswordView`、忘记密码 `ForgotPasswordView`、分类管理 `CategoryManagerView`；路由 `/notes`、`/notes/new`、`/notes/:id`、`/notes/:id/edit`、`/notes/:id/forgot`、`/master-password`、`/categories`。
+  - 验证：`just test`（Go 5 个包 + 前端 54 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；Playwright 驱动 Edge 在隔离实例（`127.0.0.1:8099` + `.run/e2e-notes.db`）跑通 29 项端到端断言；`node:sqlite` + `node:crypto` 写的独立 CLI 直读同一个库解密，正文与浏览器原文逐字一致、错误密码被 GCM 拒绝；二进制扫描确认加密正文未落盘（同库明文笔记的对照串确实出现在 WAL 中，说明扫描方法有效）。
 - 前端三主题切换（亮色 / 暗色 / 护眼，实现逻辑与关键决策）：
   - 机制：`web/src/lib/theme.ts` 提供纯函数 `resolveTheme(存储值, 系统是否暗色)`——合法存储值优先，否则跟随 `prefers-color-scheme`；writable store 订阅时把结果写入 `<html data-theme>`，`setTheme` 同步存 `localStorage('note.theme')`。纯前端偏好，不落 `note.yaml`、不加后端 API。
   - 样式：`app.css` 移除 `prefers-color-scheme` 暗色块，改为 `:root[data-theme=...]` 三块变量——亮/暗直接采用 GitHub Primer 官方色板（亮 `#ffffff/#f6f8fa/#d0d7de/#1f2328/#0969da`，暗 `#0d1117/#161b22/#30363d/#e6edf3/#1f6feb`），热力图绿阶同步 GitHub 贡献图五级色；护眼为自定低饱和米绿纸色（`#e9efdf` 底、深橄榄字、苔绿 accent）。
@@ -48,17 +56,25 @@
 
 ### Changed
 
+- `docs/PRD.md` 与 `docs/TECH_DESIGN.md` 升到 v1.3，按已验证实现逐项重写偏离部分：Argon2id → WebCrypto PBKDF2-HMAC-SHA256（纯浏览器无 WASM 成本）、服务端加解密与会话 Cookie（`note_sess`、TTL、401 家族）→ 派生密钥只留页面内存且无服务端会话、`{@html}` 全面禁止 → `Markdown.svelte` 单点例外且输入必过 `DOMPurify`、错误码矩阵修正（分类名重复是 400 而非 409、字段是 `fields.note_count` 而非 `fields.count`、无 415）、正文上限 1 MiB → 2000 码点；性能表区分实测数值（前端 JS 163.61 kB / gzip 58.34 kB）与未测项，新增 ADR-01…ADR-15 与 Q1–Q7 结论，明确「未执行」清单（Firefox/Chrome 实测、10k 笔记性能、`go test -race`、fuzz）。
+- `AGENTS.md` 安全不变量改写：`{@html}` 例外表述、密码与派生密钥不进任何浏览器存储、服务端零密码学代码与 CLI 直读解密定位。
 - 技术方案补充配置目录、数据库自动检测与迁移流程、`sql/` 迁移目录约定。
 - 前端构建输出重定向到 `internal/web/dist`，由 `go:embed` 嵌入，部署不再需要 Node/npm。
 - Go 模块版本提升到 1.26，SQLite 使用纯 Go 驱动，构建全程关闭 CGO。
 
 ### Fixed
 
+- 「未分类」既看不见也统计不到：库里未选分类的笔记存的是 `notes.category_id IS NULL`，而 `ListCategories` 只按 `n.category_id = c.id` 计数、`ListNotes` 只按 `n.category_id = ?` 过滤，导致分类 chip 永远是 0、「全部」少算、点「未分类」列表为空。改为默认分类（`id=1`）计数与筛选都并入 `IS NULL`（`LEFT JOIN ... OR (c.id = ? AND n.category_id IS NULL)`、`(n.category_id = ? OR n.category_id IS NULL)`）。先以 `TestDefaultCategoryCoversUncategorizedNotes` 复现（RED：`NoteCount:0`，期望 2）再修复（GREEN）。
+- 编辑已加密笔记时正文一片空白：`NoteEditorView` 拉到笔记后只置 `cipher`、没有尝试用会话里的派生密钥解密，已解锁的会话也要重新走一遍解锁表单。改为有密钥就直接 `decryptNoteContent` 回填，解不开（密钥属于别的密码）才回落到解锁表单并给出提示，切换笔记与重新解锁时清理 `revealFailed`。
+- 搜索词长度上限只写在文档里没有实现：`GET /api/notes` 现在校验 `q` ≤ 200 字（`maxQueryRunes`），超限返回 400 + `fields.q`，前端两处搜索框（首页与列表页）同步 `maxlength="200"`，`writeValidationError` 的字段优先级纳入 `q`。
 - `just stop` 在记录的 PID 已不存在时报 `NativeCommandError`：PowerShell 5.1 下 `$ErrorActionPreference='Stop'` 会把 taskkill 写到 stderr 的 "process not found" 升级为终止性错误（`2>$null` 也不能豁免），异常还导致 pid 文件残留、下次 stop 再次失败。`Stop-DevProcess` 改为先 `Get-Process` 判存活：已退出则只提示并清理 pid 文件；taskkill 调用局部放宽为 `Continue`，覆盖检查与击杀之间进程恰好退出的竞态。实测陈旧 pid 文件 stop 干净退出（exit 0）、真实 pid 杀树正常。
 - Windows 构建输出改为 `note.exe`，避免无扩展名的二进制无法在 Nushell、PowerShell 中直接执行。
 
 ### Security
 
+- 加密笔记的密钥派生与加解密全部在浏览器 WebCrypto 内完成：派生密钥 `extractable:false` 且只存在页面内存，密码、明文正文、派生密钥均不写 localStorage / sessionStorage / IndexedDB / Cookie，服务端日志与错误响应不含正文；锁定会话即丢弃密钥并清空内存草稿，无自动过期窗口。密文 AAD 绑定笔记 ID，跨笔记搬运密文会直接解密失败。
+- Markdown 渲染只有一处 `{@html}`（`web/src/components/Markdown.svelte`），输入必须先过 `DOMPurify.sanitize`，外链自动补 `rel="noopener noreferrer"`；含正文与解密结果响应保持 `Cache-Control: no-store`。
+- 主密码设置界面显式提示弱口令风险（建议 12 字符以上长口令）：密钥由口令派生，库中公盐与 `kdf_params` 公开，弱口令可被离线爆破。
 - 默认只监听回环地址，绑定非回环地址必须显式 `--allow-remote` 并输出警告。
 - 数据库文件权限收紧为 `0600`，启用 WAL、`secure_delete` 与 `quick_check`。
 - 统一安全响应头、Host 白名单、CSRF Cookie，API 错误响应禁止缓存。
