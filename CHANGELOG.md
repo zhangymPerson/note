@@ -8,6 +8,15 @@
 
 ### Added
 
+- 用户信息页端到端实测（`.run/info-e2e.mjs`，Playwright 驱动 Edge headless，57 项断言全绿）：
+  - 环境：`just build`（必须走 just，否则 `ldflags` 不注入、看不到 commit 短 hash）产出 `note.exe`，脚本自己起停**三次**隔离实例——`--config .run/e2e-note.yaml --addr 127.0.0.1:8099 --db .run/e2e-info.db`。`--config` 单独隔离是必须的：改用户名会原子重写配置文件，不隔离就会把开发者真实 `config/note.yaml` 里的名字改掉。断言用 `node:sqlite` 只读打开同一个库，密文比对取 `cipher` BLOB 原始字节。
+  - 引导：全新库走「填名字 → 刷新 → 仍在引导页第 2 步 → 设密码 → 进主界面」，`master_password` 只有一行、盐 16 字节且与 `GET /api/master-password` 的 `salt_b64` 一致，两次不一致被前端拦下时 `POST /api/master-password` 计数为 0，全程只 POST 一次；密码/密钥不进 `localStorage`/`sessionStorage`。
+  - 已配置形态：脚本用两个标签页确定性地复现——页面 A 停在第 1 步（它的 settings 还是「主密码未配」），页面 B 先走完引导，回到 A 填名字后第 2 步就是解锁形态，`#master-password` 不再渲染、`POST` 计数为 0（重复 POST 会 409），库里仍是同一行同一盐。
+  - 信息页：`/info` 直达；「Git 构建」行含构建时的短 hash，「服务版本」= `1.4.0 (<hash>, <UTC 构建日期>)`，运行平台/Go 版本/主机名/内存/数据文件/结构版本 4/监听地址/允许远程访问逐项核对；改用户名后界面、`GET /api/settings`、`name_set: true` 配置文件三处一致；改助记问题后 `salt_b64` 与首次设置相同。
+  - 改密主链路：错误旧密码被拦下且两条 `cipher` 字节 + `updated_at` + `rev` 一字不变；正确旧密码跑完后两条密文都换、`updated_at`/`rev` 仍不变。中途退出用 `page.route` 只放行第一次 `PUT /api/notes/{id}/cipher`、AbortError 掉第二次 → 迁移卡如实显示「成功 1 · 跳过 0 · 失败 1（还有 1 条未迁移）」与「提交失败（Failed to fetch）」；reload 后迁移卡不残留（迁移状态本来就不落盘）。
+  - **实测纠正了设计文档的一处乐观表述**：规格说中途关页面后「把新密码填进旧密码栏就能自然续上」，只对「PUT 已发出但响应丢了」的情形成立；真的只迁完一条时，剩下那条仍受**上一个密码**保护，填新密码会得到 `failed_old_key`（remaining 不归零），但已迁移那条判为 `already_done` 未被二次加密、未迁移那条密文字节与中止前完全相同（无损坏），卡片文案「这条笔记不是用刚才那个旧密码加密的」正是用户需要的提示。接着把真正的上一个密码填进旧密码栏续跑：只有没迁的那条被改写，remaining 归零，两条随后都能在详情页用新口令当场解开。
+  - Security（明文残留）：改密全程用了 4 个口令、2 条加密正文与 1 条明文对照正文。扫描 `.run/e2e-info.db` 与 `-wal`：4 个主密码明文与 2 段加密正文都不在任何数据文件里，而明文对照组的正文确实出现在文件里——证明扫描方法本身有效、不是漏检。
+  - 验证：`just test`（Go 4 个包 + 前端 12 个文件 96 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）在实测前后都通过。
 - 用户信息页与浏览器端改密（实现过程与关键逻辑）：
   - 入口：顶栏 `.who` 由 `<span>` 改成 `<a href="/info">`（站内跳转走 `link()`，保留中键/新标签打开），新增路由 `/info`（`RouteName` 加 `'info'`、pattern `^\/info$`，带查询串仍按路径匹配）。
   - 运行信息卡：`web/src/lib/info.ts` 的 `buildRows(ServerInfo)` 把 `GET /api/info` 摊成 14 行中文键值（服务版本 / Git 构建 / 构建日期 / 运行平台 / Go 版本 / 主机名 / CPU 核心数 / 内存占用 / 本次运行时长 / 启动时间 / 数据文件 / 数据库结构版本 / 监听地址 / 允许远程访问）；缺失值统一显示「未知」而不是 `undefined`，`uptime_seconds` 摊成「X 小时 Y 分」，字节数按 B/KB/MB/GB 取一位小数，`allow_remote` 摊成「是/否」——都是纯函数，Vitest 直接断言。
