@@ -80,10 +80,13 @@
   {:else if configured}
     <div class="card lock-card">
       <h2>已经配置过了</h2>
-      <p class="muted">主密码只能配置一次，之后无法修改，也无法找回。</p>
+      <p class="muted">主密码在这台设备上只能设置一次；忘记后无法找回，加密笔记永久打不开。</p>
       <p class="hint">助记问题：{existingQuestion === '' ? '（未设置）' : existingQuestion}</p>
       <div class="actions">
-        <a class="button" href="/notes" onclick={(event) => { event.preventDefault(); navigate('/notes') }}>
+        <a class="button" href="/info" onclick={(event) => { event.preventDefault(); navigate('/info') }}>
+          去信息页修改主密码或助记问题
+        </a>
+        <a class="button button-quiet" href="/notes" onclick={(event) => { event.preventDefault(); navigate('/notes') }}>
           返回笔记
         </a>
       </div>

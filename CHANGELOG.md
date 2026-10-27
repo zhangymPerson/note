@@ -8,6 +8,15 @@
 
 ### Added
 
+- 用户信息页与浏览器端改密（实现过程与关键逻辑）：
+  - 入口：顶栏 `.who` 由 `<span>` 改成 `<a href="/info">`（站内跳转走 `link()`，保留中键/新标签打开），新增路由 `/info`（`RouteName` 加 `'info'`、pattern `^\/info$`，带查询串仍按路径匹配）。
+  - 运行信息卡：`web/src/lib/info.ts` 的 `buildRows(ServerInfo)` 把 `GET /api/info` 摊成 14 行中文键值（服务版本 / Git 构建 / 构建日期 / 运行平台 / Go 版本 / 主机名 / CPU 核心数 / 内存占用 / 本次运行时长 / 启动时间 / 数据文件 / 数据库结构版本 / 监听地址 / 允许远程访问）；缺失值统一显示「未知」而不是 `undefined`，`uptime_seconds` 摊成「X 小时 Y 分」，字节数按 B/KB/MB/GB 取一位小数，`allow_remote` 摊成「是/否」——都是纯函数，Vitest 直接断言。
+  - 改密引擎：`web/src/lib/reencrypt.ts` 是纯函数 + 依赖注入（`decrypt/encrypt/putCipher` 全部可替换），`verifyOldPassword` 逐条试解、第一条成功即通过（不能只试第一条，库里可能混着更早一次改密留下的笔记），`planMigration` 用新密钥试解把已迁移的排除、使整条流程天然幂等，`runMigration` 把每条落定归入设计文档 §6 的五类（`done`/`already_done`/`skipped_gone`/`failed_old_key`/`failed_network`）并继续跑完其余；`remaining` = 后两类条数。明文只作局部变量，绝不进 `MigrationRow.message`（有用例断言整份报告序列化后不含正文）。
+  - 改密流程（`InfoView` 只做编排）：拿盐 → 派生旧密钥 → 取密文清单 → 验证旧密码（清单为空直接通过）→ 派生新密钥 → 逐条 `decrypt(旧) → encrypt(新) → PUT /api/notes/{id}/cipher` → `sessionKey.set(新密钥)` → 重读清单再跑一次 `planMigration` 复核；旧密码验证不过时不动会话密钥、不写任何密文。第 4 张卡在 `remaining > 0` 时列出未迁移条目与原因并给「继续迁移」——中途关页面后把新密码填进旧密码栏续跑，已迁移的判为 `already_done` 原样跳过。
+  - 助记问题与信息页改用户名：内联表单调 `PUT /api/master-password/question`，服务端拒绝（空/超 100 码点）时页面显示的仍是旧问题、只有输入框标红；改密表单可留空顺带更新问题。
+  - 引导页改两步式：判据抽成纯函数 `decideStep(nameSet, masterConfigured): 0|1|2`（`web/src/lib/onboarding.ts`），`App.svelte` 的门槛与 `document.title` 共用同一判定。步骤 1 存名字成功后只本地推进到步骤 2、不重读设置；步骤 2 挂载时读 `GET /api/master-password`，未配置 → 完整设置表单（密码 + 确认 + 助记问题 + 不可恢复勾选，主密码必填、无「跳过」），已配置（上次 POST 成功但解锁前刷新）→ 只渲染解锁输入框、只 `unlockKey` 绝不重复 POST。`settings.loadSettings()` 改为 `Promise.all` 并行读 `/api/settings` 与 `/api/master-password`，任一个失败整体进 `error` 态——引导判据不能建立在半套数据上。
+  - `MasterPasswordView` 的「已经配置过了」只读卡改为指向 `/info`，文案随之从「无法再次修改」改成「可到信息页修改」。
+  - 验证：`just test`（Go 66 项 + 前端 96 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；新增 `reencrypt.test.ts` 15 项、`info.test.ts` 9 项、`settings.test.ts` 4 项（含「主密码接口失败必须整体进错误态」这条先用旧实现跑出 RED）、`notes.test.ts` 4 项、`router.test.ts` 1 项、`onboarding.test.ts` 3 项。
 - 信息页后端：构建信息端点、加密笔记密文清单/替换、助记问题单独修改（实现过程与关键逻辑）：
   - 构建信息：新增 `internal/build`，`Version`/`GitHash`/`GitDirty`/`BuildDate` 四个包级变量由 `justfile` 的 `ldflags` 变量用 `-X` 注入（按 `os()` 分支，Windows 走 PowerShell、其余走 bash 命令替换）；未注入时（`go run`、`go test`）`Describe()` 回落到 `runtime/debug.ReadBuildInfo` 的 `vcs.revision`/`vcs.time`/`vcs.modified`，`Label()` 此时输出「1.4.0（开发构建）」而不是空括号。just 在 Windows 上把命令包成 `cmd /C "powershell -Command …"` 且只保留最后一行输出，所以 PowerShell 分支必须以裸 `$a` 结尾。
   - 接口层：`GET /api/info` 返回 version / git_hash / git_dirty(bool) / build_date / build_label / go_version / goos / goarch / hostname / cpu_count / mem_alloc_bytes / mem_sys_bytes / started_at / uptime_seconds / db_path / schema_version / addr / allow_remote —— 全是标准库运行时与配置值，不含正文、密码、密钥或令牌；`application` 新增 `startedAt`（进程启动 UTC 时刻），`Store.SchemaVersion` 读 `PRAGMA user_version` 供页面展示已应用迁移编号。

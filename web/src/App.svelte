@@ -11,6 +11,7 @@
   import ForgotPasswordView from './views/ForgotPasswordView.svelte'
   import NotFoundView from './views/NotFoundView.svelte'
   import { loadSettings, settings } from './lib/settings'
+  import { decideStep } from './lib/onboarding'
   import { route, type RouteName } from './router/router'
 
   const titles: Record<RouteName, string> = {
@@ -30,10 +31,11 @@
     loadSettings()
   })
 
+  // 门槛与标题共用同一判定：避免出现「还在引导却显示『XX的笔记』」。
+  const step = $derived(decideStep($settings.nameSet, $settings.masterConfigured))
+
   $effect(() => {
-    document.title = $settings.nameSet
-      ? `${titles[$route.name]} · {$settings.name}的笔记`
-      : '笔记 · 欢迎'
+    document.title = step === 0 ? `${titles[$route.name]} · {$settings.name}的笔记` : '笔记 · 欢迎'
   })
 </script>
 
@@ -44,8 +46,8 @@
     <p>{$settings.error}</p>
     <button class="button" type="button" onclick={loadSettings}>重新载入</button>
   </div>
-{:else if !$settings.nameSet}
-  <OnboardingView />
+{:else if step !== 0}
+  <OnboardingView initialStep={step} />
 {:else}
   <Layout>
     {#if $route.name === 'home'}
