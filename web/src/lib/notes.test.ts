@@ -10,6 +10,7 @@ import {
   getNote,
   listCategories,
   listNotes,
+  newClientNoteID,
   renameCategory,
   setMasterPassword,
   updateNote,
@@ -117,7 +118,32 @@ describe('deleteNote', () => {
   })
 })
 
+describe('newClientNoteID', () => {
+  it('生成后端接受的 UUIDv4 且每次不同', () => {
+    const id = newClientNoteID()
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(newClientNoteID()).not.toBe(id)
+  })
+})
+
 describe('错误透传', () => {
+  it('后端 error.fields 原样带出', async () => {
+    mockFetch([
+      {
+        status: 400,
+        body: {
+          error: {
+            code: 'validation_failed',
+            message: '正文请控制在 2000 字以内',
+            fields: { content: '正文请控制在 2000 字以内' },
+          },
+        },
+      },
+    ])
+    const error = await createNote({ title: '标题', content: 'x'.repeat(2001) }).catch((caught) => caught)
+    expect((error as ApiRequestError).fields).toEqual({ content: '正文请控制在 2000 字以内' })
+  })
+
   it('后端 error.code 原样带出', async () => {
     mockFetch([
       { status: 409, body: { error: { code: 'category_not_empty', message: '分类下仍有 3 条笔记' } } },

@@ -51,6 +51,11 @@ export interface ListNotesFilter {
   page?: number
 }
 
+// 加密笔记的 AAD 绑定笔记 id，所以新建时 id 必须先在浏览器生成，才能加密后再提交。
+export function newClientNoteID(): string {
+  return crypto.randomUUID()
+}
+
 // 只把非空条件拼进查询串，避免后端把空值当条件。
 export function listNotes(filter: ListNotesFilter): Promise<NotePage> {
   const params = new URLSearchParams()

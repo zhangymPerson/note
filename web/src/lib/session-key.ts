@@ -3,7 +3,7 @@
 
 import { writable, type Readable } from 'svelte/store'
 
-import { deriveKey, DecryptError, KDF_PARAMS } from './crypto'
+import { decryptNoteContent, deriveKey, DecryptError, KDF_PARAMS } from './crypto'
 
 let current: CryptoKey | null = null
 
@@ -27,6 +27,29 @@ export async function unlockKey(password: string, saltB64: string): Promise<void
   if (!saltB64) throw new DecryptError()
   const key = await deriveKey(password, saltB64, KDF_PARAMS)
   sessionKey.set(key)
+}
+
+/**
+ * 解锁并（给了试解密素材时）用当前笔记当场验证：验证不通过就抛 DecryptError 且不写入密钥，
+ * 免得一个错密码派生的密钥留在会话里让后面的笔记全都报同一个错。
+ */
+export async function unlockWithPassword(
+  password: string,
+  saltB64: string,
+  noteId?: string,
+  cipherB64?: string,
+): Promise<string | null> {
+  if (!saltB64) throw new DecryptError()
+  const key = await deriveKey(password, saltB64, KDF_PARAMS)
+
+  if (cipherB64 !== undefined && noteId !== undefined) {
+    const plain = await decryptNoteContent(key, noteId, cipherB64)
+    sessionKey.set(key)
+    return plain
+  }
+
+  sessionKey.set(key)
+  return null
 }
 
 export function lockSession(): void {

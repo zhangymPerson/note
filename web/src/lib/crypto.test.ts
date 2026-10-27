@@ -11,7 +11,7 @@ import {
   generateSaltB64,
   normalizePassword,
 } from './crypto'
-import { hasKey, sessionKey, unlockKey } from './session-key'
+import { hasKey, lockSession, sessionKey, unlockKey, unlockWithPassword } from './session-key'
 
 const SALT = bytesToB64(new Uint8Array(16).fill(7))
 
@@ -134,5 +134,31 @@ describe('session key holder', () => {
     expect(sessionKey.current()).toBeNull()
 
     stop()
+  })
+
+  it('unlockWithPassword 用一条真实笔记试解密，失败则不落地密钥', async () => {
+    const salt = generateSaltB64()
+    const key = await deriveKey('主密码', salt, KDF_PARAMS)
+    const cipher = await encryptNoteContent(key, 'note-1', '只有我知道的内容')
+    lockSession()
+
+    await expect(unlockWithPassword('错的主密码', salt, 'note-1', cipher)).rejects.toThrow(DecryptError)
+    expect(sessionKey.current()).toBeNull()
+
+    const plain = await unlockWithPassword('主密码', salt, 'note-1', cipher)
+    expect(plain).toBe('只有我知道的内容')
+    expect(sessionKey.current()).not.toBeNull()
+
+    lockSession()
+    expect(sessionKey.current()).toBeNull()
+  })
+
+  it('unlockWithPassword 没有试解密素材时只做派生', async () => {
+    const salt = generateSaltB64()
+    lockSession()
+
+    await expect(unlockWithPassword('主密码', salt)).resolves.toBeNull()
+    expect(sessionKey.current()).not.toBeNull()
+    lockSession()
   })
 })

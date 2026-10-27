@@ -1,11 +1,347 @@
 <script lang="ts">
-  let { id }: { id?: string } = $props()
+  import Markdown from '../components/Markdown.svelte'
+  import { ApiRequestError } from '../lib/api'
+  import { encryptNoteContent, KDF_PARAMS } from '../lib/crypto'
+  import { editorDraft } from '../lib/draft'
+  import {
+    createNote,
+    getMasterPassword,
+    getNote,
+    listCategories,
+    newClientNoteID,
+    updateNote,
+    type Category,
+    type NotePayload,
+  } from '../lib/notes'
+  import { hasKey, sessionKey, unlockWithPassword } from '../lib/session-key'
+  import { navigate } from '../router/router'
+
+  let { id = '' }: { id?: string } = $props()
+
+  const MAX_CONTENT = 2000
+  // 每次进入编辑路由都会重建本组件，id 在实例生命周期内不变。
+  // svelte-ignore state_referenced_locally
+  const isEdit = id !== ''
+
+  let title = $state('')
+  let content = $state('')
+  let categoryId = $state<number | null>(null)
+  let encrypt = $state(false)
+  let password = $state('')
+  let categories = $state<Category[]>([])
+  let salt = $state('')
+  let question = $state('')
+  let masterConfigured = $state(false)
+  let cipher = $state('')
+  // svelte-ignore state_referenced_locally
+  let noteId = $state(id)
+  let fields = $state<Record<string, string>>({})
+  let formError = $state('')
+  let notice = $state('')
+  let busy = $state(false)
+  let loading = $state(isEdit)
+  let dirty = $state(false)
+  let previewSource = $state('')
+
+  const contentLength = $derived(Array.from(content).length)
+  const tooLong = $derived(contentLength > MAX_CONTENT)
+  const unlocked = $derived($hasKey)
+  // 加密笔记没密钥时读不出正文；勾选加密但还没派生密钥时需要临时输入。
+  const awaitingUnlock = $derived(cipher !== '' && !unlocked)
+  const needsPassword = $derived((encrypt || awaitingUnlock) && !unlocked)
+  const canSave = $derived(
+    !busy && !loading && title.trim() !== '' && !tooLong && (!needsPassword || password !== ''),
+  )
+
+  // 预览防抖 300ms：边打字不重渲染，停下来才更新。
+  $effect(() => {
+    const text = content
+    const timer = setTimeout(() => {
+      previewSource = text
+    }, 300)
+    return () => clearTimeout(timer)
+  })
+
+  $effect(() => {
+    const handler = (event: BeforeUnloadEvent) => {
+      if (dirty) event.preventDefault()
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  })
+
+  $effect(() => {
+    const draft = editorDraft.take()
+    if (draft) {
+      title = draft.title
+      content = draft.content
+      categoryId = draft.categoryId
+      encrypt = draft.encrypt
+      dirty = true
+      notice = '已恢复跳去设置主密码前的草稿。'
+    }
+
+    loadFormChrome()
+  })
+
+  function fail(error: unknown): string {
+    return error instanceof Error ? error.message : '操作失败，请稍后重试'
+  }
+
+  async function loadFormChrome(): Promise<void> {
+    try {
+      const [cats, master] = await Promise.all([listCategories(), getMasterPassword()])
+      categories = cats
+      salt = master.salt_b64
+      question = master.question
+      masterConfigured = master.configured
+      if (isEdit) await loadNote()
+    } catch (error) {
+      formError = fail(error)
+    } finally {
+      loading = false
+    }
+  }
+
+  async function loadNote(): Promise<void> {
+    const note = await getNote(id)
+    title = note.title
+    categoryId = note.category_id
+    noteId = note.id
+    if (note.encrypted) {
+      cipher = note.cipher_b64 ?? ''
+      content = ''
+      encrypt = true
+    } else {
+      content = note.content ?? ''
+    }
+    dirty = false
+  }
+
+  // 解锁：编辑加密笔记时顺手把正文填回编辑器。
+  async function unlockNow(): Promise<void> {
+    fields = {}
+    formError = ''
+    busy = true
+    try {
+      const plain = await unlockWithPassword(
+        password,
+        salt,
+        cipher === '' ? undefined : noteId,
+        cipher === '' ? undefined : cipher,
+      )
+      if (plain !== null) content = plain
+      password = ''
+      notice = '已解锁，密钥只留在本页内存。'
+      dirty = cipher !== ''
+    } catch (error) {
+      fields.password = fail(error)
+    } finally {
+      busy = false
+    }
+  }
+
+  function goToMasterPassword(): void {
+    editorDraft.save({ title, content, categoryId, encrypt })
+    const next = encodeURIComponent(isEdit ? `/notes/${id}/edit` : '/notes/new')
+    navigate(`/master-password?next=${next}`)
+  }
+
+  async function submit(event: SubmitEvent): Promise<void> {
+    event.preventDefault()
+    fields = {}
+    formError = ''
+
+    if (title.trim() === '') fields.title = '请填写标题'
+    if (tooLong) fields.content = `正文请控制在 ${MAX_CONTENT} 字以内，当前 ${contentLength} 字`
+    if (Object.keys(fields).length > 0) return
+
+    if (encrypt && !masterConfigured) {
+      goToMasterPassword()
+      return
+    }
+
+    busy = true
+    try {
+      if (needsPassword) {
+        await unlockWithPassword(password, salt)
+        password = ''
+      }
+
+      const payload: NotePayload = { title: title.trim(), category_id: categoryId }
+      if (encrypt) {
+        if (noteId === '') noteId = newClientNoteID()
+        const key = sessionKey.current()
+        if (!key) throw new Error('会话密钥缺失，请重新输入主密码')
+        payload.id = isEdit ? undefined : noteId
+        payload.cipher_b64 = await encryptNoteContent(key, noteId, content)
+        payload.kdf_params = JSON.stringify(KDF_PARAMS)
+      } else {
+        payload.content = content
+      }
+
+      const saved = isEdit ? await updateNote(noteId, payload) : await createNote(payload)
+      dirty = false
+      navigate(`/notes/${saved.id}`)
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.fields) {
+        fields = error.fields
+        formError = error.message
+      } else {
+        formError = fail(error)
+      }
+    } finally {
+      busy = false
+    }
+  }
+
+  function discard(): void {
+    dirty = false
+    navigate(isEdit ? `/notes/${id}` : '/notes')
+  }
 </script>
 
-<section class="page">
-  <h1>{id ? '编辑笔记' : '新建笔记'}</h1>
-  <p class="muted">{id ? `笔记 ID：${id}` : '创建表单将在 M1 阶段接入。'}</p>
-  <div class="card">
-    <p>标题与正文编辑表单尚未实现。</p>
-  </div>
+<section class="page editor">
+  <header class="editor-head">
+    <h1>{isEdit ? '编辑笔记' : '新建笔记'}</h1>
+    <p class="muted">正文只存原始 Markdown，渲染在本机完成。</p>
+  </header>
+
+  {#if formError}
+    <p class="form-error" role="alert">{formError}</p>
+  {:else if notice}
+    <p class="form-notice">{notice}</p>
+  {/if}
+
+  {#if awaitingUnlock}
+    <div class="card unlock-card">
+      <h2>这条笔记已加密</h2>
+      <p class="muted">输入主密码才能编辑正文。{question ? `助记问题：${question}` : ''}</p>
+      <form class="unlock-form" onsubmit={(event) => { event.preventDefault(); unlockNow() }}>
+        <label for="editor-password">主密码</label>
+        <input
+          id="editor-password"
+          type="password"
+          autocomplete="current-password"
+          bind:value={password}
+        />
+        {#if fields.password}
+          <span class="field-error">{fields.password}</span>
+        {/if}
+        <button class="button" type="submit" disabled={busy || password === ''}>解锁</button>
+      </form>
+    </div>
+  {:else}
+    <div class="editor-grid">
+      <form class="editor-form" onsubmit={submit}>
+      <div class="field">
+        <label for="note-title">标题</label>
+        <input
+          id="note-title"
+          maxlength="200"
+          bind:value={title}
+          oninput={() => {
+            dirty = true
+          }}
+        />
+        {#if fields.title}
+          <span class="field-error">{fields.title}</span>
+        {/if}
+      </div>
+
+      <div class="field">
+        <label for="note-category">分类</label>
+        <select
+          id="note-category"
+          bind:value={categoryId}
+          onchange={() => {
+            dirty = true
+          }}
+        >
+          <option value={null}>未分类</option>
+          {#each categories.filter((cat) => cat.id !== 1) as cat (cat.id)}
+            <option value={cat.id}>{cat.name}</option>
+          {/each}
+        </select>
+        {#if fields.category_id}
+          <span class="field-error">{fields.category_id}</span>
+        {/if}
+      </div>
+
+      <div class="field">
+        <div class="field-label-row">
+          <label for="note-content">正文</label>
+          <span class="counter {tooLong ? 'counter-over' : ''}" aria-live="polite">
+            {contentLength} / {MAX_CONTENT}
+          </span>
+        </div>
+        <textarea
+          id="note-content"
+          rows="14"
+          bind:value={content}
+          oninput={() => {
+            dirty = true
+          }}
+        ></textarea>
+        {#if fields.content || tooLong}
+          <span class="field-error">
+            {fields.content ?? `正文请控制在 ${MAX_CONTENT} 字以内，当前 ${contentLength} 字`}
+          </span>
+        {/if}
+      </div>
+
+      <div class="field encrypt-field">
+        <label class="checkbox">
+          <input
+            type="checkbox"
+            bind:checked={encrypt}
+            disabled={isEdit && cipher !== ''}
+            onchange={() => {
+              dirty = true
+            }}
+          />
+          用主密码加密这条笔记
+        </label>
+        {#if isEdit && cipher !== ''}
+          <p class="muted">加密笔记不能改回明文。</p>
+        {/if}
+        {#if encrypt && !masterConfigured}
+          <p class="form-notice">还没有设置主密码，保存时会先带你去设置。</p>
+        {/if}
+      </div>
+
+      {#if needsPassword}
+        <div class="field">
+          <label for="session-password">主密码</label>
+          <p class="muted">密码只在浏览器内派生密钥，不会发往服务器。{question ? `助记问题：${question}` : ''}</p>
+          <input
+            id="session-password"
+            type="password"
+            autocomplete="current-password"
+            bind:value={password}
+          />
+          {#if fields.password}
+            <span class="field-error">{fields.password}</span>
+          {/if}
+        </div>
+      {/if}
+
+      <div class="actions">
+        <button class="button" type="submit" disabled={!canSave}>
+          {busy ? '保存中…' : '保存'}
+        </button>
+        <button class="button button-quiet" type="button" onclick={discard}>取消</button>
+      </div>
+    </form>
+
+      <section class="preview" aria-label="Markdown 预览">
+        <h2>预览</h2>
+        {#if previewSource === ''}
+          <p class="muted">开始输入即可看到渲染结果。</p>
+        {:else}
+          <Markdown source={previewSource} />
+        {/if}
+      </section>
+    </div>
+  {/if}
 </section>

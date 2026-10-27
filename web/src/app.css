@@ -14,6 +14,7 @@
   --heat-2: #40c463;
   --heat-3: #30a14e;
   --heat-4: #216e39;
+  --danger: #cf222e;
 
   color-scheme: light;
   font-family:
@@ -47,6 +48,7 @@
   --heat-2: #006d32;
   --heat-3: #26a641;
   --heat-4: #39d353;
+  --danger: #f85149;
 
   color-scheme: dark;
 }
@@ -64,6 +66,7 @@
   --heat-2: #86b274;
   --heat-3: #5d9155;
   --heat-4: #3f7a54;
+  --danger: #b3512f;
 
   color-scheme: light;
 }
@@ -272,6 +275,13 @@ a:focus-visible,
 input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* 次要动作：同样高度，但只描边，不抢主按钮的注意力 */
+.button-quiet {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
 input {
@@ -548,4 +558,137 @@ input {
   .search-form {
     flex-direction: column;
   }
+
+  .editor-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 编辑器：左写右览，码点计数与加密勾选各占一行 */
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.editor-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field input,
+.field textarea,
+.field select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.field textarea {
+  resize: vertical;
+  font-family: var(--font-mono);
+  line-height: 1.7;
+}
+
+.field input:focus-visible,
+.field textarea:focus-visible,
+.field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.counter {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.counter-over {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.form-error {
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+}
+
+.form-notice {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.unlock-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.unlock-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.unlock-form input {
+  flex: 1 1 220px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
 }
