@@ -8,8 +8,9 @@ import (
 )
 
 type apiError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string            `json:"code"`
+	Message string            `json:"message"`
+	Fields  map[string]string `json:"fields,omitempty"`
 }
 
 type apiErrorBody struct {
@@ -27,6 +28,22 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, apiErrorBody{Error: apiError{Code: code, Message: message}})
+}
+
+// writeValidationError 返回 400 与字段级提示，前端据此标红对应输入框。
+func writeValidationError(w http.ResponseWriter, fields map[string]string) {
+	message := "请修正输入内容"
+	for _, label := range []string{"title", "content", "cipher_b64", "kdf_params", "category_id", "id", "name"} {
+		if msg, ok := fields[label]; ok {
+			message = msg
+			break
+		}
+	}
+	writeJSON(w, http.StatusBadRequest, apiErrorBody{Error: apiError{
+		Code:    "validation_failed",
+		Message: message,
+		Fields:  fields,
+	}})
 }
 
 // decodeJSON 读取并解析请求体，失败时已写好错误响应。
