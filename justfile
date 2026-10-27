@@ -45,9 +45,13 @@ push:
     git pull --rebase
     {{ if os() == "windows" { "git remote | ForEach-Object { git push $_ }" } else { "git remote | xargs -n1 git push" } }}
 
+# 构建时注入 git 短 hash 与 UTC 构建时间；git 不可用或不在仓库内时退化成空值，
+# 绝不能让 build 因此失败（internal/build 会回落到 debug.ReadBuildInfo）。
+ldflags := if os() == "windows" { `$h = git rev-parse --short HEAD 2>$null; $now = [DateTime]::UtcNow; $a = '-X note/internal/build.GitHash=' + $h + ' -X note/internal/build.BuildDate=' + $now.ToString('yyyy-MM-dd') + 'T' + $now.ToString('HH:mm:ss') + 'Z'; if (git status --porcelain 2>$null) { $a += ' -X note/internal/build.GitDirty=true' }; $a` } else { `a="-X note/internal/build.GitHash=$(git rev-parse --short HEAD 2>/dev/null) -X note/internal/build.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; if test -n "$(git status --porcelain 2>/dev/null)"; then a="$a -X note/internal/build.GitDirty=true"; fi; printf %s "$a"` }
+
 # 构建单二进制
 build: frontend
-    go build -trimpath -ldflags "-s -w" -o {{binary}} ./cmd/note
+    go build -trimpath -ldflags "-s -w {{ldflags}}" -o {{binary}} ./cmd/note
 
 # 运行后端与前端测试
 test: frontend

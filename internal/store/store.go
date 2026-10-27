@@ -173,6 +173,15 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+// SchemaVersion 读当前 user_version，供信息页展示已应用的迁移编号。
+func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
+	var version int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+	return version, nil
+}
+
 func loadMigrations() ([]migration, error) {
 	names, err := fs.Glob(migrations.FS, "*.sql")
 	if err != nil {

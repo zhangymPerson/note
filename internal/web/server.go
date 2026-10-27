@@ -16,6 +16,7 @@ func New(cfg config.Config, st *store.Store, dist fs.FS) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/csrf", handleCSRF)
+	mux.HandleFunc("GET /api/info", app.handleGetInfo)
 	mux.HandleFunc("GET /api/settings", app.handleGetSettings)
 	mux.HandleFunc("PUT /api/settings/name", app.handleSetName)
 	mux.HandleFunc("GET /api/notes", app.handleListNotes)

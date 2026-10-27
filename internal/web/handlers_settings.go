@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"note/internal/config"
@@ -70,15 +71,17 @@ func nameError(name string) string {
 }
 
 type application struct {
-	cfg      config.Config
-	store    *store.Store
-	settings settingsState
+	cfg       config.Config
+	store     *store.Store
+	settings  settingsState
+	startedAt time.Time
 }
 
 func newApplication(cfg config.Config, st *store.Store) *application {
 	return &application{
-		cfg:   cfg,
-		store: st,
+		cfg:       cfg,
+		store:     st,
+		startedAt: time.Now().UTC(),
 		settings: settingsState{
 			name:    cfg.UserName,
 			nameSet: cfg.NameSet,
