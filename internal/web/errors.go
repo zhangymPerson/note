@@ -33,7 +33,7 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 // writeValidationError 返回 400 与字段级提示，前端据此标红对应输入框。
 func writeValidationError(w http.ResponseWriter, fields map[string]string) {
 	message := "请修正输入内容"
-	for _, label := range []string{"title", "content", "cipher_b64", "kdf_params", "category_id", "id", "name"} {
+	for _, label := range []string{"title", "content", "cipher_b64", "kdf_params", "category_id", "id", "name", "salt_b64", "question"} {
 		if msg, ok := fields[label]; ok {
 			message = msg
 			break
