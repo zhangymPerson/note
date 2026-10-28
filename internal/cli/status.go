@@ -44,7 +44,7 @@ func FormatStatus(d StatusData) string {
 		rows = append(rows, [2]string{"pid", strconv.Itoa(d.Pid)})
 	}
 	if d.Running && len(d.URLs) > 0 {
-		rows = append(rows, [2]string{"地址", strings.Join(d.URLs, "\n              ")})
+		rows = append(rows, [2]string{"地址", strings.Join(d.URLs, "\n")})
 	}
 	if d.Running && d.StartedAt != "" {
 		rows = append(rows, [2]string{"启动时间", d.StartedAt + "（已运行 " + formatUptime(d.UptimeSeconds) + "）"})
@@ -63,11 +63,15 @@ func FormatStatus(d StatusData) string {
 		}
 	}
 
+	// 多值行（如通配监听时的多个地址）按同一列续行；缩进随标签宽度算，
+	// 不写死空格数——标签是 CJK 时显示列宽不等于字节数。
+	indent := strings.Repeat(" ", labelWidth+4)
 	var b strings.Builder
 	b.WriteString(title)
 	b.WriteString("\n")
 	for _, row := range rows {
-		fmt.Fprintf(&b, "  %s  %s\n", padRight(row[0], labelWidth), row[1])
+		value := strings.ReplaceAll(row[1], "\n", "\n"+indent)
+		fmt.Fprintf(&b, "  %s  %s\n", padRight(row[0], labelWidth), value)
 	}
 	switch {
 	case d.Unresponsive:

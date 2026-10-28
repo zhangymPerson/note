@@ -75,16 +75,25 @@ func TestFormatStatusAlignsMultipleURLs(t *testing.T) {
 		DBPath:  "/data/notes.db",
 	})
 	lines := strings.Split(out, "\n")
-	var firstCol, secondCol int
-	for _, line := range lines {
-		if strings.Contains(line, "http://192.168.1.5:8080") {
-			firstCol = strings.Index(line, "http")
+	// 比的是显示列（CJK 标签的字节数 ≠ 列数），不是字节下标。
+	column := func(line, marker string) int {
+		idx := strings.Index(line, marker)
+		if idx < 0 {
+			return -1
 		}
-		if strings.Contains(line, "http://10.0.0.2:8080") {
-			secondCol = strings.Index(line, "http")
+		return displayWidth(line[:idx])
+	}
+	firstCol := -1
+	secondCol := -1
+	for _, line := range lines {
+		if c := column(line, "http://192.168.1.5:8080"); c >= 0 {
+			firstCol = c
+		}
+		if c := column(line, "http://10.0.0.2:8080"); c >= 0 {
+			secondCol = c
 		}
 	}
-	if firstCol == 0 || secondCol != firstCol {
+	if firstCol <= 0 || secondCol != firstCol {
 		t.Fatalf("多地址未对齐：first=%d second=%d\n%s", firstCol, secondCol, out)
 	}
 }
