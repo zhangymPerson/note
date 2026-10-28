@@ -10,9 +10,17 @@ export interface QueryCount {
   count: number;
 }
 
+// KindCount 是某一类活动事件的次数，kind 与 sql/0005 的枚举一致。
+export interface KindCount {
+  kind: string;
+  count: number;
+}
+
 export interface Stats {
+  total_events: number;
   total_searches: number;
   active_days: number;
+  events_by_kind: KindCount[];
   top_queries: QueryCount[];
   days: DayCount[];
 }
@@ -23,13 +31,61 @@ export async function loadStats(lookbackDays: number): Promise<Stats> {
   return getJSON<Stats>(`/api/stats?days=${lookbackDays}`);
 }
 
-// levelFor 把查询次数映射为热力图 0–4 级，参考 GitHub 提交图的分级方式。
+// levelFor 把当天事件数映射为热力图 0–4 级，参考 GitHub 提交图的分级方式。
 export function levelFor(count: number): 0 | 1 | 2 | 3 | 4 {
   if (count <= 0) return 0;
   if (count <= 2) return 1;
   if (count <= 5) return 2;
   if (count <= 9) return 3;
   return 4;
+}
+
+// 事件构成的展示分组：后端只回原始 kind，中文文案与合并规则留在前端。
+const EVENT_GROUPS: { key: string; label: string; kinds: string[] }[] = [
+  { key: "note_view", label: "查看笔记", kinds: ["note_view"] },
+  { key: "note_create", label: "新建笔记", kinds: ["note_create"] },
+  { key: "note_update", label: "编辑笔记", kinds: ["note_update"] },
+  { key: "note_delete", label: "删除笔记", kinds: ["note_delete"] },
+  { key: "search", label: "查询", kinds: ["search"] },
+  {
+    key: "category",
+    label: "分类维护",
+    kinds: ["category_create", "category_rename", "category_delete"],
+  },
+];
+
+export interface EventGroup {
+  key: string;
+  label: string;
+  count: number;
+  // share 是这一组在全部事件里的占比（0–1），用于画构成条。
+  share: number;
+}
+
+// groupEvents 把后端的事件类型计数折叠成固定顺序的展示分组。
+// 固定分组即使为 0 也返回，让「删除 0 次」这类事实同样可见；
+// 认不出的 kind（如后续新增的 note_restore）汇总为「其他」，保证总量对得上。
+export function groupEvents(byKind: KindCount[]): EventGroup[] {
+  const counts = new Map(byKind.map((item) => [item.kind, item.count]));
+  const groups = EVENT_GROUPS.map((group) => ({
+    key: group.key,
+    label: group.label,
+    count: group.kinds.reduce((sum, kind) => sum + (counts.get(kind) ?? 0), 0),
+  }));
+
+  const known = new Set(EVENT_GROUPS.flatMap((group) => group.kinds));
+  const rest = byKind
+    .filter((item) => !known.has(item.kind))
+    .reduce((sum, item) => sum + item.count, 0);
+  if (rest > 0) {
+    groups.push({ key: "other", label: "其他", count: rest });
+  }
+
+  const total = groups.reduce((sum, group) => sum + group.count, 0);
+  return groups.map((group) => ({
+    ...group,
+    share: total === 0 ? 0 : group.count / total,
+  }));
 }
 
 export interface HeatCell {

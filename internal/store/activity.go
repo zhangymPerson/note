@@ -2,12 +2,42 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 )
 
 const timeLayoutUTC = "2006-01-02T15:04:05Z"
+
+// 活动类型：与 sql/0005_activity_events.sql 的 CHECK 枚举同源维护。
+// 事件只落 kind 与 created_at（搜索额外落查询词），不记录标题、正文或分类名。
+const (
+	ActivitySearch         = "search"
+	ActivityNoteView       = "note_view"
+	ActivityNoteCreate     = "note_create"
+	ActivityNoteUpdate     = "note_update"
+	ActivityNoteDelete     = "note_delete"
+	ActivityNoteRestore    = "note_restore" // 预留给软删除恢复，当前无写入点
+	ActivityNotePurge      = "note_purge"   // 预留给回收站彻底删除，当前无写入点
+	ActivityCategoryCreate = "category_create"
+	ActivityCategoryRename = "category_rename"
+	ActivityCategoryDelete = "category_delete"
+)
+
+// allowedActivityKinds 让写坏 kind 在 Go 侧就报错，而不是等 SQLite 抛约束错误。
+var allowedActivityKinds = map[string]struct{}{
+	ActivitySearch:         {},
+	ActivityNoteView:       {},
+	ActivityNoteCreate:     {},
+	ActivityNoteUpdate:     {},
+	ActivityNoteDelete:     {},
+	ActivityNoteRestore:    {},
+	ActivityNotePurge:      {},
+	ActivityCategoryCreate: {},
+	ActivityCategoryRename: {},
+	ActivityCategoryDelete: {},
+}
 
 // NoteHit 是搜索命中的笔记摘要，不包含正文。
 type NoteHit struct {
@@ -22,6 +52,12 @@ type QueryCount struct {
 	Count int    `json:"count"`
 }
 
+// KindCount 是某一类活动事件的次数，Kind 对应 Activity* 常量。
+type KindCount struct {
+	Kind  string `json:"kind"`
+	Count int    `json:"count"`
+}
+
 // DayCount 是某一天的活动次数，Date 形如 2026-10-26。
 type DayCount struct {
 	Date  string `json:"date"`
@@ -29,9 +65,13 @@ type DayCount struct {
 }
 
 // Stats 是首页使用统计的全量数据。
+// TotalEvents / ActiveDays / Days 覆盖全部事件；TotalSearches 与 TopQueries
+// 口径仍限 kind='search'，让「查询」这件事单独可读。
 type Stats struct {
+	TotalEvents   int          `json:"total_events"`
 	TotalSearches int          `json:"total_searches"`
 	ActiveDays    int          `json:"active_days"`
+	EventsByKind  []KindCount  `json:"events_by_kind"`
 	TopQueries    []QueryCount `json:"top_queries"`
 	Days          []DayCount   `json:"days"`
 }
@@ -48,7 +88,7 @@ func (s *Store) SearchNotes(ctx context.Context, query string) ([]NoteHit, error
 	}
 
 	// LIKE 通配符需要转义，防止用户输入 % 或 _ 扩大匹配范围
-	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
+	escaped := escapeLike(q)
 	like := "%" + escaped + "%"
 
 	rows, err := s.db.QueryContext(ctx,
@@ -75,27 +115,76 @@ func (s *Store) SearchNotes(ctx context.Context, query string) ([]NoteHit, error
 	return hits, nil
 }
 
-// RecordSearch 写入一条查询活动。
-func (s *Store) RecordSearch(ctx context.Context, query string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO activities (kind, query, created_at) VALUES ('search', ?, ?)`,
-		query, time.Now().UTC().Format(timeLayoutUTC))
-	if err != nil {
-		return fmt.Errorf("record search activity: %w", err)
+// activityWriter 同时被 *sql.DB 与 *sql.Tx 满足，写事件因此能挂进业务事务。
+type activityWriter interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+const insertActivitySQL = `INSERT INTO activities (kind, query, created_at) VALUES (?, ?, ?)`
+
+// insertActivity 写入一条活动事件；query 对非搜索事件传空串。
+func insertActivity(ctx context.Context, w activityWriter, kind, query, at string) error {
+	if _, err := w.ExecContext(ctx, insertActivitySQL, kind, query, at); err != nil {
+		return fmt.Errorf("record %s activity: %w", kind, err)
 	}
 	return nil
 }
 
+// recordActivityTx 在业务事务内记录一条不带查询词的事件，成功与埋点同生共死。
+func recordActivityTx(ctx context.Context, tx *sql.Tx, kind string) error {
+	return insertActivity(ctx, tx, kind, "", nowUTC())
+}
+
+// RecordSearch 写入一条查询活动。
+func (s *Store) RecordSearch(ctx context.Context, query string) error {
+	return insertActivity(ctx, s.db, ActivitySearch, query, nowUTC())
+}
+
+// RecordActivity 写入一条不带查询词的活动事件（详情页「查看」走这条路）。
+func (s *Store) RecordActivity(ctx context.Context, kind string) error {
+	if _, ok := allowedActivityKinds[kind]; !ok {
+		return fmt.Errorf("record activity: unknown kind %q", kind)
+	}
+	return insertActivity(ctx, s.db, kind, "", nowUTC())
+}
+
 // GetStats 汇总使用统计；days 覆盖最近 days 天（含今天），无活动的日期省略。
 func (s *Store) GetStats(ctx context.Context, lookbackDays int) (Stats, error) {
-	stats := Stats{TopQueries: []QueryCount{}, Days: []DayCount{}}
+	stats := Stats{
+		EventsByKind: []KindCount{},
+		TopQueries:   []QueryCount{},
+		Days:         []DayCount{},
+	}
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*), COUNT(DISTINCT substr(created_at, 1, 10)) FROM activities WHERE kind = 'search'`,
-	).Scan(&stats.TotalSearches, &stats.ActiveDays)
+		`SELECT COUNT(*),
+		        COALESCE(SUM(CASE WHEN kind = 'search' THEN 1 ELSE 0 END), 0),
+		        COUNT(DISTINCT substr(created_at, 1, 10))
+         FROM activities`,
+	).Scan(&stats.TotalEvents, &stats.TotalSearches, &stats.ActiveDays)
 	if err != nil {
 		return stats, fmt.Errorf("query activity totals: %w", err)
 	}
+
+	kindRows, err := s.db.QueryContext(ctx,
+		`SELECT kind, COUNT(*) AS c FROM activities GROUP BY kind ORDER BY c DESC, kind`,
+	)
+	if err != nil {
+		return stats, fmt.Errorf("query activity kinds: %w", err)
+	}
+	for kindRows.Next() {
+		var item KindCount
+		if err := kindRows.Scan(&item.Kind, &item.Count); err != nil {
+			kindRows.Close()
+			return stats, fmt.Errorf("scan activity kind: %w", err)
+		}
+		stats.EventsByKind = append(stats.EventsByKind, item)
+	}
+	if err := kindRows.Err(); err != nil {
+		kindRows.Close()
+		return stats, fmt.Errorf("iterate activity kinds: %w", err)
+	}
+	kindRows.Close()
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT query, COUNT(*) AS c FROM activities
@@ -122,7 +211,7 @@ func (s *Store) GetStats(ctx context.Context, lookbackDays int) (Stats, error) {
 	since := time.Now().UTC().AddDate(0, 0, -(lookbackDays - 1)).Format("2006-01-02")
 	dayRows, err := s.db.QueryContext(ctx,
 		`SELECT substr(created_at, 1, 10) AS day, COUNT(*) FROM activities
-         WHERE kind = 'search' AND substr(created_at, 1, 10) >= ?
+         WHERE substr(created_at, 1, 10) >= ?
          GROUP BY day ORDER BY day`,
 		since)
 	if err != nil {

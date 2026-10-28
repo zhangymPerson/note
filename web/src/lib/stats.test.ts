@@ -1,5 +1,55 @@
 import { describe, expect, it } from "vitest";
-import { HEATMAP_WEEKS, buildHeatmap, levelFor } from "./stats";
+import { HEATMAP_WEEKS, buildHeatmap, groupEvents, levelFor } from "./stats";
+
+describe("groupEvents", () => {
+  it("keeps every group in a fixed order even when its count is zero", () => {
+    const groups = groupEvents([{ kind: "search", count: 3 }]);
+    expect(groups.map((g) => g.label)).toEqual([
+      "查看笔记",
+      "新建笔记",
+      "编辑笔记",
+      "删除笔记",
+      "查询",
+      "分类维护",
+    ]);
+    expect(groups.map((g) => g.count)).toEqual([0, 0, 0, 0, 3, 0]);
+  });
+
+  it("folds the three category kinds into 分类维护", () => {
+    const groups = groupEvents([
+      { kind: "category_create", count: 2 },
+      { kind: "category_rename", count: 1 },
+      { kind: "category_delete", count: 1 },
+    ]);
+    const category = groups.find((g) => g.key === "category");
+    expect(category?.count).toBe(4);
+    expect(category?.share).toBe(1);
+  });
+
+  it("computes shares over the displayed total", () => {
+    const groups = groupEvents([
+      { kind: "note_create", count: 3 },
+      { kind: "search", count: 1 },
+    ]);
+    expect(groups.find((g) => g.key === "note_create")?.share).toBe(0.75);
+    expect(groups.find((g) => g.key === "search")?.share).toBe(0.25);
+  });
+
+  it("sums unknown kinds into 其他 so the total still adds up", () => {
+    const groups = groupEvents([
+      { kind: "note_create", count: 1 },
+      { kind: "note_restore", count: 2 },
+    ]);
+    const other = groups.find((g) => g.key === "other");
+    expect(other?.count).toBe(2);
+    expect(other?.label).toBe("其他");
+  });
+
+  it("returns zero shares when there are no events at all", () => {
+    const groups = groupEvents([]);
+    expect(groups.every((g) => g.share === 0)).toBe(true);
+  });
+});
 
 describe("levelFor", () => {
   it("maps counts to the five GitHub-like levels", () => {

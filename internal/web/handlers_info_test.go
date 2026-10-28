@@ -53,8 +53,8 @@ func TestInfoEndpointReportsBuildAndRuntime(t *testing.T) {
 	if got, _ := info["addr"].(string); got != cfg.Addr {
 		t.Errorf("addr = %q, want %q", got, cfg.Addr)
 	}
-	if got, _ := info["schema_version"].(float64); got != 4 {
-		t.Errorf("schema_version = %v, want 4（最新迁移 0004）", info["schema_version"])
+	if got, _ := info["schema_version"].(float64); got != 5 {
+		t.Errorf("schema_version = %v, want 5（最新迁移 0005）", info["schema_version"])
 	}
 	if got, _ := info["cpu_count"].(float64); got < 1 {
 		t.Errorf("cpu_count = %v, want at least 1", info["cpu_count"])

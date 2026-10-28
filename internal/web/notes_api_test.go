@@ -335,6 +335,90 @@ func TestNotesAPIListPagingAndFilter(t *testing.T) {
 	}
 }
 
+func TestStatsCountsCRUDAndViewEvents(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	token := csrfTokenFor(t, handler)
+
+	rec := apiRequest(t, handler, http.MethodPost, "/api/notes", token, `{"title":"账簿","content":"正文"}`)
+	id, _ := decodeNote(t, rec)["id"].(string)
+
+	if rec = apiRequest(t, handler, http.MethodGet, "/api/notes/"+id, token, ""); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on detail, got %d", rec.Code)
+	}
+	if rec = apiRequest(t, handler, http.MethodPut, "/api/notes/"+id, token, `{"title":"账簿2","content":"正文"}`); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on update, got %d", rec.Code)
+	}
+
+	rec = apiRequest(t, handler, http.MethodPost, "/api/categories", token, `{"name":"工作"}`)
+	var category struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &category); err != nil {
+		t.Fatalf("decode category: %v (%s)", err, rec.Body.String())
+	}
+	catPath := "/api/categories/" + strconv.FormatInt(category.ID, 10)
+	if rec = apiRequest(t, handler, http.MethodPut, catPath, token, `{"name":"工作台"}`); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on rename, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec = apiRequest(t, handler, http.MethodDelete, catPath, token, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on category delete, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/"+id, token, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on delete, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// 已删除的笔记再读一次只能是 404，不该被计成「查看」
+	if rec = apiRequest(t, handler, http.MethodGet, "/api/notes/"+id, token, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d", rec.Code)
+	}
+	if rec = apiRequest(t, handler, http.MethodGet, "/api/notes?q=%E8%B4%A6%E7%B0%BF", token, ""); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on search, got %d", rec.Code)
+	}
+
+	rec = apiRequest(t, handler, http.MethodGet, "/api/stats", token, "")
+	var stats struct {
+		TotalEvents   int `json:"total_events"`
+		TotalSearches int `json:"total_searches"`
+		ActiveDays    int `json:"active_days"`
+		EventsByKind  []struct {
+			Kind  string `json:"kind"`
+			Count int    `json:"count"`
+		} `json:"events_by_kind"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("decode stats: %v (%s)", err, rec.Body.String())
+	}
+
+	want := map[string]int{
+		store.ActivityNoteCreate:     1,
+		store.ActivityNoteView:       1,
+		store.ActivityNoteUpdate:     1,
+		store.ActivityNoteDelete:     1,
+		store.ActivityCategoryCreate: 1,
+		store.ActivityCategoryRename: 1,
+		store.ActivityCategoryDelete: 1,
+		store.ActivitySearch:         1,
+	}
+	got := map[string]int{}
+	for _, item := range stats.EventsByKind {
+		got[item.Kind] = item.Count
+	}
+	for kind, count := range want {
+		if got[kind] != count {
+			t.Fatalf("expected %d %s events, got %d (%+v)", count, kind, got[kind], stats.EventsByKind)
+		}
+	}
+	if stats.TotalEvents != 8 {
+		t.Fatalf("expected 8 total events, got %d", stats.TotalEvents)
+	}
+	if stats.TotalSearches != 1 {
+		t.Fatalf("expected 1 search, got %d", stats.TotalSearches)
+	}
+	if stats.ActiveDays != 1 {
+		t.Fatalf("expected 1 active day, got %d", stats.ActiveDays)
+	}
+}
+
 func TestNotesAPISearchQueryLengthLimit(t *testing.T) {
 	handler, _ := newTestHandler(t)
 	token := csrfTokenFor(t, handler)

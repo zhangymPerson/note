@@ -112,12 +112,17 @@ func (s *Store) CreateNote(ctx context.Context, in NoteInput) (Note, error) {
 	now := nowUTC()
 	encrypted := cipher != nil
 
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO notes (id, title, content, is_encrypted, cipher, kdf_salt, kdf_params, category_id, kind, remark, rev, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'note', '', 1, ?, ?)`,
-		id, title, body, boolInt(encrypted), cipher, kdfSalt, params, in.CategoryID, now, now)
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO notes (id, title, content, is_encrypted, cipher, kdf_salt, kdf_params, category_id, kind, remark, rev, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'note', '', 1, ?, ?)`,
+			id, title, body, boolInt(encrypted), cipher, kdfSalt, params, in.CategoryID, now, now); err != nil {
+			return fmt.Errorf("create note: %w", err)
+		}
+		return recordActivityTx(ctx, tx, ActivityNoteCreate)
+	})
 	if err != nil {
-		return Note{}, fmt.Errorf("create note: %w", err)
+		return Note{}, err
 	}
 	return s.GetNote(ctx, id)
 }
@@ -194,7 +199,7 @@ func (s *Store) UpdateNote(ctx context.Context, id string, in NoteInput) (Note, 
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
 			return ErrNoteNotFound
 		}
-		return nil
+		return recordActivityTx(ctx, tx, ActivityNoteUpdate)
 	})
 	if err != nil {
 		return Note{}, err
@@ -302,17 +307,24 @@ func (s *Store) UpdateNoteCipher(ctx context.Context, id, cipherB64, kdfParams s
 }
 
 // DeleteNote 删除笔记，提交后立刻 TRUNCATE WAL，避免已删正文在日志文件里残留。
+// 删除事件与删除本身同事务；wal_checkpoint 必须在事务外执行。
 func (s *Store) DeleteNote(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM notes WHERE id = ?`, id)
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM notes WHERE id = ?`, id)
+		if err != nil {
+			return fmt.Errorf("delete note: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("delete note rows affected: %w", err)
+		}
+		if n == 0 {
+			return ErrNoteNotFound
+		}
+		return recordActivityTx(ctx, tx, ActivityNoteDelete)
+	})
 	if err != nil {
-		return fmt.Errorf("delete note: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete note rows affected: %w", err)
-	}
-	if n == 0 {
-		return ErrNoteNotFound
+		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 		return fmt.Errorf("wal checkpoint after delete: %w", err)

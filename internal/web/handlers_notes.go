@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -197,6 +198,11 @@ func (app *application) handleGetNote(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeNoteStoreError(w, err, nil)
 		return
+	}
+	// 「查看」是唯一的只读事件：埋点在内层方法里做不到（Create/Update 内部也会 GetNote），
+	// 只能放在这里；写失败只记日志，绝不影响详情返回。
+	if err := app.store.RecordActivity(r.Context(), store.ActivityNoteView); err != nil {
+		slog.Warn("record note view", "error", err)
 	}
 	writeJSON(w, http.StatusOK, note)
 }

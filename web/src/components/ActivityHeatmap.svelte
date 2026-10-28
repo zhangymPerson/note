@@ -12,12 +12,12 @@
     if (cell.future) return '尚未到来'
     const [y, m, d] = cell.date.split('-')
     const label = `${y}年${Number(m)}月${Number(d)}日`
-    if (cell.count === 0) return `${label} · 没有查询`
-    return `${label} · ${cell.count} 次查询`
+    if (cell.count === 0) return `${label} · 没有操作`
+    return `${label} · ${cell.count} 次操作`
   }
 </script>
 
-<div class="heatmap" role="img" aria-label="近一年每天查询次数的热力图，颜色越深表示当天查询越多">
+<div class="heatmap" role="img" aria-label="近一年每天操作次数的热力图，颜色越深表示当天操作越多">
   <div class="heat-field">
     {#each weekdayLabels as label, row}
       <span class="heat-weekday" style="grid-row: {row + 2}">{label}</span>

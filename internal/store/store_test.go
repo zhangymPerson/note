@@ -25,8 +25,8 @@ func TestOpenCreatesDatabaseAndAppliesMigrations(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 4 {
-		t.Fatalf("expected schema version 4, got %d", version)
+	if version != 5 {
+		t.Fatalf("expected schema version 5, got %d", version)
 	}
 
 	var mode string
@@ -69,8 +69,8 @@ func TestOpenExistingDatabaseIsIdempotent(t *testing.T) {
 	if err := second.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 4 {
-		t.Fatalf("expected schema version 4, got %d", version)
+	if version != 5 {
+		t.Fatalf("expected schema version 5, got %d", version)
 	}
 }
 
@@ -159,6 +159,54 @@ func TestMigration0004Objects(t *testing.T) {
 		`INSERT INTO master_password (id, salt, question, created_at) VALUES (2, X'01', '另一行', '2026-01-01T00:00:00Z')`,
 	); err == nil {
 		t.Fatal("expected second master_password row to be rejected by CHECK(id = 1)")
+	}
+}
+
+func TestMigration0005ActivityKinds(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "notes.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+
+	// 重建后的 CHECK 必须同时接受历史 kind 与新增 kind
+	for _, kind := range []string{
+		ActivitySearch, ActivityNoteView, ActivityNoteCreate, ActivityNoteUpdate,
+		ActivityNoteDelete, ActivityNoteRestore, ActivityNotePurge,
+		ActivityCategoryCreate, ActivityCategoryRename, ActivityCategoryDelete,
+	} {
+		if _, err := store.db.Exec(
+			`INSERT INTO activities (kind, query, created_at) VALUES (?, '', '2026-01-01T00:00:00Z')`,
+			kind,
+		); err != nil {
+			t.Fatalf("insert kind %q: %v", kind, err)
+		}
+	}
+
+	if _, err := store.db.Exec(
+		`INSERT INTO activities (kind, query, created_at) VALUES ('bogus', '', '2026-01-01T00:00:00Z')`,
+	); err == nil {
+		t.Fatal("expected unknown kind to be rejected by CHECK")
+	}
+
+	// query 列对非搜索事件要有默认值，否则埋点漏传时会 NOT NULL 报错
+	if _, err := store.db.Exec(
+		`INSERT INTO activities (kind, created_at) VALUES ('note_create', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatalf("insert without query: %v", err)
+	}
+
+	for _, index := range []string{"idx_activities_created_at", "idx_activities_kind", "idx_activities_query"} {
+		var name string
+		if err := store.db.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index,
+		).Scan(&name); err != nil {
+			t.Fatalf("expected index %s to be recreated: %v", index, err)
+		}
 	}
 }
 

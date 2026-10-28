@@ -90,8 +90,10 @@ func (s *Store) CreateCategory(ctx context.Context, name string) (Category, erro
 		if err != nil {
 			return err
 		}
-		id, err = res.LastInsertId()
-		return err
+		if id, err = res.LastInsertId(); err != nil {
+			return err
+		}
+		return recordActivityTx(ctx, tx, ActivityCategoryCreate)
 	})
 	if err != nil {
 		if errors.Is(err, ErrCategoryExists) || isUniqueConstraint(err) {
@@ -137,7 +139,10 @@ func (s *Store) RenameCategory(ctx context.Context, id int64, name string) error
 		if isUniqueConstraint(err) {
 			return ErrCategoryExists
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return recordActivityTx(ctx, tx, ActivityCategoryRename)
 	})
 }
 
@@ -177,7 +182,7 @@ func (s *Store) DeleteCategory(ctx context.Context, id int64) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM categories WHERE id = ?`, id); err != nil {
 			return fmt.Errorf("delete category: %w", err)
 		}
-		return nil
+		return recordActivityTx(ctx, tx, ActivityCategoryDelete)
 	})
 }
 

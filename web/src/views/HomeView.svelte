@@ -2,7 +2,7 @@
   import ActivityHeatmap from '../components/ActivityHeatmap.svelte'
   import { listNotes, type NoteListItem } from '../lib/notes'
   import { settings } from '../lib/settings'
-  import { HEATMAP_WEEKS, loadStats, type Stats } from '../lib/stats'
+  import { HEATMAP_WEEKS, groupEvents, loadStats, type Stats } from '../lib/stats'
   import { navigate } from '../router/router'
 
   let stats = $state<Stats | null>(null)
@@ -97,6 +97,7 @@
 
   <section class="heat-section" aria-label="使用频率">
     <h2>近一年使用频率</h2>
+    <p class="muted">查询、查看与增删改都算一次使用，颜色越深代表当天越忙。</p>
     {#if stats}
       <ActivityHeatmap days={stats.days} />
     {:else if statsError}
@@ -107,18 +108,32 @@
   </section>
 
   {#if stats}
+    {@const groups = groupEvents(stats.events_by_kind)}
     <section class="ledger" aria-label="使用统计">
       <h2>使用统计</h2>
       <dl class="ledger-rows">
         <div class="ledger-row">
-          <dt>总查询次数</dt>
-          <dd class="num">{stats.total_searches}</dd>
+          <dt>累计事件</dt>
+          <dd class="num">{stats.total_events}</dd>
         </div>
         <div class="ledger-row">
           <dt>活跃天数</dt>
           <dd class="num">{stats.active_days}</dd>
         </div>
       </dl>
+
+      <h3>事件构成</h3>
+      <ul class="event-groups">
+        {#each groups as group (group.key)}
+          <li>
+            <span class="event-label">{group.label}</span>
+            <span class="event-bar" aria-hidden="true">
+              <span class="event-fill" style="width: {Math.round(group.share * 100)}%"></span>
+            </span>
+            <span class="num muted">{group.count}</span>
+          </li>
+        {/each}
+      </ul>
 
       <h3>查询最多的内容</h3>
       {#if stats.top_queries.length === 0}
