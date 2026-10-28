@@ -8,7 +8,7 @@
 
 - **后端**：Go 单二进制（`net/http` + `ServeMux`，无框架），SQLite 持久化（纯 Go 驱动 `modernc.org/sqlite`，全程 CGO 关闭）。
 - **前端**：Vite + Svelte 5 + TypeScript 的 History 路由 SPA，构建产物输出到 `internal/web/dist`，由 `go:embed` 内嵌；不使用 SvelteKit、UI 组件库、CSS 框架或状态管理库。
-- **部署形态**：运行时只有一个可执行文件 + 一个 SQLite 数据文件 + 一个 YAML 配置（`config/note.yaml`），默认只监听 `127.0.0.1:8080`。
+- **部署形态**：运行时只有一个可执行文件 + 一个 SQLite 数据文件 + 一个 YAML 配置（默认在用户配置/数据目录，`note -c` 可指定）；入口是 CLI 子命令——裸 `note` 进交互菜单（bubbletea），`note web` 才启动服务（默认只监听 `127.0.0.1:8080`），`note info` 输出运行信息。
 
 需求与架构细节以 `docs/PRD.md` 与 `docs/TECH_DESIGN.md` 为准，改动行为前先读这两份文档。
 

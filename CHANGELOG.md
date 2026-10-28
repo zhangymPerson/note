@@ -8,6 +8,23 @@
 
 ### Added
 
+- 后端改为 CLI 子命令启动，引入 bubbletea 交互菜单，默认配置/数据位置迁移到用户目录（v1.5，实现过程与关键逻辑）：
+  - 新包 `internal/cli`：`Parse` 手写全局层（裸 `note` → 菜单、`web` / `info` 子命令、全局 `-c`、`help` / `-h` 变体），子命令与参数本身交给标准库 flag；预扫描 `-h` 时跳过带值参数的值（`note web --config -h` 不是帮助请求而是非法配置路径）；参数错误打印错误加帮助并退出码 2。`menu.go` 用 bubbletea 实现菜单（↑↓/j/k 移动、Enter 选择、q/Esc 退出），模型不持有任何服务资源，退出后由 `cmd/note` 接手启动；`isatty` 检测 stdin 非终端（脚本/管道）时直接返回回退动作，主进程打印帮助退出而不挂起——真实控制台拉起菜单存活 3 秒验证 TUI 初始化不崩溃。`info.go` 的 `FormatInfo` 用 uniseg 计算 CJK 显示宽度对齐键值列，数据库不存在时开占位符不建文件。`usage.go` 动态带出本机默认配置/数据库路径。
+  - `internal/config/paths.go` 新增 `DefaultConfigFile` / `DefaultDataDir` / `DefaultDBFile`：Windows `%AppData%\note\`、macOS `~/Library/Application Support/note/`、Linux 按 XDG 拆分（配置 `~/.config/note/note.yaml`、数据 `~/.local/share/note/notes.db`，`XDG_DATA_HOME` 缺省回退 home），与其他常见开源项目一致；仓库内 `config/note.yaml` 重置为原始默认值作示例，不再被自动加载。
+  - `config.Load`：默认路径改由上述函数解析；新增 `-c` 短参数（与 `--config` 同义，显式指定缺失仍报错）、`-p` / `--port`（在地址解析完成后只替换端口，host 沿用内置默认/配置文件/`--addr`，IPv6 经 `net.SplitHostPort` + `JoinHostPort` 保持方括号）、`--remote`（`--allow-remote` 别名）；`Config` 增加 `ConfigFound` 供 info 展示。
+  - `cmd/note`：`run` 只做分发；`loadConfig` 把全局 `-c` prepend 到子命令参数前（flag 后值覆盖前值，子命令 `-c` 优先）；`runWeb` 原服务生命周期不变（启动 URL 打印、优雅退出）；`runInfo` 先 `os.Stat` 确认库存在才 `store.Open`（schema 版本、笔记/加密/分类计数），全新环境不产生文件。
+  - `note info` 与 `GET /api/info` 同源同口径（构建信息来自 `internal/build`、运行时来自本进程、配置来自同一套 `Load`），同样不含密文、盐、口令或令牌。
+  - 配套：`scripts/dev.ps1`、`scripts/dev.sh` 改为 `go run ./cmd/note web`，`.run/info-e2e.mjs` 的 spawn 参数同步加 `web`；依赖新增 `charmbracelet/bubbletea`（纯 Go 无 CGO），直接引用其随包依赖 `mattn/go-isatty` 与 `rivo/uniseg`。
+  - TDD：`paths_test` / `parse_test` / `menu_test` / `info_test` / `usage_test` 先 RED（undefined / 断言失败）后 GREEN；`config_test` 重写默认路径断言（chdir 方案改为环境变量隔离）并新增短参数、端口覆盖（含 IPv6）、非法端口、`--remote` 别名、`ConfigFound`、`-c` 缺失报错六组用例。
+  - 验证：`just test`（Go 7 包 108 项 + 前端 12 文件 100 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；真实二进制冒烟：`-h`/`help web` 帮助正常，`note foo` 退出码 2，`info -c` 输出对齐且库未建时零副作用，`web -c <临时配置> --port 8123` 覆盖配置里的 9090 端口、`/` 200、`/api/csrf` 200、`/api/info` 反映最终地址，管道环境裸 `note` 退化为帮助，真控制台菜单正常运行。
+  - 文档同步：PRD v1.5（修订说明、8.9 配置与运行重写、NFR-S5/8.8 Host 校验/R8 措辞、AC-45 ~ AC-47、M6 里程碑、8.2 目录、11.1/11.2）；TECH_DESIGN v1.5（架构图、2.3 目录、3 技术选型加 bubbletea、4.1 命令表、4.2 配置重写、8.6 note info 同源说明、12.1 测试表、14.1 运行与迁移指南、15.6 M6、ADR-20）；AGENTS.md 部署形态。
+
+### Changed
+
+- 破坏性：裸 `note` 不再直接启动 Web 服务（改为交互菜单，`note web` 才启动）；默认配置文件从 `./config/note.yaml` 迁到用户配置目录、默认数据库从 `./data/notes.db` 迁到用户数据目录。旧数据继续使用：`note web -c ./config/note.yaml --db ./data/notes.db`，或把文件拷到新默认位置；不做隐式回退，避免双源配置难以排查。
+
+### Added
+
 - 启动时输出可直接点击的访问地址（实现过程与关键逻辑）：
   - `internal/config/urls.go` 新增纯函数 `AccessURLs(addr)`：回环、具体 IP 或主机名直接拼装成 `http://host:port`（IPv6 经 `net.JoinHostPort` 一律加方括号）；通配 host（`0.0.0.0` 枚举非回环 IPv4，`::` / 空 host 枚举 IPv6）逐接口枚举地址，跳过回环、链路本地（169.254 与 fe80）与组播，去重后按字典序每地址一条；枚举为空回退回环地址，保证至少打印一条可用 URL。
   - Windows 实测发现 `net.Listen("tcp", "0.0.0.0:8100")` 建立的是双栈 socket，`ln.Addr()` 汇报 `[::]:8100`——直接用 listener 地址推导会丢掉「请求的是 IPv4 家族」这层信息，把本机全部非回环 IPv4 漏掉、只打出 `[::1]` 回退。因此再抽 `StartupURLs(请求地址, listener 实际地址)`：家族取请求 host，端口取 listener 实际端口（机制上兼容 `:0`），`main.go` 只调它。

@@ -47,7 +47,7 @@ case "${1:-}" in
 start)
   [ -d web/node_modules ] || npm --prefix web ci
   [ -d internal/web/dist ] || npm --prefix web run build
-  start_service backend go run ./cmd/note
+  start_service backend go run ./cmd/note web
   start_service frontend npm --prefix web run dev
   echo "后端 http://127.0.0.1:8080 · 前端 http://localhost:5173 （/api 已代理到后端）"
   echo "日志：.run/backend.log .run/frontend.log"
