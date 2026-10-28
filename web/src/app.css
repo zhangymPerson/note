@@ -1102,6 +1102,13 @@ input {
   opacity: 1;
 }
 
+/* 触摸设备与窄屏没有 hover：操作按钮常显，否则用户看不见也点不准 */
+@media (hover: none), (max-width: 720px) {
+  .cat-actions {
+    opacity: 1;
+  }
+}
+
 .cat-act {
   padding: 4px 6px;
   border: 0;
