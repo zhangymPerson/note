@@ -1,8 +1,13 @@
 <script lang="ts">
+  import CategoryTree from '../components/CategoryTree.svelte'
+  import { ApiRequestError } from '../lib/api'
   import {
+    createCategory,
+    deleteCategory,
     deleteNote,
     listCategories,
     listNotes,
+    renameCategory,
     type Category,
     type NoteListItem,
   } from '../lib/notes'
@@ -26,6 +31,7 @@
   let loading = $state(true)
   let error = $state('')
   let pendingId = $state('')
+  let categoryBusy = $state(false)
 
   const pageCount = $derived(Math.max(1, Math.ceil(total / perPage)))
   const activeCategory = $derived(categories.find((cat) => cat.id === category) ?? null)
@@ -72,6 +78,56 @@
         // 分类条读不到时列表本身仍可用，静默降级
       })
   })
+
+  function message(cause: unknown): string {
+    return cause instanceof Error ? cause.message : '操作失败，请稍后重试'
+  }
+
+  // 三个分类写操作都返回错误文案（空串=成功）：分类树把它摆到对应的行下面，
+  // 数据与 API 调用留在这里，树不碰网络。
+  async function createNamed(name: string): Promise<string> {
+    categoryBusy = true
+    try {
+      await createCategory(name)
+      categories = await listCategories()
+      return ''
+    } catch (cause) {
+      return cause instanceof ApiRequestError && cause.fields?.name ? cause.fields.name : message(cause)
+    } finally {
+      categoryBusy = false
+    }
+  }
+
+  async function renameTo(id: number, name: string): Promise<string> {
+    categoryBusy = true
+    try {
+      // 改名接口直接返回最新全量列表，省一次往返
+      categories = await renameCategory(id, name)
+      return ''
+    } catch (cause) {
+      return cause instanceof ApiRequestError && cause.fields?.name ? cause.fields.name : message(cause)
+    } finally {
+      categoryBusy = false
+    }
+  }
+
+  async function removeCategory(id: number): Promise<string> {
+    categoryBusy = true
+    try {
+      await deleteCategory(id)
+      categories = await listCategories()
+      // 删掉的正是当前筛选的分类时回到「全部」，否则列表会停在空结果上
+      if (category === id) {
+        page = 1
+        category = 0
+      }
+      return ''
+    } catch (cause) {
+      return message(cause)
+    } finally {
+      categoryBusy = false
+    }
+  }
 
   function submitSearch(event: SubmitEvent): void {
     event.preventDefault()
@@ -123,90 +179,93 @@
     </a>
   </header>
 
-  <form class="search-form" onsubmit={submitSearch}>
-    <label class="sr-only" for="list-search">搜索笔记</label>
-    <input
-      id="list-search"
-      class="search-input"
-      type="search"
-      placeholder="按标题或正文搜索…"
-      maxlength="200"
-      bind:value={query}
-    />
-    <button class="button" type="submit" disabled={loading}>搜索</button>
-  </form>
+  <div class="list-layout">
+    <div class="list-main">
+      <form class="search-form" onsubmit={submitSearch}>
+        <label class="sr-only" for="list-search">搜索笔记</label>
+        <input
+          id="list-search"
+          class="search-input"
+          type="search"
+          placeholder="按标题或正文搜索…"
+          maxlength="200"
+          bind:value={query}
+        />
+        <button class="button" type="submit" disabled={loading}>搜索</button>
+      </form>
 
-  <div class="chips" role="group" aria-label="按分类筛选">
-    <button class="chip" type="button" data-active={category === 0} onclick={() => pickCategory(0)}>
-      全部 <span class="chip-num">{categories.reduce((sum, cat) => sum + cat.note_count, 0)}</span>
-    </button>
-    {#each categories as cat (cat.id)}
-      <button class="chip" type="button" data-active={category === cat.id} onclick={() => pickCategory(cat.id)}>
-        {cat.name} <span class="chip-num">{cat.note_count}</span>
-      </button>
-    {/each}
-  </div>
-
-  {#if error}
-    <p class="form-error" role="alert">{error}</p>
-  {/if}
-
-  {#if loading}
-    <p class="muted">笔记载入中…</p>
-  {:else if rows.length === 0}
-    <p class="empty-hint">
-      {#if committedQ !== '' || category !== 0}
-        没有符合条件的笔记。换个词，或回到「全部」。
-      {:else}
-        还没有笔记。点击右上角「新建笔记」写下第一条。
+      {#if error}
+        <p class="form-error" role="alert">{error}</p>
       {/if}
-    </p>
-  {:else}
-    <ul class="note-rows">
-      {#each rows as note (note.id)}
-        <li class="note-row">
-          <button class="note-main" type="button" onclick={() => open(note)}>
-            <span class="note-title">
-              {note.title}
-              {#if note.encrypted}
-                <span class="badge">已加密</span>
-              {/if}
-            </span>
-            {#if note.content}
-              <span class="note-summary">{note.content}</span>
-            {:else if note.encrypted}
-              <span class="note-summary muted">密文内容不在列表展示。</span>
-            {/if}
-            <span class="note-meta">
-              {shownAt(note.updated_at)}
-              {#if note.category_name}
-                · {note.category_name}
-              {/if}
-            </span>
-          </button>
-          <button
-            class="button button-quiet"
-            type="button"
-            disabled={pendingId === note.id}
-            onclick={() => remove(note)}
-          >
-            {pendingId === note.id ? '删除中…' : '删除'}
-          </button>
-        </li>
-      {/each}
-    </ul>
 
-    <nav class="pager" aria-label="分页">
-      <button class="button button-quiet" type="button" disabled={page <= 1} onclick={() => step(-1)}>
-        上一页
-      </button>
-      <span class="pager-state">
-        第 {page} / {pageCount} 页 · 共 {total} 条
-        {#if activeCategory}· 分类「{activeCategory.name}」{/if}
-      </span>
-      <button class="button button-quiet" type="button" disabled={page >= pageCount} onclick={() => step(1)}>
-        下一页
-      </button>
-    </nav>
-  {/if}
+      {#if loading}
+        <p class="muted">笔记载入中…</p>
+      {:else if rows.length === 0}
+        <p class="empty-hint">
+          {#if committedQ !== '' || category !== 0}
+            没有符合条件的笔记。换个词，或点右侧「全部笔记」。
+          {:else}
+            还没有笔记。点击右上角「新建笔记」写下第一条。
+          {/if}
+        </p>
+      {:else}
+        <ul class="note-rows">
+          {#each rows as note (note.id)}
+            <li class="note-row">
+              <button class="note-main" type="button" onclick={() => open(note)}>
+                <span class="note-title">
+                  {note.title}
+                  {#if note.encrypted}
+                    <span class="badge">已加密</span>
+                  {/if}
+                </span>
+                {#if note.content}
+                  <span class="note-summary">{note.content}</span>
+                {:else if note.encrypted}
+                  <span class="note-summary muted">密文内容不在列表展示。</span>
+                {/if}
+                <span class="note-meta">
+                  {shownAt(note.updated_at)}
+                  {#if note.category_name}
+                    · {note.category_name}
+                  {/if}
+                </span>
+              </button>
+              <button
+                class="button button-quiet"
+                type="button"
+                disabled={pendingId === note.id}
+                onclick={() => remove(note)}
+              >
+                {pendingId === note.id ? '删除中…' : '删除'}
+              </button>
+            </li>
+          {/each}
+        </ul>
+
+        <nav class="pager" aria-label="分页">
+          <button class="button button-quiet" type="button" disabled={page <= 1} onclick={() => step(-1)}>
+            上一页
+          </button>
+          <span class="pager-state">
+            第 {page} / {pageCount} 页 · 共 {total} 条
+            {#if activeCategory}· 分类「{activeCategory.name}」{/if}
+          </span>
+          <button class="button button-quiet" type="button" disabled={page >= pageCount} onclick={() => step(1)}>
+            下一页
+          </button>
+        </nav>
+      {/if}
+    </div>
+
+    <CategoryTree
+      {categories}
+      active={category}
+      busy={categoryBusy}
+      onPick={pickCategory}
+      onCreate={createNamed}
+      onRename={renameTo}
+      onDelete={removeCategory}
+    />
+  </div>
 </section>
