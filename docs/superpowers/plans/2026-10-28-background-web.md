@@ -49,7 +49,7 @@
   - `func Save(path string, st State) error`（`MkdirAll(dir, 0o700)` + 临时文件 `0o600` + `rename`）
   - `func RemoveIfPid(path string, pid int) error`（文件里的 `pid` 等于入参才删；文件不存在返回 nil）
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package daemon
@@ -193,21 +193,21 @@ func TestNewTokenIs32BytesBase64URL(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/daemon/ -run 'TestState|TestSave|TestLoad|TestRemove|TestNewToken' -v`
 Expected: FAIL，`undefined: State` / `undefined: Save` 等编译错误
 
-- [ ] **Step 3: Implement `internal/daemon/state.go`**
+- [x] **Step 3: Implement `internal/daemon/state.go`**
 
 按接口块写 `State`、`StatePath`、`LogPath`、`NewToken`、`Load`、`Save`、`RemoveIfPid`。`Save` 照抄 `internal/config/config.go:SaveUserName` 的「`CreateTemp` + `Chmod(0o600)` + `Rename`」骨架（`defer os.Remove(tmpName)` 兜底）；`Load` 用 `os.ReadFile` + `json.Unmarshal`，错误包一层 `fmt.Errorf("read daemon state %s: %w", path, err)`。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/daemon/ -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/daemon/state.go internal/daemon/state_test.go
@@ -227,7 +227,7 @@ git commit -m "feat(daemon): 状态文件与日志路径推导"
 
 - Produces: `func ControlAddr(addr string) string` —— `stop`/`status`/`Probe` 一律经它把监听地址转成可连接的请求地址。
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package daemon
@@ -253,21 +253,21 @@ func TestControlAddrMapsWildcardsToLoopback(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/daemon/ -run TestControlAddr -v`
 Expected: FAIL，`undefined: ControlAddr`
 
-- [ ] **Step 3: Implement `internal/daemon/control.go`**
+- [x] **Step 3: Implement `internal/daemon/control.go`**
 
 `net.SplitHostPort`；host 为 `""` 或 `"0.0.0.0"` → `net.JoinHostPort("127.0.0.1", port)`；host 为 `"::"` → `net.JoinHostPort("::1", port)`；解析失败原样返回入参（调用方随后报错）。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/daemon/ -run TestControlAddr -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/daemon/control.go internal/daemon/control_test.go
@@ -287,7 +287,7 @@ git commit -m "feat(daemon): 控制地址推导，通配监听到回环"
 
 - Produces: `func ProcessAlive(pid int) bool`（Unix `syscall.Kill(pid, 0)`，`EPERM` 视为存活；Windows `os.FindProcess` 出错即判死）。
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package daemon
@@ -316,21 +316,21 @@ func TestProcessAliveForZeroOrNegative(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/daemon/ -run TestProcessAlive -v`
 Expected: FAIL，`undefined: ProcessAlive`
 
-- [ ] **Step 3: Implement both platform files**
+- [x] **Step 3: Implement both platform files**
 
 `pid_unix.go`：`if pid <= 0 { return false }`；`err := syscall.Kill(pid, 0)`；`err == nil` 或 `errors.Is(err, syscall.EPERM)` → true。`pid_windows.go`：`if pid <= 0 { return false }`；`_, err := os.FindProcess(pid); return err == nil`（文档注明 Windows 上 `FindProcess` 对不存在的进程返回错误）。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/daemon/ -run TestProcessAlive -v` 且 `GOOS=windows go build ./...`
 Expected: PASS（当前平台）+ Windows 构建无错误
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/daemon/pid_*.go internal/daemon/pid_test.go
@@ -355,7 +355,7 @@ git commit -m "feat(daemon): 平台相关的进程存活判定"
   - `const ShutdownTokenHeader = "X-Shutdown-Token"`
 - Consumes: Task 1 的 `State`、Task 2 的 `ControlAddr`。
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package daemon
@@ -443,21 +443,21 @@ func TestRequestStopRejectsWrongToken(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/daemon/ -run 'TestProbe|TestRequestStop' -v`
 Expected: FAIL，`undefined: Probe` / `undefined: RequestStop`
 
-- [ ] **Step 3: Implement `internal/daemon/probe.go`**
+- [x] **Step 3: Implement `internal/daemon/probe.go`**
 
 `Probe`：`http.Client{Timeout: 2 * time.Second}`，`http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+ControlAddr(addr)+"/api/info", nil)`，`defer resp.Body.Close()`，非 200 → `fmt.Errorf("probe %s: HTTP %d", addr, resp.StatusCode)`，JSON 解码到 `ServerInfo`（字段用 `json:"build_label"` → `Version`）。`RequestStop` 同上骨架，POST 空 body，按 `resp.StatusCode` 映射 202 成功 / 403「关停令牌无效」/ 其他 `HTTP %d`。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/daemon/ -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/daemon/probe.go internal/daemon/probe_test.go
@@ -480,7 +480,7 @@ git commit -m "feat(daemon): 探测运行实例与请求关停"
   - `func RunDetached(exe string, args []string, logPath, statePath string) (*exec.Cmd, error)` —— 打开日志（`O_APPEND|O_CREATE|O_WRONLY`, `0o600`）作为子进程 stdout/stderr，`Env = append(os.Environ(), EnvStatePath+"="+statePath)`，平台 `SysProcAttr`，`cmd.Start()` 成功后关闭父进程侧的日志句柄并返回 `cmd`。
 - Consumes: 无。
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package daemon
@@ -533,21 +533,21 @@ func TestRunDetachedWritesChildOutputToLog(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/daemon/ -run TestRunDetached -v`
 Expected: FAIL，`undefined: RunDetached`
 
-- [ ] **Step 3: Implement both platform files**
+- [x] **Step 3: Implement both platform files**
 
 共同部分写在 `spawn_unix.go` 里会被 windows 文件重复——改为把公共体放 `spawn.go`、平台差异放两个 `sysProcAttr()` 函数：`spawn.go` 定义 `RunDetached` 与 `func sysProcAttr() *syscall.SysProcAttr`（未定义由平台文件提供）。`spawn_unix.go`：`&syscall.SysProcAttr{Setsid: true}`；`spawn_windows.go`：`&syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x00000008 | 0x00000200}`（`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`），并注释说明两者不可与 `CREATE_NEW_CONSOLE` 组合。`RunDetached` 里 `defer` 不关句柄的时机要注意：**必须在 `cmd.Start()` 之后关**，否则子进程拿不到有效的继承句柄。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/daemon/ -run 'TestRunDetached|TestDetachedChild' -v` 且 `GOOS=windows go build ./...`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/daemon/spawn*.go internal/daemon/spawn_test.go
@@ -573,7 +573,7 @@ git commit -m "feat(daemon): 脱离终端的子进程启动"
   - `const shutdownPath = "/api/shutdown"`、`const shutdownTokenHeader = "X-Shutdown-Token"`
 - Consumes: 现有 `newTestHandler` / `doRequest` 测试助手（`internal/web/server_test.go`）。
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 先把 `internal/web/server_test.go` 的 `newTestHandler` 拆出带 `Control` 的版本（既有调用点零改动）：
 
@@ -698,21 +698,21 @@ func TestShutdownRejectsNonPostAndForeignHost(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/web/ -run TestShutdown -v`
 Expected: FAIL，`undefined: NewWithControl` / `undefined: Control`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `internal/web/control.go`：`Control`、两个常量、`func (app *application) handleShutdown(w, r)`——`app.control.Token == ""` → `writeError(w, 403, "shutdown_disabled", "后台模式未启用关停接口")`；`subtle.ConstantTimeCompare([]byte(r.Header.Get(shutdownTokenHeader)), []byte(app.control.Token)) != 1` → `writeError(w, 403, "shutdown_denied", "关停令牌无效")`；否则 `slog.Info("shutdown requested", "remote", r.RemoteAddr)`、`writeJSON(w, 202, map[string]string{"status": "shutting_down"})`、`go app.control.Shutdown()`（`Shutdown == nil` 时只记 `slog.Warn`）。`application` 增加 `control Control` 字段（`handlers_settings.go:application`），`newApplication` 增加 `ctl Control` 参数。`server.go`：`New` 改一行转发 `NewWithControl(cfg, st, dist, Control{})`；`NewWithControl` 里 `newApplication(cfg, st, ctl)` 并注册 `mux.HandleFunc("POST "+shutdownPath, app.handleShutdown)`。`middleware.go:csrfProtect` 在非 GET 分支最前面加 `if r.URL.Path == shutdownPath { next.ServeHTTP(w, r); return }`，并在注释里写明「凭证即令牌，别把这条豁免扩大」。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/web/ -v`
 Expected: PASS（含既有 100+ 项测试不回归）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/web/control.go internal/web/server.go internal/web/middleware.go internal/web/shutdown_api_test.go
@@ -734,7 +734,7 @@ git commit -m "feat(web): 后台模式关停端点与 Control 注入"
 - Produces: `type WebAction int` + 常量 `WebForeground`（零值）/ `WebStart` / `WebStop` / `WebStatus`；`Options.WebAction WebAction`。
 - Consumes: 现有 `containsHelpFlag`。
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 func TestParseWebActions(t *testing.T) {
@@ -780,21 +780,21 @@ func TestParseWebStatusHelp(t *testing.T) {
 
 `usage_test.go` 里给 `TestUsageForTopics` 的 `web` 断言列表追加：`"web start"`、`"web stop"`、`"web status"`、`"note.log"`。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/cli/ -run 'TestParseWeb|TestUsageForTopics' -v`
 Expected: FAIL，`undefined: WebAction`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `parse.go`：新增类型与常量；`case arg == "web" || arg == "info":` 里，`web` 分支先看 `rest[0]`：等于 `start`/`stop`/`status` → 映射到 `WebAction` 且 `rest = rest[1:]`；以 `-` 开头 → `WebForeground` 保持原样；其他 → `return CommandMenu, Options{}, fmt.Errorf("无法识别的 web 子命令 %s（可用: start, stop, status）", rest[0])`。`containsHelpFlag` 仍作用于截断后的 `rest`。`usage.go`：总帮助 Web 行改成 `web      启动 Web 服务（start/stop/status 管理后台实例，不带动作则前台运行）`，`webUsage()` 增加动作段与三行示例（`note web start`、`note web status`、`note web stop`）和一句「后台实例日志写入数据库同目录的 note.log」。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/cli/ -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/cli/parse.go internal/cli/usage.go internal/cli/parse_test.go internal/cli/usage_test.go
@@ -818,7 +818,7 @@ git commit -m "feat(cli): note web start/stop/status 子动作"
   - `func FormatStatus(d StatusData) string`
 - Consumes: 现有 `displayWidth` / `padRight` / `humanSize` / `orDash`（`internal/cli/info.go`）。
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 package cli
@@ -885,21 +885,21 @@ func TestFormatInfoShowsLogPath(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/cli/ -run 'TestFormatStatus|TestFormatUptime|TestFormatInfoShowsLogPath' -v`
 Expected: FAIL，`undefined: FormatStatus`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `status.go`：`FormatStatus` 复用 `sections` + `padRight` 的对齐写法（可把 `info.go` 的「渲染 sections」抽成内部函数 `renderSections(sections) string` 供两处调用，不改 `FormatInfo` 的输出）。三种形态的标题固定：`note web · 运行中` / `note web · 进程存在但不响应` / `note web · 未运行`；`formatUptime` 按上面的用例实现；未运行时末行给提示 `启动：note web start`。`info.go`：`InfoData` 加三个字段，`FormatInfo` 的「数据」段在「数据库」后插入 `{"日志", logSummary(d)}`，`logSummary` 存在时 `path（size）`、不存在时 `path（未创建）`。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/cli/ -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/cli/status.go internal/cli/status_test.go internal/cli/info.go internal/cli/info_test.go
@@ -919,7 +919,7 @@ git commit -m "feat(cli): note web status 渲染与 info 日志行"
 - Consumes: `daemon.EnvStatePath`、`daemon.NewToken`、`daemon.StatePath`、`daemon.LogPath`、`daemon.Save`、`daemon.RemoveIfPid`、`daemon.State`、`web.Control`、`web.NewWithControl`。
 - Produces: `func serve(cfg config.Config) error`（前台与后台共用的服务主体）。
 
-- [ ] **Step 1: 改造 `cmd/note/main.go`**
+- [x] **Step 1: 改造 `cmd/note/main.go`**
 
 `runWeb(globalConfigPath, args)` 只做 `loadConfig` 然后 `return serve(cfg)`；把现有 `runWeb` 的主体整体搬进 `serve(cfg)`，并在其中加入：
 
@@ -946,17 +946,17 @@ requestStop := func() { stopOnce.Do(func() { close(stopCh) }) }
 
 菜单分支：`case cli.MenuWeb: return runWebStart(opts.ConfigPath, nil)`（`runWebStart` 由 Task 10 提供；本任务先写成 `return runWeb(opts.ConfigPath, nil)` 会导致编译通过但语义未达成——**因此本任务只改 `serve`，菜单改动放 Task 10**）。
 
-- [ ] **Step 2: 验证编译与既有行为不变**
+- [x] **Step 2: 验证编译与既有行为不变**
 
 Run: `go build ./... && go vet ./...`
 Expected: 无输出（成功）
 
-- [ ] **Step 3: 前台冒烟（行为必须完全不变）**
+- [x] **Step 3: 前台冒烟（行为必须完全不变）**
 
 Run: `go run ./cmd/note web --addr 127.0.0.1:8097`（另开一个终端）`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8097/` 与 `curl -s -X POST -o /dev/null -w '%{http_code}' http://127.0.0.1:8097/api/shutdown`
 Expected: `/` 返回 200；`/api/shutdown` 返回 **403**（前台模式未启用）；`Ctrl+C` 后进程正常退出、日志仍在终端上
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add cmd/note/main.go
@@ -978,7 +978,7 @@ git commit -m "feat(note): 后台子进程写状态文件并接受关停请求"
 - Consumes: Task 1–9 的全部导出接口。
 - Produces: 三个 `func runWebXxx(globalConfigPath string, args []string) error`。
 
-- [ ] **Step 1: 实现 `runWebStart`**
+- [x] **Step 1: 实现 `runWebStart`**
 
 流程（每步失败都要有可读文案）：`loadConfig` → `statePath := daemon.StatePath(cfg.DBPath)`；若 `Load` 成功且 `daemon.ProcessAlive(st.Pid)` 且 `daemon.Probe(st.Addr)` 成功 → 打印 `note 已在后台运行（pid %d）` + `st.URLs` + 日志路径，`return nil`；若 `Load` 成功但 pid 已死 → `daemon.RemoveIfPid` 清理后继续。随后 `os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700)`；`exe, err := os.Executable()`；子进程参数 = 可选 `-c <globalConfigPath>` + `"web"` + `args`；`cmd, err := daemon.RunDetached(exe, childArgs, daemon.LogPath(cfg.DBPath), statePath)`；`go cmd.Wait()`；就绪轮询（100ms / 10s）：每轮 `daemon.Load(statePath)` 拿到 `st` 后 `daemon.Probe(st.Addr)` 成功即就绪；轮询期间若 `cmd.ProcessState != nil`（子进程已退出）立即失败；失败时打印 `启动失败：%v` + 日志路径 + 日志尾部（读最后 20 行，纯函数 `tailLines(path string, n int) []string` 放同文件），`daemon.RemoveIfPid(statePath, cmd.Process.Pid)` 后 `return fmt.Errorf("web 服务启动失败")`。成功时打印：
 
@@ -990,11 +990,11 @@ http://127.0.0.1:8080
 停止：note web stop    状态：note web status
 ```
 
-- [ ] **Step 2: 实现 `runWebStop`**
+- [x] **Step 2: 实现 `runWebStop`**
 
 `loadConfig` → `Load(statePath)`：`os.ErrNotExist` → 探测 `cfg.Addr`：若 `Probe` 成功 → 打印「检测到运行中的实例（前台启动或状态文件缺失），`note web stop` 只能关停后台实例，请回到它的终端按 Ctrl+C」，`return errExit(1)`；否则打印「note web 未在后台运行」，`return nil`。状态文件损坏 → 打印「状态文件 %s 无法解析（%v），请手动检查或删除它后重试」，`return errExit(1)`。有状态但 pid 已死 → `RemoveIfPid` + 打印「未在运行（已清理残留状态文件）」+ `return nil`。正常路径：`daemon.RequestStop(st)`（失败只 `slog.Warn`，继续等）；每 100ms 轮询 `ProcessAlive(st.Pid)` 至 10s；退出后 `daemon.RemoveIfPid(statePath, st.Pid)` 并打印「已停止（pid %d）」，`return nil`；超时 → Unix/Windows 都 `cmd := os.FindProcess(st.Pid); cmd.Kill()`（Windows 上即 `TerminateProcess`），打印「已强制结束（pid %d）：WAL 未完成 checkpoint，数据安全但下次启动会重放日志」，清理状态文件，`return nil`。
 
-- [ ] **Step 3: 实现 `runWebStatus`**
+- [x] **Step 3: 实现 `runWebStatus`**
 
 `loadConfig` → `Load(statePath)` 分三种：成功（可能真、可能残留）、`os.ErrNotExist`、损坏（打印错误，`return errExit(1)`）。探测地址 = 状态文件里的 `st.Addr`，无状态文件时用 `cfg.Addr`；`info, probeErr := daemon.Probe(addr)`；按设计 §4.3 的表组装 `cli.StatusData`（`Running` / `Unresponsive` / 都否），`LogExists` / `LogSizeBytes` 用 `os.Stat(daemon.LogPath(cfg.DBPath))`；pid 已死但有状态文件 → `RemoveIfPid` 并把 `StalePid` 填进去。`fmt.Print(cli.FormatStatus(data))`，然后按 `Running` / `Unresponsive` / 其余分别 `return nil` / `return errExit(1)` / `return errExit(3)`。
 
@@ -1011,7 +1011,7 @@ func errExit(code int) error { return exitError(code) }
 
 `run()` 里 `CommandWeb` 分派改为按 `opts.WebAction` 调四个函数；`main()` 里 `if err := run(...)` 前先 `var code exitError; if errors.As(err, &code) { os.Exit(int(code)); }`。
 
-- [ ] **Step 4: 菜单与 `note info`**
+- [x] **Step 4: 菜单与 `note info`**
 
 `internal/cli/menu.go`：`{label: "启动 Web 服务", action: MenuWeb}` → `{label: "启动 Web 服务（后台）", action: MenuWeb}`（`menu_test.go` 里若有文案断言同步改）。`cmd/note/main.go` 菜单分支改 `runWebStart`。`buildInfoData` 补：
 
@@ -1023,7 +1023,7 @@ if stat, err := os.Stat(data.LogPath); err == nil {
 }
 ```
 
-- [ ] **Step 5: 编译、单测与真实二进制冒烟**
+- [x] **Step 5: 编译、单测与真实二进制冒烟**
 
 Run: `go build ./... && go vet ./... && go test ./...`
 Expected: 全部通过
@@ -1061,7 +1061,7 @@ printf 'server:\n  addr: 127.0.0.1:8099\n' > .run/smoke.yaml
 
 Expected：日志文件 `.run/note.log` 里能看到 `listening` 与 `shutting down`（后者证明走的是优雅关停而非强杀）；第 2 条不启后台进程、不留状态文件；第 3 条不杀前台实例。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add cmd/note/main.go cmd/note/web_service.go internal/cli/menu.go internal/cli/menu_test.go
@@ -1079,25 +1079,25 @@ git commit -m "feat(note): note web start/stop/status 与后台菜单入口"
 - Modify: `AGENTS.md`（部署形态 + 硬性约定）
 - Modify: `CHANGELOG.md`（`[Unreleased]`）
 
-- [ ] **Step 1: 按设计文档 §8 的清单逐条改写**
+- [x] **Step 1: 按设计文档 §8 的清单逐条改写**
 
 要点已在设计中固定，实现时只写事实：命令形态与退出码（0/1/3）、日志与状态文件位置及权限、`/api/shutdown` 的存在条件与令牌来源、`note info` 新增日志行、`stop` 对前台实例的拒绝行为、强制结束的 WAL 说明。PRD/TECH_DESIGN 里的版本号各升一位并在修订说明里指向本设计文档。
 
-- [ ] **Step 2: `AGENTS.md` 硬性约定追加两条**
+- [x] **Step 2: `AGENTS.md` 硬性约定追加两条**
 
 - 「`/api/shutdown` 只在后台模式（`Control.Token` 非空）存在，凭状态文件里的 32 字节令牌；该路径的 CSRF 豁免不得扩大，令牌不得进日志/响应/命令行。」
 - 「后台实例的日志与状态文件固定在 `filepath.Dir(DBPath)`（`note.log` / `note.json`），`note info` 必须输出日志路径。」
 
-- [ ] **Step 3: 跑完整的门禁**
+- [x] **Step 3: 跑完整的门禁**
 
 Run: `just test && just check`
 Expected: Go 与前端全部通过、`go vet` 与 `svelte-check` 0 error 0 warning（前端未改，应无变化）
 
-- [ ] **Step 4: 写 CHANGELOG 条目（先测后写）**
+- [x] **Step 4: 写 CHANGELOG 条目（先测后写）**
 
 在 `[Unreleased]` 的 `### Added` 顶部新增一条，覆盖：`internal/daemon` 新包与各文件职责、自我 re-exec 后台化与平台 `SysProcAttr`、日志 fd 重定向的原因（slog 默认 handler 启动即绑定 stderr）、`/api/shutdown` 与 CSRF 豁免边界、令牌由子进程生成、`ControlAddr` 的通配映射、`status` 三态与退出码、`note info` 日志行、TDD 顺序（先 RED 后 GREEN）与真实二进制冒烟结果（含日志里的 `shutting down` 证据）。`### Changed` 补一条非破坏性说明（`note web` 语义不变，菜单项改后台）。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/PRD.md docs/TECH_DESIGN.md AGENTS.md CHANGELOG.md
