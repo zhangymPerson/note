@@ -35,11 +35,11 @@
 
 ## 做法（已选 A）
 
-| 方案 | 内容 | 取舍 |
-|------|------|------|
-| **A（选它）** | 新增 `components/CategoryTree.svelte` 只管画和收事件；`categories` 状态与全部 API 调用留在 `NoteListView.svelte` | 改动集中，不引入新状态层；树只在列表页存在——正是需求 |
-| B | 分类数据抽成共享 store `lib/categories.ts`，列表页/树/编辑器共用 | 多一层缓存失效要维护，只有一个改动点时收益不抵复杂度 |
-| C | 树挂到 `Layout.svelte`，全站常驻 | 超出需求范围，编辑页会同时出现分类下拉与分类树，语义重复 |
+| 方案          | 内容                                                                                                             | 取舍                                                     |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| **A（选它）** | 新增 `components/CategoryTree.svelte` 只管画和收事件；`categories` 状态与全部 API 调用留在 `NoteListView.svelte` | 改动集中，不引入新状态层；树只在列表页存在——正是需求     |
+| B             | 分类数据抽成共享 store `lib/categories.ts`，列表页/树/编辑器共用                                                 | 多一层缓存失效要维护，只有一个改动点时收益不抵复杂度     |
+| C             | 树挂到 `Layout.svelte`，全站常驻                                                                                 | 超出需求范围，编辑页会同时出现分类下拉与分类树，语义重复 |
 
 ## 组件契约
 
@@ -47,11 +47,11 @@
 
 ```ts
 interface Props {
-  categories: Category[];          // 来自 listCategories()
-  active: number;                  // 0 = 全部；否则分类 id
-  busy: boolean;                   // 任一写操作进行中，禁用所有操作
-  onPick: (id: number) => void;    // 0 = 全部
-  onCreate: (name: string) => Promise<string>;   // 返回错误文案，'' = 成功
+  categories: Category[]; // 来自 listCategories()
+  active: number; // 0 = 全部；否则分类 id
+  busy: boolean; // 任一写操作进行中，禁用所有操作
+  onPick: (id: number) => void; // 0 = 全部
+  onCreate: (name: string) => Promise<string>; // 返回错误文案，'' = 成功
   onRename: (id: number, name: string) => Promise<string>;
   onDelete: (id: number) => Promise<string>;
 }

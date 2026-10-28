@@ -31,23 +31,26 @@
 5. **URL 带着已删除的分类 id**（`?category=99`）时不崩、无任何高亮项，列表正常显示。
 
 ---
+
 ### Task 1: `CategoryTree` 组件
 
 **Files:**
+
 - Create: `web/src/components/CategoryTree.svelte`
 - Create: `web/src/components/CategoryTree.test.ts`
 - Modify: `web/src/app.css`（文件末尾「分类树」小节）
 
 **Interfaces:**
+
 - Consumes: `Category` 类型（`web/src/lib/notes.ts`：`{ id: number; name: string; note_count: number }`）。
 - Produces: 组件 props（Task 2 按此使用）：
   ```ts
   interface Props {
     categories: Category[];
-    active: number;   // 0 = 全部，否则分类 id
+    active: number; // 0 = 全部，否则分类 id
     busy: boolean;
     onPick: (id: number) => void;
-    onCreate: (name: string) => Promise<string>;             // '' = 成功，非空 = 错误文案
+    onCreate: (name: string) => Promise<string>; // '' = 成功，非空 = 错误文案
     onRename: (id: number, name: string) => Promise<string>;
     onDelete: (id: number) => Promise<string>;
   }
@@ -201,31 +204,39 @@ describe("CategoryTree", () => {
     typeInto(input, "工作");
     submit(target.querySelector(".cat-create") as HTMLFormElement);
     await vi.waitFor(() =>
-      expect(target.querySelector(".cat-create-error")?.textContent).toContain("分类名已存在"),
+      expect(target.querySelector(".cat-create-error")?.textContent).toContain(
+        "分类名已存在",
+      ),
     );
-    expect((target.querySelector(".cat-create input") as HTMLInputElement).value).toBe("工作");
+    expect(
+      (target.querySelector(".cat-create input") as HTMLInputElement).value,
+    ).toBe("工作");
     expect(props.onCreate).toHaveBeenCalledTimes(1);
   });
 
   it("改名：行内输入框回车提交", async () => {
     const { target, props } = render();
     const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
-    (workItem.querySelectorAll<HTMLElement>(".cat-act")[0]).click();
+    workItem.querySelectorAll<HTMLElement>(".cat-act")[0].click();
     flushSync();
     const input = target.querySelector(".cat-rename input") as HTMLInputElement;
     expect(input.value).toBe("工作");
     typeInto(input, "项目");
     submit(target.querySelector(".cat-rename") as HTMLFormElement);
-    await vi.waitFor(() => expect(props.onRename).toHaveBeenCalledWith(2, "项目"));
+    await vi.waitFor(() =>
+      expect(props.onRename).toHaveBeenCalledWith(2, "项目"),
+    );
   });
 
   it("改名 Esc 取消，不调用 onRename", () => {
     const { target, props } = render();
     const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
-    (workItem.querySelectorAll<HTMLElement>(".cat-act")[0]).click();
+    workItem.querySelectorAll<HTMLElement>(".cat-act")[0].click();
     flushSync();
     const input = target.querySelector(".cat-rename input") as HTMLInputElement;
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
     flushSync();
     expect(target.querySelector(".cat-rename")).toBeNull();
     expect(props.onRename).not.toHaveBeenCalled();
@@ -235,7 +246,7 @@ describe("CategoryTree", () => {
     const { target, props } = render();
     vi.spyOn(window, "confirm").mockReturnValue(false);
     const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
-    (workItem.querySelectorAll<HTMLElement>(".cat-act")[1]).click();
+    workItem.querySelectorAll<HTMLElement>(".cat-act")[1].click();
     expect(props.onDelete).not.toHaveBeenCalled();
   });
 
@@ -245,16 +256,20 @@ describe("CategoryTree", () => {
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
-    (workItem.querySelectorAll<HTMLElement>(".cat-act")[1]).click();
+    workItem.querySelectorAll<HTMLElement>(".cat-act")[1].click();
     await vi.waitFor(() =>
-      expect(workItem.querySelector(".field-error")?.textContent).toContain("分类下仍有 3 条笔记"),
+      expect(workItem.querySelector(".field-error")?.textContent).toContain(
+        "分类下仍有 3 条笔记",
+      ),
     );
   });
 
   it("busy 时操作按钮禁用", () => {
     const { target } = render({ busy: true });
     const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
-    for (const button of workItem.querySelectorAll<HTMLButtonElement>(".cat-act")) {
+    for (const button of workItem.querySelectorAll<HTMLButtonElement>(
+      ".cat-act",
+    )) {
       expect(button.disabled).toBe(true);
     }
   });
@@ -279,7 +294,7 @@ Expected: FAIL，`Failed to resolve import "./CategoryTree.svelte"`
 - 改名提交：同样 `trim()` 后为空直接 return；成功才 `editingId = 0`；失败写 `errors[id]`。
 - Esc：输入框上 `onkeydown={(event) => { if (event.key === "Escape") { editingId = 0; editingName = ""; } }}`；
   **不绑定 `onblur` 保存**。
-- 删除：`if (!window.confirm(\`删除分类「${cat.name}」？\`)) return;` 然后 `const error = await onDelete(cat.id); if (error) errors[cat.id] = error;`
+- 删除：`if (!window.confirm(\`删除分类「${cat.name}」？\`)) return;`然后`const error = await onDelete(cat.id); if (error) errors[cat.id] = error;`
 - `DEFAULT_CATEGORY_ID = 1`；改名按钮点击时清掉该行旧错误再进入编辑。
 
 - [ ] **Step 4: 加 `web/src/app.css` 的「分类树」小节**
@@ -288,6 +303,7 @@ Expected: FAIL，`Failed to resolve import "./CategoryTree.svelte"`
 `.cat-tree`、`.cat-root`、`.cat-toggle`、`.cat-row`（含 `.cat-row[data-active="true"]`）、`.cat-name`、
 `.cat-num`（沿用 `.chip-num` 的 monospace + 0.78rem 风格）、`.cat-list`、`.cat-item`、`.cat-line`、
 `.cat-actions`、`.cat-act`、`.cat-rename`、`.cat-create`。行为要求：
+
 - `.cat-actions { opacity: 0 }`，`.cat-line:hover .cat-actions, .cat-line:focus-within .cat-actions { opacity: 1 }`
   （按钮始终留在 DOM 里，只是视觉隐藏）。
 - `.cat-row` 是整行宽度、左对齐的按钮，选中态用 `--accent` 边框 + `--surface` 底色；
@@ -316,11 +332,13 @@ git commit -m "feat(web): add category tree component"
 ### Task 2: 列表页接入分类树
 
 **Files:**
+
 - Modify: `web/src/views/NoteListView.svelte`（整体替换 `<section>` 结构 + 脚本里加包装函数、删 chips 相关代码）
 - Create: `web/src/views/NoteListView.test.ts`
 - Modify: `web/src/app.css`（新增 `.list-layout`；删除 `.chips`、`.chip`、`.chip[data-active="true"]`、`.chip:focus-visible`、`.chip-num`）
 
 **Interfaces:**
+
 - Consumes: `CategoryTree` 的 props（Task 1），`listNotes/listCategories/createCategory/renameCategory/deleteCategory`（`web/src/lib/notes.ts` 现有签名），`ApiRequestError`（`web/src/lib/api.ts`，字段 `fields?: Record<string, string>`）。
 - Produces: 无对外接口；`/notes` 页面的 DOM 契约——`section.page.list > div.list-layout > (左侧列表, nav.cat-tree)`。
 
@@ -371,7 +389,12 @@ function render() {
 }
 
 beforeEach(() => {
-  mocks.listNotes.mockResolvedValue({ items: [NOTE], total: 1, page: 1, per_page: 20 });
+  mocks.listNotes.mockResolvedValue({
+    items: [NOTE],
+    total: 1,
+    page: 1,
+    per_page: 20,
+  });
   mocks.listCategories.mockResolvedValue(CATS);
   mocks.deleteCategory.mockResolvedValue(undefined);
   history.replaceState(null, "", "/notes");
@@ -388,45 +411,73 @@ afterEach(() => {
 describe("NoteListView", () => {
   it("笔记列表与右侧分类树同时渲染，分类树里不再有 chips", async () => {
     const target = render();
-    await vi.waitFor(() => expect(target.querySelector(".note-title")?.textContent).toContain("第一条"));
-    await vi.waitFor(() => expect(target.querySelectorAll(".cat-list .cat-item")).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(target.querySelector(".note-title")?.textContent).toContain(
+        "第一条",
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(target.querySelectorAll(".cat-list .cat-item")).toHaveLength(2),
+    );
     expect(target.querySelector(".list-layout > nav.cat-tree")).not.toBeNull();
     expect(target.querySelector(".chips")).toBeNull();
   });
 
   it("点击分类树里的分类，按该分类从第 1 页重新拉取", async () => {
     const target = render();
-    await vi.waitFor(() => expect(target.querySelectorAll(".cat-list .cat-row")).toHaveLength(2));
-    (target.querySelectorAll<HTMLElement>(".cat-list .cat-row")[1]).click();
+    await vi.waitFor(() =>
+      expect(target.querySelectorAll(".cat-list .cat-row")).toHaveLength(2),
+    );
+    target.querySelectorAll<HTMLElement>(".cat-list .cat-row")[1].click();
     flushSync();
     await vi.waitFor(() =>
-      expect(mocks.listNotes).toHaveBeenLastCalledWith({ q: "", category: 2, page: 1 }),
+      expect(mocks.listNotes).toHaveBeenLastCalledWith({
+        q: "",
+        category: 2,
+        page: 1,
+      }),
     );
   });
 
   it("删除正在筛选的分类后回到「全部」第 1 页", async () => {
     const target = render();
-    await vi.waitFor(() => expect(target.querySelectorAll(".cat-list .cat-row")).toHaveLength(2));
-    (target.querySelectorAll<HTMLElement>(".cat-list .cat-row")[1]).click();
+    await vi.waitFor(() =>
+      expect(target.querySelectorAll(".cat-list .cat-row")).toHaveLength(2),
+    );
+    target.querySelectorAll<HTMLElement>(".cat-list .cat-row")[1].click();
     flushSync();
     await vi.waitFor(() =>
-      expect(mocks.listNotes).toHaveBeenLastCalledWith({ q: "", category: 2, page: 1 }),
+      expect(mocks.listNotes).toHaveBeenLastCalledWith({
+        q: "",
+        category: 2,
+        page: 1,
+      }),
     );
 
     mocks.listCategories.mockResolvedValue([CATS[0]]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const row = target.querySelectorAll(".cat-list .cat-item")[1];
-    (row.querySelectorAll<HTMLElement>(".cat-act")[1]).click();
-    await vi.waitFor(() => expect(mocks.deleteCategory).toHaveBeenCalledWith(2));
+    row.querySelectorAll<HTMLElement>(".cat-act")[1].click();
     await vi.waitFor(() =>
-      expect(mocks.listNotes).toHaveBeenLastCalledWith({ q: "", category: 0, page: 1 }),
+      expect(mocks.deleteCategory).toHaveBeenCalledWith(2),
+    );
+    await vi.waitFor(() =>
+      expect(mocks.listNotes).toHaveBeenLastCalledWith({
+        q: "",
+        category: 0,
+        page: 1,
+      }),
     );
   });
 
   it("分类接口失败时列表仍可读，树只剩根节点", async () => {
     mocks.listCategories.mockRejectedValue(new Error("分类读取失败"));
     const target = render();
-    await vi.waitFor(() => expect(target.querySelector(".note-title")?.textContent).toContain("第一条"));
+    await vi.waitFor(() =>
+      expect(target.querySelector(".note-title")?.textContent).toContain(
+        "第一条",
+      ),
+    );
     expect(target.querySelectorAll(".cat-list .cat-item")).toHaveLength(0);
     expect(target.querySelector(".cat-root .cat-row")).not.toBeNull();
   });
@@ -434,8 +485,14 @@ describe("NoteListView", () => {
   it("URL 指向不存在的分类时不崩、无高亮项，列表照常显示", async () => {
     history.replaceState(null, "", "/notes?category=99");
     const target = render();
-    await vi.waitFor(() => expect(target.querySelector(".note-title")?.textContent).toContain("第一条"));
-    expect(target.querySelectorAll('.cat-row[data-active="true"]')).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(target.querySelector(".note-title")?.textContent).toContain(
+        "第一条",
+      ),
+    );
+    expect(
+      target.querySelectorAll('.cat-row[data-active="true"]'),
+    ).toHaveLength(0);
   });
 });
 ```
@@ -448,15 +505,16 @@ Expected: FAIL（`.cat-tree` 不存在、`.chips` 仍存在）
 - [ ] **Step 3: 改 `NoteListView.svelte`**
 
 脚本部分：
+
 - 新增 `import CategoryTree from '../components/CategoryTree.svelte'`、`import { ApiRequestError } from '../lib/api'`，
   并把 `createCategory, deleteCategory, renameCategory` 加进 `../lib/notes` 的 import。
 - 新增 `const DEFAULT_CATEGORY_ID = 1`、`let busy = $state(false)`。
 - 抽出 `function message(cause: unknown): string { return cause instanceof Error ? cause.message : '操作失败，请稍后重试' }`。
 - 删掉 `pickCategory`，改成三个包装函数（签名固定，树按此调用）：
   ```ts
-  async function createNamed(name: string): Promise<string>      // 成功刷新 categories 并返回 ''
-  async function renameTo(id: number, name: string): Promise<string>  // 成功用后端返回的全量列表覆盖 categories
-  async function removeCategory(id: number): Promise<string>      // 成功后 category = 0 且 page = 1，再刷新 categories
+  async function createNamed(name: string): Promise<string>; // 成功刷新 categories 并返回 ''
+  async function renameTo(id: number, name: string): Promise<string>; // 成功用后端返回的全量列表覆盖 categories
+  async function removeCategory(id: number): Promise<string>; // 成功后 category = 0 且 page = 1，再刷新 categories
   ```
   错误分支：`ApiRequestError` 且 `fields?.name` 优先用它，否则 `message(cause)`。
   三个函数都用 `busy = true/false` 包住，`busy` 传给树。
@@ -464,6 +522,7 @@ Expected: FAIL（`.cat-tree` 不存在、`.chips` 仍存在）
 - `refresh`、`syncUrl`、`$effect`、`remove(note)`、`shownAt` 全部保持原样。
 
 模板部分（这是布局决策，照此写）：
+
 ```svelte
 <section class="page list">
   <header class="list-head">…（标题 +「新建笔记」按钮，原样）</header>
@@ -488,6 +547,7 @@ Expected: FAIL（`.cat-tree` 不存在、`.chips` 仍存在）
   </div>
 </section>
 ```
+
 - 空状态文案里 `category !== 0` 的分支保留，但「回到『全部』」改成「点右侧『全部笔记』」。
 - 分页区 `{#if activeCategory}· 分类「{activeCategory.name}」{/if}` 保留；`activeCategory` 的 `$derived` 保留。
 
@@ -522,6 +582,7 @@ git commit -m "feat(web): show category tree beside the note list"
 ### Task 3: 移除独立的分类页
 
 **Files:**
+
 - Modify: `web/src/router/router.test.ts`（先改断言）
 - Modify: `web/src/router/router.ts`
 - Modify: `web/src/App.svelte`
@@ -530,6 +591,7 @@ git commit -m "feat(web): show category tree beside the note list"
 - Modify: `web/src/app.css`（删除「分类管理」小节的 `.inline-form*` 与 `.manager*`）
 
 **Interfaces:**
+
 - Consumes: 无（Task 2 之后列表页已不再依赖独立分类页）。
 - Produces: `matchRoute("/categories")` → `{ name: "list", params: {} }`；`RouteName` 不再包含 `"categories"`。后续任务不得再引用 `categories` 路由或 `CategoryManagerView`。
 
@@ -539,14 +601,20 @@ git commit -m "feat(web): show category tree beside the note list"
 
 ```ts
 it("matches the master password route", () => {
-  expect(matchRoute("/master-password")).toEqual({ name: "master", params: {} });
+  expect(matchRoute("/master-password")).toEqual({
+    name: "master",
+    params: {},
+  });
 });
 
 // 分类管理页并入列表页后，旧地址（含旧书签里的查询串）仍落到列表页，
 // NoteListView 挂载时的 syncUrl() 会把地址纠正成 /notes。
 it("分类页已并入列表页，旧地址落到列表", () => {
   expect(matchRoute("/categories")).toEqual({ name: "list", params: {} });
-  expect(matchRoute("/categories?category=3")).toEqual({ name: "list", params: {} });
+  expect(matchRoute("/categories?category=3")).toEqual({
+    name: "list",
+    params: {},
+  });
 });
 ```
 
@@ -600,17 +668,20 @@ git commit -m "refactor(web): drop the standalone category page"
 ### Task 4: 文档同步、浏览器验收与 CHANGELOG
 
 **Files:**
+
 - Modify: `docs/PRD.md`
 - Modify: `docs/TECH_DESIGN.md`
 - Modify: `CHANGELOG.md`
 
 **Interfaces:**
+
 - Consumes: Task 1–3 的最终行为。
 - Produces: 无代码接口。
 
 - [ ] **Step 1: 同步 PRD**
 
 先 `grep -n "分类\|/categories" docs/PRD.md` 定位，再改这几处：
+
 - 页面/路由表里 `/categories | 分类管理` 那一行：删除，或改注为「`/categories` 兼容重定向到 `/notes`」。
 - 5.5 分类管理 FR-4.3 与 FR-4.6：改成「分类树常驻在 `/notes` 右侧，树内完成新增/改名/删除与筛选；
   不再有独立分类页」。
@@ -620,6 +691,7 @@ git commit -m "refactor(web): drop the standalone category page"
 - [ ] **Step 2: 同步 TECH_DESIGN**
 
 `grep -n "分类\|/categories\|CategoryManager" docs/TECH_DESIGN.md`，改：
+
 - 前端目录树里 `views/` 的说明删掉「分类」；`components/` 说明加上 `CategoryTree`。
 - 前端页面/路由小节里 `/categories` 的条目改成旧地址兼容说明。
 
@@ -633,6 +705,7 @@ Expected: `go vet` 无输出、svelte-check 与 tsc 0 error
 - [ ] **Step 4: 浏览器验收**
 
 Run: `just start`，打开 `http://127.0.0.1:5173/notes`（vite dev，API 代理到 :8080），确认：
+
 1. 顶部导航没有「分类」。
 2. 右侧是分类树：根节点「全部笔记」+ 数、可收起；下面是「未分类」（无操作按钮）与各分类（有数）。
 3. 点某分类 → 列表按它筛选，URL 变 `/notes?category=N`，选中项高亮。
@@ -647,6 +720,7 @@ Run: `just start`，打开 `http://127.0.0.1:5173/notes`（vite dev，API 代理
 - [ ] **Step 5: 写 CHANGELOG**
 
 在 `CHANGELOG.md` 的 `[Unreleased]` 小节写条目（Keep a Changelog 格式，只写已验证的事实）：
+
 - **Added**：列表页右侧分类树（`components/CategoryTree.svelte`），树内完成筛选、新增、改名、删除；
   其中新增 `CategoryTree.test.ts` 与 `NoteListView.test.ts` 组件/集成测试。
 - **Changed**：`/notes` 改为两栏布局（`minmax(0,1fr) 240px`，≤720px 单列）；分类管理从独立页面并入列表页右侧。
