@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -56,11 +58,20 @@ func run() error {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
+	}
+
 	serverErr := make(chan error, 1)
 	go func() {
-		serverErr <- server.ListenAndServe()
+		serverErr <- server.Serve(ln)
 	}()
 	slog.Info("listening", "addr", cfg.Addr)
+	fmt.Println("note 已启动，在浏览器打开：")
+	for _, url := range config.StartupURLs(cfg.Addr, ln.Addr().String()) {
+		fmt.Println(url)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)

@@ -8,6 +8,15 @@
 
 ### Added
 
+- 启动时输出可直接点击的访问地址（实现过程与关键逻辑）：
+  - `internal/config/urls.go` 新增纯函数 `AccessURLs(addr)`：回环、具体 IP 或主机名直接拼装成 `http://host:port`（IPv6 经 `net.JoinHostPort` 一律加方括号）；通配 host（`0.0.0.0` 枚举非回环 IPv4，`::` / 空 host 枚举 IPv6）逐接口枚举地址，跳过回环、链路本地（169.254 与 fe80）与组播，去重后按字典序每地址一条；枚举为空回退回环地址，保证至少打印一条可用 URL。
+  - Windows 实测发现 `net.Listen("tcp", "0.0.0.0:8100")` 建立的是双栈 socket，`ln.Addr()` 汇报 `[::]:8100`——直接用 listener 地址推导会丢掉「请求的是 IPv4 家族」这层信息，把本机全部非回环 IPv4 漏掉、只打出 `[::1]` 回退。因此再抽 `StartupURLs(请求地址, listener 实际地址)`：家族取请求 host，端口取 listener 实际端口（机制上兼容 `:0`），`main.go` 只调它。
+  - `cmd/note/main.go` 从 `ListenAndServe` 改为先 `net.Listen` 再 `Serve(ln)`：监听失败同步返回且错误回带尝试地址（实测 `listen on 127.0.0.1:8098: listen tcp ...`，非零退出）；URL 经 `fmt.Println` 单独打到 stdout（slog 结构化日志与其互不混写，`addr`/`db`/`allow_remote` 字段原样保留），服务在打印前已经开始 Serve，地址枚举不阻塞任何请求处理。
+  - 单测 19 项（TDD：先 RED `undefined: AccessURLs`，后 GREEN），通配分支注入假网卡、不依赖真实接口；真实二进制实测四种形态：默认回环打印 `http://127.0.0.1:8099` 且 curl 200；`--addr 0.0.0.0:8100 --allow-remote` 逐条打印本机 5 个非回环 IPv4（无 `0.0.0.0`、无链路本地），列表中地址 curl 可达（返回 400 `host_invalid` 属既有 Host 白名单行为，远程访问门禁归 TODO「远程访问开关与 API Key 访问门禁」项处理）；`--addr [::1]:8101` 打印 `http://[::1]:8101`；端口被占时非零退出且错误回带地址。
+  - 验证：`just test`（Go 5 个包 77 项 + 前端 12 个文件 100 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；文档同步 TECH_DESIGN 4.2 / 14.1 与 PRD 8.10。
+
+### Added
+
 - 全分支评审后的修复（改密收尾与续跑的可判定语义，实现过程与关键逻辑）：
   - 改密收尾不再掩盖成功：`InfoView.submitPassword` 原先在 `runMigration` 之后仍串「顺带改助记问题」与「重读清单复核」两步，任一步失败都落进同一个 `catch`，迁移状态卡因此根本不出现，界面只说「操作失败」——而密文其实已经全部换完。用户拿真正的旧口令重试时 `verifyOldPassword` 必然失败，界面就说出了「主密码不正确或加密数据已损坏」这句假话。现在 `sessionKey.set(新密钥)` 之后立刻 `report = result`、`remaining = result.remaining`，附带步骤各自 `try/catch`：改问题失败只追加「主密码已更新，但助记问题没改成功」，复核失败退回报告自带的计数。新增纯函数 `reencrypt.countRemaining(items, newKey, deps, fallback)` 承担这个退回（复核里非 `DecryptError` 的失败不再往上抛），用例先 RED（`countRemaining is not a function`）后 GREEN。
   - 「继续迁移」不再预填一个已被证明解不开的口令：`resume()` 原先无条件把新密码抄进旧密码栏。响应丢失型中断（迁移其实跑完了）这样是对的，但中途退出时剩下那些仍受**上一代**口令保护，预填新密码等于让用户白烧两轮 PBKDF2 再撞一次同样的失败。新增 `reencrypt.needsPreviousPassword(report)`（报告含 `failed_old_key` 即为真），InfoView 据此决定预填与文案：需要上一个口令时旧密码栏留空、按钮写成「继续迁移（请输入上一个主密码）」。两条用例同样先 RED 后 GREEN。
