@@ -8,6 +8,17 @@
 
 ### Added
 
+- 首页「使用频率」的事件口径从「只统计查询」扩展到「查询 + 笔记与分类的读写」（实现过程与关键逻辑）：
+  - **迁移** `sql/0005_activity_events.sql`：SQLite 不能就地改 CHECK，按「新建 `activities_v5` → `INSERT … SELECT` 拷数据 → `DROP TABLE activities` → `RENAME TO activities`」重建，再把 0002 的三条索引补回来（DROP 会把旧索引一起带走）。新 CHECK 枚举 `search` / `note_view` / `note_create` / `note_update` / `note_delete` / `note_restore` / `note_purge` / `category_create` / `category_rename` / `category_delete`——后两个 `note_*` 只是给第 2 条（软删除与回收站）预留，当前无写入点，避免以后为同一件事再重建一次表。`query` 列改为 `NOT NULL DEFAULT ''`：非搜索事件写空串，不引入 NULL 三值语义；历史 `search` 行原样保留，`user_version` 升到 5。
+  - **写入点**：`internal/store/activity.go` 新增 `Activity*` 常量、`allowedActivityKinds` 校验表与 `insertActivity` / `recordActivityTx`（同时接受 `*sql.DB` 与 `*sql.Tx`）。笔记的建/改/删与分类的增/改/删都在**业务事务内**顺手插一行事件：`CreateNote` 为此从裸 `ExecContext` 改成 `inTx`、`DeleteNote` 把 `DELETE` 收进事务（`PRAGMA wal_checkpoint(TRUNCATE)` 仍留在事务外），失败路径（不存在、默认分类、非空分类、重名）因为回滚而不留事件。详情页「查看」只能写在 `handleGetNote`：`CreateNote`/`UpdateNote` 内部也会调 `GetNote`，埋在 store 层会把写操作重复计成查看；埋点失败只 `slog.Warn`，绝不影响详情返回。
+  - **统计口径**：`Stats` 增加 `total_events`（全部事件）与 `events_by_kind`，`active_days` 与 `days`（热力图）改为按全部事件计数，`total_searches` 与 `top_queries` 保留且仍限 `kind='search'`；`SUM(...)` 用 `COALESCE` 兜住空库的 NULL。`events_by_kind` 只返回出现过的 kind、按次数倒序，中文文案与「分类维护」合并规则留在前端。
+  - **前端**：`lib/stats.ts` 新增 `KindCount` / `EventGroup` / `groupEvents()`——固定六组顺序（查看笔记 / 新建笔记 / 编辑笔记 / 删除笔记 / 查询 / 分类维护），计数为 0 的组照常显示（「删除 0 次」本身也是信息），三个 `category_*` 合并成一行，认不出的 kind 汇总成「其他」以保证总量对得上，`share` 按展示总量算。`HomeView.svelte` 把「总查询次数」换成「累计事件」，新增「事件构成」列表（标签 / 占比条 / 次数三列，`app.css` 的 `.event-groups`）；热力图标题下补一句口径说明，`ActivityHeatmap.svelte` 的 tooltip 与 aria-label 改说「N 次操作」。
+  - **隐私**：事件只落 `kind`、`created_at` 与（仅搜索时的）`query`，不记录标题、正文或分类名；日志仍不含正文与查询串。
+  - TDD：`internal/store/activity_test.go`（8 类事件各一条、失败写操作不留事件、`RecordActivity` 拒绝未知 kind、聚合口径）、`store_test.go` 的 `TestMigration0005ActivityKinds`（CHECK 接受新旧 kind / 拒绝未知 / `query` 默认值 / 三条索引重建）、`internal/web/notes_api_test.go` 的 `TestStatsCountsCRUDAndViewEvents`（增删改查与查看各 1 条、删除后读 404 不计数）、`web/src/lib/stats.test.ts` 的 `groupEvents` 5 例。
+  - 验证：`just test`（Go 8 包 145 项 + 前端 14 文件 123 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；真实二进制 + Edge headless 用 `.run/activity-verify.mjs` 跑 24 项全 PASS（`/api/stats` 的 8 类计数、首页六组文案与计数、构成条宽度 13/13/13/13/13/38、tooltip 改说「次操作」），`.run/activity-narrow.mjs` 在 360/390/768/1440 四个视口无横向溢出。
+
+- 顶栏品牌位「笔记」前面加笔记本图标，并去掉下划线（`components/Layout.svelte` + `app.css`）：内联单色 `currentColor` 描边 SVG（书脊 + 两条文本线，`aria-hidden` + `focusable="false"`），`.brand` 改 `inline-flex` + `align-self: center`（顶栏整体是 `align-items: baseline`，不加 `align-self` 图标会把文字基线顶高）。下划线来源是全局 `a:hover { text-decoration: underline }`，因此用 `.brand:hover` / `.brand:focus-visible` 显式 `text-decoration: none`，改以文字与图标同时变 `--accent` 作为悬停反馈；键盘焦点框仍走全局 `a:focus-visible`。浏览器断言：常态与 hover 的 `text-decoration-line` 都是 `none`、图标 19×19、hover 颜色由 `--text` 变为 `--accent`。
+
 - 分类树并入「全部笔记」页右侧，删掉独立的分类管理与「分类」tab（前端实现过程与关键逻辑）：
   - 新增 `web/src/components/CategoryTree.svelte`：只为展示与交互，分类数据与全部 API 调用仍留在 `views/NoteListView.svelte`。组件的三个写操作回调签名统一为 `(…) => Promise<string>`（空串=成功、非空=错误文案），于是 `category_exists` / `category_not_empty` 的 409 文案能就地摆到对应行下面，而组件不碰网络。组件内部状态只有展开、正在改名的 id 与输入值、各节点错误文案。
   - 树结构：根节点「全部笔记」（`$derived` 求和的总数、可展开收起）+「未分类」+ 各分类，子项显示名称与笔记数；默认分类 `id=1` 不渲染改名/删除按钮。行尾操作按钮常驻 DOM（`opacity: 0` + `:hover`/`:focus-within` 显示），因此键盘可达。改名走行内输入框（Enter 保存、Esc 取消、**失焦不保存**以避免误提交），新增走树底部常驻输入框。
@@ -50,6 +61,7 @@
 
 ### Changed
 
+- 首页「使用统计」不再显示单一的「总查询次数」，改为「累计事件 + 活跃天数 + 事件构成（六行）」，热力图与活跃天数改为按全部事件（查询 / 查看 / 新建 / 编辑 / 删除 / 分类维护）统计；`/api/stats` 新增 `total_events` 与 `events_by_kind`，`total_searches` 与 `top_queries` 保留但仅指查询。数据库 schema 升到 `user_version = 5`（旧库首次启动自动重建成 `activities` 表，历史查询记录不丢）。
 - 前端页面数量回到 9 个主视图：「分类管理」页并入「全部笔记」页右侧的分类树，分类的新增、改名、删除与筛选都在树内完成；`/categories` 退化为指向列表页的旧地址兼容。
 - `note web`（不带子命令）语义不变：仍在前台运行、日志进终端、不创建日志文件；后台形态是新增的 `note web start`。交互菜单的「启动 Web 服务」改为后台启动，日志写入数据库同目录的 `note.log`。`note info` 增加「日志」一行。
 - 破坏性：裸 `note` 不再直接启动 Web 服务（改为交互菜单，`note web` 才启动）；默认配置文件从 `./config/note.yaml` 迁到用户配置目录、默认数据库从 `./data/notes.db` 迁到用户数据目录。旧数据继续使用：`note web -c ./config/note.yaml --db ./data/notes.db`，或把文件拷到新默认位置；不做隐式回退，避免双源配置难以排查。

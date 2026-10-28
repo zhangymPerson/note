@@ -101,9 +101,10 @@ note/
 ├── sql/
 │   ├── embed.go                  # //go:embed *.sql
 │   ├── 0001_init.sql             # v1 notes 表与 CHECK 约束
-│   ├── 0002_activity.sql         # 搜索活动统计
+│   ├── 0002_activity.sql         # 活动事件表（0005 重建了 kind 枚举）
 │   ├── 0003_note_fields.sql      # kind/remark/rev
-│   └── 0004_note_app.sql         # categories、master_password、notes.category_id
+│   ├── 0004_note_app.sql         # categories、master_password、notes.category_id
+│   └── 0005_activity_events.sql  # activities 重建：kind 枚举扩到查询 + 笔记/分类读写
 ├── internal/
 │   ├── build/info.go             # 版本/git hash/构建日期变量（ldflags 注入）+ vcs 回落
 │   ├── cli/                      # 命令行界面：解析、菜单、信息/状态渲染、帮助
@@ -451,7 +452,7 @@ GET    /*                     # 非 API GET → index.html
 
 ### 5.1 Schema
 
-结构由 `sql/` 下的编号迁移脚本累积而成，当前 schema 版本 `user_version = 4`。以下是迁移全部执行完之后的最终形态：
+结构由 `sql/` 下的编号迁移脚本累积而成，当前 schema 版本 `user_version = 5`。以下是迁移全部执行完之后的最终形态：
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -491,7 +492,7 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE INDEX IF NOT EXISTS idx_notes_updated_at
     ON notes(updated_at DESC);
 
--- 0002_activity.sql：首页热力图与高频查询词的数据源
+-- 0002_activity.sql：首页活动频率与高频查询词的数据源（0005 重建了 kind 枚举）
 CREATE TABLE IF NOT EXISTS activities (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     kind       TEXT NOT NULL CHECK (kind IN ('search')),
@@ -524,6 +525,27 @@ CREATE TABLE IF NOT EXISTS master_password (
 );
 
 ALTER TABLE notes ADD COLUMN category_id INTEGER REFERENCES categories(id);
+
+-- 0005_activity_events.sql：SQLite 不能就地改 CHECK，只能新建 → 拷数据 → 删旧 → 改名。
+-- 重建后 kind 覆盖查询、笔记的增删改查与分类维护（note_restore/note_purge 预留给回收站）。
+-- query 列对非搜索事件写空串，保持 NOT NULL，不引入 NULL 三值语义。
+CREATE TABLE activities_v5 (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL CHECK (kind IN (
+        'search', 'note_view', 'note_create', 'note_update', 'note_delete',
+        'note_restore', 'note_purge',
+        'category_create', 'category_rename', 'category_delete'
+    )),
+    query      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+INSERT INTO activities_v5 (id, kind, query, created_at)
+SELECT id, kind, query, created_at FROM activities;
+DROP TABLE activities;
+ALTER TABLE activities_v5 RENAME TO activities;
+CREATE INDEX IF NOT EXISTS idx_activities_created_at ON activities(created_at);
+CREATE INDEX IF NOT EXISTS idx_activities_kind       ON activities(kind);
+CREATE INDEX IF NOT EXISTS idx_activities_query      ON activities(query);
 ```
 
 字段约定：
@@ -568,11 +590,12 @@ ALTER TABLE notes ADD COLUMN category_id INTEGER REFERENCES categories(id);
 
 - 表结构定义集中在仓库根目录 `sql/`：
   - `0001_init.sql`：v1 的 `notes` 表与索引，内容与 5.1 一致；
+  - `0005_activity_events.sql`：`activities` 重建（新建 → 拷数据 → 删旧 → 改名），把 `kind` 的 CHECK 从 `('search')` 扩到查询 + 笔记/分类读写，并补回三条索引；
   - `embed.go`：用 `//go:embed *.sql` 暴露嵌入文件系统，供 `internal/store` 读取。
 - 文件名前缀为版本号；启动时按版本升序执行，已执行版本由 `PRAGMA user_version` 记录。
 - 每个版本的迁移在单个事务内执行；任一语句失败则回滚并拒绝启动，成功后更新 `user_version`。
 - 新建数据库执行全部迁移；已有数据库只执行 `user_version` 之后的版本。
-- 迁移只向前；不自动删除列、不重建表。
+- 迁移只向前；不自动删除列。唯一例外是 SQLite 无法就地修改 CHECK 时重建表（0005），重建必须显式拷数据、重建全部索引。
 - 升级前建议用户备份数据库；不自动执行 `VACUUM`，避免大库启动耗时。
 
 ### 5.4 查询与搜索
@@ -601,8 +624,9 @@ SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.update
 - `categoryID` 为 0 表示不按分类过滤；等于 `1`（默认分类）时匹配 `category_id = 1 OR category_id IS NULL`——未分类的笔记在库里存的是 `NULL`，`ListCategories` 的笔记数用同一条规则计入默认分类。
 - 摘要：只取明文笔记的 `content`，在 Go 侧按码点截断到 140（`truncateRunes`），保留换行；加密笔记的列表项没有 `content` 字段（`omitempty`）。
 - SQLite `LIKE` 对 ASCII 大小写不敏感，对中文为精确子串；不做分词、拼音和纠错。
-- 每次非空搜索写一条 `activities(kind='search')`，供首页热力图与高频词统计；查询词本身只进数据库，不进日志。
+- 每次非空搜索写一条 `activities(kind='search')`，供首页活动频率与高频词统计；查询词本身只进数据库，不进日志。
 - 查询词通过 URL 参数传递，会进入浏览器历史。
+- 活动事件（`activities`）：写操作在自己那个事务里顺带插一行（`recordActivityTx`），创建/更新/删除失败就不会留下事件；`note_view` 由 `handleGetNote` 在详情成功返回后写（`CreateNote`/`UpdateNote` 内部也会调 `GetNote`，埋在 store 层会把写操作重复计成查看），写失败只 `slog.Warn` 不影响详情返回。事件只落 `kind`、`created_at` 与（仅搜索时的）`query`，不记录标题、正文、分类名。
 - 数据量增长后评估 FTS5 `trigram`，仅索引明文笔记；当前不引入。
 - 改密迁移用的两条查询在 `note.go`：`ListEncryptedCiphers` 只选 `id / cipher / kdf_params`，按 `created_at, id` 稳定排序（迁移过程中新增或删除笔记不会让分页错位）；`UpdateNoteCipher` 只写 `cipher / kdf_params / kdf_salt`，先在事务外做只读探针区分「不存在」与「未加密」（`SetMaxOpenConns(1)` 下事务内再开第二条查询会死锁，全局盐也必须事务外取）。语义与取舍见 6.9。
 
@@ -848,7 +872,11 @@ web/src/lib/session-key.ts
 
 **主密码配置**：`{"configured":true,"salt_b64":"…","question":"…"}`；未配置时 `configured=false` 且后两字段为空串。
 
-**统计（`store.Stats`）**：`{"total_searches":N,"active_days":N,"top_queries":[{"query":"…","count":N}],"days":[{"date":"2026-10-26","count":N}]}`。
+**统计（`store.Stats`）**：`{"total_events":N,"total_searches":N,"active_days":N,"events_by_kind":[{"kind":"note_create","count":N}],"top_queries":[{"query":"…","count":N}],"days":[{"date":"2026-10-26","count":N}]}`。
+
+- `total_events` / `active_days` / `days` / `events_by_kind` 覆盖全部事件；`total_searches` 与 `top_queries` 口径仍限 `kind='search'`（查询这件事单独可读）。
+- `events_by_kind` 只返回出现过的 kind，按次数倒序；中文文案与「分类维护」合并规则在前端 `lib/stats.ts#groupEvents`，后端保持 kind 原样。
+- 事件类型：`search`、`note_view`、`note_create`、`note_update`、`note_delete`、`category_create`、`category_rename`、`category_delete`（另有 `note_restore` / `note_purge` 已列入 CHECK，等回收站上线后启用）。
 
 **设置**：`{"name":"张三","name_set":true}`。
 
@@ -874,7 +902,7 @@ web/src/lib/session-key.ts
 | POST   | `/api/master-password`          | `{"salt_b64":"…","question":"…"}`     | 201 `{"configured":true,"question":"…"}`；仅首次配置                                        |
 | PUT    | `/api/master-password/question` | `{"question":"…"}`                    | 200 主密码配置（盐不变）                                                                    |
 | GET    | `/api/info`                     | 无                                    | 200 运行信息与构建版本（见 8.6）                                                            |
-| GET    | `/api/stats?days=`              | 查询参数（默认 370 天）               | 200 统计                                                                                    |
+| GET    | `/api/stats?days=`              | 查询参数（默认 370 天）               | 200 统计（见 8.2；事件口径覆盖查询与笔记/分类读写）                                         |
 
 没有 `/encrypt`、`/decrypt`、`/unlock`、`/lock` 这类端点：加解密在浏览器里完成，锁定是前端清内存密钥的本地动作。也没有口令校验端点——改密时的旧口令由浏览器试解已有密文来判定（6.9）。
 
@@ -1021,7 +1049,7 @@ web/src/
 ├── components/
 │   ├── Layout.svelte          # 页头、主题切换、toast 容器
 │   ├── CategoryTree.svelte    # 列表页右侧分类树：筛选 + 行内新增/改名/删除
-│   ├── ActivityHeatmap.svelte # 首页贡献图风格热力图
+│   ├── ActivityHeatmap.svelte # 首页活动频率热力图（查询 + 增删改查）
 │   ├── Markdown.svelte        # 全仓唯一允许 {@html} 的组件
 │   └── ThemeSwitch.svelte     # 亮色 / 暗色 / 护眼
 ├── views/                     # 9 个视图，见 9.3 路由表
@@ -1100,7 +1128,7 @@ sendJSON(method, path, payload)
 
 | 视图       | 行为                                                                                                                                                                                                                                                                                           |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 首页       | 拉取统计渲染热力图与查询账簿；搜索框就地列出命中并计入一次查询                                                                                                                                                                                                                                 |
+| 首页       | 拉取统计渲染热力图与「事件构成」（查询、查看与增删改都计入）；搜索框就地列出命中并计入一次查询                                                                                                                                                                                                 |
 | 引导页     | 两步：步骤 1 只填称呼（`PUT /api/settings/name`，成功后本地推进、不重读设置）；步骤 2 收**必填**的初始主密码（口令 + 确认 + 助记问题 + 不可逆勾选，生成盐 → `POST` → `unlockKey`），没有「暂时跳过」。挂载时先 `GET /api/master-password`：已配置则变成「输入口令解锁」单输入框，绝不重复 POST |
 | 信息页     | 四张卡：运行信息（`GET /api/info` 摊成只读键值行，缺失显示「未知」）、用户名（`PUT /api/settings/name`）、主密码（当前助记问题 + 内联改问题 + 改密表单）、迁移状态（`remaining > 0` 时列出未迁移条目与原因并给「继续迁移」）；全部文本插值                                                     |
 | 列表       | 解析 `q`/`category`/`page`，右侧分类树带各级笔记数（根节点「全部笔记」+「未分类」+ 各分类）；行内显示明文摘要或「密文内容不在列表展示」；删除有二次确认                                                                                                                                        |
@@ -1343,7 +1371,8 @@ Referrer-Policy: no-referrer
 | `internal/daemon/probe_test.go`            | `Probe` 解析 `addr`/`started_at`/`build_label`、非 200 与超时返回错误；`RequestStop` 的路径/方法/令牌头、202 成功、403 映射为「关停令牌无效」                                                                                                                               |
 | `internal/daemon/spawn_test.go`            | 分离进程启动后父进程立即返回、子进程经日志 fd 写入 `note.log`、环境变量 `NOTE_DAEMON_STATE` 传递                                                                                                                                                                            |
 | `internal/web/shutdown_api_test.go`        | 正确令牌 → 202 且回调只调用一次；错误/缺失令牌 → 403；未启用（Token 为空）→ 403 `shutdown_disabled`；GET → 405 带 `Allow`；不带 CSRF Cookie 也能通过；非法 Host 仍被 `hostGuard` 拦下                                                                                       |
-| `internal/store/store_test.go`             | 空库自动建表并跑完 4 个迁移、重复打开幂等、`user_version` 高于程序时拒绝启动、非法文件拒绝启动、0004 对象存在、0003 扩展列默认值与 CHECK                                                                                                                                    |
+| `internal/store/store_test.go`             | 空库自动建表并跑完 5 个迁移、重复打开幂等、`user_version` 高于程序时拒绝启动、非法文件拒绝启动、0004 对象存在、0005 的 kind 枚举与索引重建、0003 扩展列默认值与 CHECK                                                                                                       |
+| `internal/store/activity_test.go`          | 笔记与分类的增删改各写一条对应事件、`RecordActivity` 只接受已知 kind、失败的写操作（不存在/非空分类/默认分类）不留事件、`GetStats` 的总量/活跃天数/按天计数覆盖全部事件而 Top 查询只算 `search`                                                                             |
 | `internal/store/category_test.go`          | 分类 CRUD 与笔记数、大小写不敏感重名、默认分类守卫（改名/删除）、非空分类删除返回条数、**未分类（`category_id IS NULL`）计入默认分类并可被筛出**                                                                                                                            |
 | `internal/store/master_test.go`            | 主密码只写一次、盐长度与空问题拒绝、`UpdateMasterQuestion` 只改问题列（空/超 100 码点拒绝、未配置时报 `master_password_missing`、盐与 `created_at` 不动）                                                                                                                   |
 | `internal/store/note_test.go`              | id 形态、明文/密文建改删、明文转加密、`rev`/`updated_at`、分页、标题命中排前、分类筛选与空查询、按码点计数的 2000 边界、结构非法拒绝、`ListEncryptedCiphers` 只含加密行且不带 `content`、`UpdateNoteCipher` 只换密文（`title/content/category_id/rev/updated_at` 逐字不变） |
@@ -1352,7 +1381,7 @@ Referrer-Policy: no-referrer
 | `internal/web/note_cipher_api_test.go`     | 清单不含 title/content、缺 `kdf_params` 与非法 base64 各返回对应字段错误、对明文笔记 409 `not_encrypted`、不存在的 id 404、不带 `X-CSRF-Token` 的 PUT 403 且库里密文未变、`/api/notes/encrypted` 不被 `{id}` 通配吃掉                                                       |
 | `internal/web/master_question_api_test.go` | `PUT /api/master-password/question` 的成功、字段校验与 CSRF 拒绝                                                                                                                                                                                                            |
 | `internal/web/server_test.go`              | SPA 回退与安全头、`/assets` 长缓存与缺失 404、未知 API 返回 JSON 404、CSRF 签发与复用、Host 白名单、带扩展名非 HTML 路径 404、设置门禁与改名、统计与搜索端点                                                                                                                |
-| `internal/web/notes_api_test.go`           | 创建与字段级校验、密文笔记往返、客户端自带 id、列表分页与筛选、`q` 超长 400、读改删与 404/409 映射                                                                                                                                                                          |
+| `internal/web/notes_api_test.go`           | 创建与字段级校验、密文笔记往返、客户端自带 id、列表分页与筛选、`q` 超长 400、读改删与 404/409 映射、增删改查与详情查看各自落一条事件（删除后读 404 不计数）                                                                                                                 |
 | `internal/web/categories_api_test.go`      | 主密码 GET/POST 与重复设置 409、分类增删改与错误码、非空删除 409 带 `note_count`                                                                                                                                                                                            |
 
 - 运行 `just test`（内含 `go test ./...`）与 `just check`（`go vet ./...`）。
@@ -1367,7 +1396,7 @@ Referrer-Policy: no-referrer
   - `router/router.test.ts`：路径匹配、参数解析、`edit`/`forgot` 优先于 `detail`、未知路径；
   - `lib/crypto.test.ts`：口令 NFC、加解密往返、错误口令与篡改密文归并为 `DecryptError`、KDF 参数边界、base64 工具；
   - `lib/markdown.test.ts`：GFM 渲染、脚本与 `onerror` 被净化、外链补 `noopener noreferrer`；
-  - `lib/draft.test.ts`、`lib/notes.test.ts`、`lib/stats.test.ts`、`lib/theme.test.ts`、`lib/toast.test.ts`：内存草稿单槽语义、API 载荷与错误映射、热力图分桶、主题持久化与提示队列；
+  - `lib/draft.test.ts`、`lib/notes.test.ts`、`lib/stats.test.ts`、`lib/theme.test.ts`、`lib/toast.test.ts`：内存草稿单槽语义、API 载荷与错误映射、热力图分桶与事件构成分组（固定顺序、分类合并、占比、未知 kind 归入「其他」）、主题持久化与提示队列；
   - `lib/reencrypt.test.ts`：注入假 `decrypt/encrypt/putCipher` 穷尽 6.9 的五类落定；幂等续跑（第二次跑全是 `already_done`）；无加密笔记时跳过旧口令验证；`remaining` 汇总正确；**旧口令只能解开清单靠后那条时验证仍须通过**（防「只试第一条」的回归）；整份报告序列化后不含正文；`countRemaining` 在复核请求自身失败时退回迁移报告的计数（不把已成功的改密报成失败）；`needsPreviousPassword` 只在报告含 `failed_old_key` 时要求上一个口令；
   - `lib/info.test.ts`：`buildRows` 的 14 行中文键、缺失值统一「未知」、字节数与运行时长格式化、`allow_remote` 的是/否；
   - `lib/onboarding.test.ts`：`decideStep(nameSet, masterConfigured)` 的四个组合；

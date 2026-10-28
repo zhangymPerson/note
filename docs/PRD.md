@@ -302,7 +302,7 @@
 
 | 路径                | 视图                                                     |
 | ------------------- | -------------------------------------------------------- |
-| `/`                 | 概览：使用统计与热力图                                   |
+| `/`                 | 概览：使用频率热力图、事件构成与查询热点                 |
 | `/notes`            | 笔记列表与搜索（`q`、`page`、`category` 查询参数）       |
 | `/notes/new`        | 新建笔记                                                 |
 | `/notes/:id`        | 明文详情；加密笔记未解锁时为解锁视图                     |
@@ -331,7 +331,7 @@
 | POST   | `/api/categories`                          | 新增分类                                                                                                                                      |
 | PUT    | `/api/categories/{id}`                     | 改名；`id=1` 返回 409                                                                                                                         |
 | DELETE | `/api/categories/{id}`                     | 删除；默认分类或有笔记时返回 409                                                                                                              |
-| GET    | `/api/stats`                               | 概览页统计                                                                                                                                    |
+| GET    | `/api/stats`                               | 概览页统计：累计事件与事件构成（查询、查看笔记、增删改笔记、分类维护都算事件，按天计数），Top 查询词仍只统计查询                              |
 | GET    | `/api/settings` / PUT `/api/settings/name` | 应用命名设置                                                                                                                                  |
 | GET    | `/api/csrf`                                | 获取 CSRF Token 并写入 Cookie                                                                                                                 |
 | GET    | `/assets/*`                                | 前端构建产物                                                                                                                                  |
@@ -583,7 +583,7 @@ note/
 │       ├── middleware.go       # 安全头、CSRF、Host、日志
 │       ├── assets.go           # //go:embed all:dist
 │       └── dist/               # 前端构建产物（生成物，不提交）
-├── sql/                        # 编号迁移脚本（0001…0004）
+├── sql/                        # 编号迁移脚本（0001…0005）
 ├── web/                        # 独立前端工程（Vite + Svelte 5，不使用 SvelteKit）
 │   ├── src/
 │   │   ├── lib/                # api.ts、crypto.ts、session-key.ts、draft.ts、markdown.ts
@@ -672,7 +672,7 @@ CREATE INDEX IF NOT EXISTS idx_notes_updated_at
 ```
 
 - 客户端以 `master_password.salt` 为准；与 `notes.kdf_salt` 不一致时视为数据损坏并拒绝解密。
-- 迁移使用 `PRAGMA user_version` 记录版本，启动时按序执行并置于事务内；当前版本为 4。
+- 迁移使用 `PRAGMA user_version` 记录版本，启动时按序执行并置于事务内；当前版本为 5。
 - 搜索规模较小时依赖 `updated_at` 索引与全表扫描；数据量增长后再评估 FTS5。
 - 单连接写入或短事务写入；WAL 允许读并发，个人场景足够。
 
