@@ -11,12 +11,14 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
 	"note/internal/build"
 	"note/internal/cli"
 	"note/internal/config"
+	"note/internal/daemon"
 	"note/internal/store"
 	"note/internal/web"
 )
@@ -102,8 +104,42 @@ func runWeb(globalConfigPath string, args []string) error {
 	if err != nil {
 		return err
 	}
+	return serve(cfg)
+}
 
+// serve 是前台与后台共用的服务主体：开库、装配路由、监听、等待退出。
+//
+// 后台模式由环境变量 NOTE_DAEMON_STATE 识别（由 note web start 注入）：
+// 此时自行生成关停令牌、监听成功后把状态写进 note.json，并在退出时
+// 只在状态文件仍属于自己时才删除它。
+func serve(cfg config.Config) error {
 	slog.Info("starting note", "addr", cfg.Addr, "db", cfg.DBPath, "allow_remote", cfg.AllowRemote)
+
+	statePath := os.Getenv(daemon.EnvStatePath)
+	var control web.Control
+	var state daemon.State
+	if statePath != "" {
+		token, err := daemon.NewToken()
+		if err != nil {
+			return err
+		}
+		state = daemon.State{
+			Pid:       os.Getpid(),
+			Addr:      cfg.Addr,
+			StartedAt: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			DB:        cfg.DBPath,
+			Log:       daemon.LogPath(cfg.DBPath),
+			Token:     token,
+			Version:   build.Describe().Label(),
+		}
+	}
+
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	requestStop := func() { stopOnce.Do(func() { close(stopCh) }) }
+	if statePath != "" {
+		control = web.Control{Token: state.Token, Shutdown: requestStop}
+	}
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
@@ -122,7 +158,7 @@ func runWeb(globalConfigPath string, args []string) error {
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           web.New(cfg, st, dist),
+		Handler:           web.NewWithControl(cfg, st, dist, control),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -132,6 +168,25 @@ func runWeb(globalConfigPath string, args []string) error {
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
+	}
+	defer ln.Close()
+
+	if statePath != "" {
+		// 地址取请求的 host + listener 的实际端口（-p 0 时配置里并没有真端口）。
+		state.URLs = config.StartupURLs(cfg.Addr, ln.Addr().String())
+		if _, port, err := net.SplitHostPort(ln.Addr().String()); err == nil {
+			if host, _, err := net.SplitHostPort(cfg.Addr); err == nil {
+				state.Addr = net.JoinHostPort(host, port)
+			}
+		}
+		if err := daemon.Save(statePath, state); err != nil {
+			return fmt.Errorf("write daemon state %s: %w", statePath, err)
+		}
+		defer func() {
+			if err := daemon.RemoveIfPid(statePath, os.Getpid()); err != nil {
+				slog.Warn("remove daemon state", "error", err)
+			}
+		}()
 	}
 
 	serverErr := make(chan error, 1)
@@ -156,6 +211,8 @@ func runWeb(globalConfigPath string, args []string) error {
 		return nil
 	case sig := <-stop:
 		slog.Info("shutting down", "signal", sig.String())
+	case <-stopCh:
+		slog.Info("shutting down", "reason", "control endpoint")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
