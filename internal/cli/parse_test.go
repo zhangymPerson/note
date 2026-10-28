@@ -2,6 +2,8 @@ package cli
 
 import (
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +129,45 @@ func TestParseGlobalConfigAloneStillMenu(t *testing.T) {
 	}
 	if cmd != CommandMenu || opts.ConfigPath != "a.yaml" {
 		t.Fatalf("cmd=%v opts=%+v", cmd, opts)
+	}
+}
+
+func TestParseWebActions(t *testing.T) {
+	cases := []struct {
+		args []string
+		want WebAction
+		rest []string
+	}{
+		{[]string{"web"}, WebForeground, nil},
+		{[]string{"web", "start", "-p", "9000"}, WebStart, []string{"-p", "9000"}},
+		{[]string{"web", "stop"}, WebStop, nil},
+		{[]string{"web", "status"}, WebStatus, nil},
+		{[]string{"web", "--addr", "0.0.0.0:8080", "--remote"}, WebForeground, []string{"--addr", "0.0.0.0:8080", "--remote"}},
+	}
+	for _, tc := range cases {
+		cmd, opts, err := Parse(tc.args)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if cmd != CommandWeb || opts.WebAction != tc.want {
+			t.Fatalf("%v: cmd=%v action=%v, want %v", tc.args, cmd, opts.WebAction, tc.want)
+		}
+		if !slices.Equal(opts.Args, tc.rest) {
+			t.Fatalf("%v: args = %v, want %v", tc.args, opts.Args, tc.rest)
+		}
+	}
+}
+
+func TestParseWebRejectsUnknownAction(t *testing.T) {
+	_, _, err := Parse([]string{"web", "serve"})
+	if err == nil || !strings.Contains(err.Error(), "无法识别的 web 子命令 serve") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestParseWebStatusHelp(t *testing.T) {
+	cmd, opts, err := Parse([]string{"web", "status", "-h"})
+	if err != nil || cmd != CommandHelp || !reflect.DeepEqual(opts.Args, []string{"web"}) {
+		t.Fatalf("cmd=%v opts=%+v err=%v", cmd, opts, err)
 	}
 }

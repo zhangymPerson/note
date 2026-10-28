@@ -25,7 +25,10 @@ func TestUsageCoversCommandsAndDefaults(t *testing.T) {
 
 func TestUsageForTopics(t *testing.T) {
 	web := UsageFor("web")
-	for _, want := range []string{"note web", "--addr", "-p, --port", "--db", "--remote, --allow-remote"} {
+	for _, want := range []string{
+		"note web", "--addr", "-p, --port", "--db", "--remote, --allow-remote",
+		"web start", "web stop", "web status", "note.log",
+	} {
 		if !strings.Contains(web, want) {
 			t.Fatalf("web 用法缺少 %q:\n%s", want, web)
 		}

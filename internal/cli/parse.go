@@ -21,12 +21,35 @@ const (
 	CommandHelp
 )
 
+// WebAction 是 `note web` 之后的动作：不带动作为前台运行（零值）。
+type WebAction int
+
+const (
+	// WebForeground 前台运行 Web 服务（默认，Ctrl+C 退出）。
+	WebForeground WebAction = iota
+	// WebStart 后台启动一个脱离终端的实例。
+	WebStart
+	// WebStop 通过关停端点优雅停止后台实例。
+	WebStop
+	// WebStatus 输出后台实例的运行情况。
+	WebStatus
+)
+
+// webActions 把子命令名映射为动作；未列出的名字不是合法动作。
+var webActions = map[string]WebAction{
+	"start":  WebStart,
+	"stop":   WebStop,
+	"status": WebStatus,
+}
+
 // Options 携带全局参数与子命令自己的参数列表。
 type Options struct {
 	// ConfigPath 是全局 -c/--config 指定的配置文件路径；空串表示未显式指定。
 	ConfigPath string
 	// Args 是子命令名之后的参数原样列表；帮助场景下携带帮助主题（如 "web"）。
 	Args []string
+	// WebAction 仅对 CommandWeb 有意义：start/stop/status 或前台运行。
+	WebAction WebAction
 }
 
 // valueFlags 是会单独消耗一个值的参数名；预扫描 -h 时必须跳过它们的值，
@@ -66,6 +89,14 @@ func Parse(args []string) (Command, Options, error) {
 			return CommandHelp, opts, nil
 		case arg == "web" || arg == "info":
 			rest := args[i+1:]
+			if arg == "web" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+				action, ok := webActions[rest[0]]
+				if !ok {
+					return CommandMenu, Options{}, fmt.Errorf("无法识别的 web 子命令 %s（可用: start, stop, status）", rest[0])
+				}
+				opts.WebAction = action
+				rest = rest[1:]
+			}
 			if containsHelpFlag(rest) {
 				opts.Args = []string{arg}
 				return CommandHelp, opts, nil
