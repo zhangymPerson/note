@@ -1054,6 +1054,180 @@ input {
   margin-left: auto;
 }
 
+/* 分类树：列表页右侧，根节点 + 平铺分类，行内完成筛选与增删改 */
+.cat-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.cat-root {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cat-toggle {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.cat-toggle[aria-expanded="false"] {
+  transform: rotate(-90deg);
+}
+
+.cat-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cat-row {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cat-row:hover {
+  background: var(--bg);
+}
+
+.cat-row[data-active="true"] {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.cat-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cat-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-num {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.cat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 0 12px;
+  padding: 0 0 0 12px;
+  border-left: 1px solid var(--border);
+  list-style: none;
+}
+
+.cat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cat-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 操作按钮始终留在 DOM 里（键盘可达），只是视觉隐藏 */
+.cat-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.cat-line:hover .cat-actions,
+.cat-line:focus-within .cat-actions {
+  opacity: 1;
+}
+
+.cat-act {
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.cat-act:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.cat-act:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cat-act:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.cat-rename input,
+.cat-create input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.cat-rename input:focus-visible,
+.cat-create input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.cat-create {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.cat-create .button {
+  flex: 0 0 auto;
+}
+
 /* 顶部锁定后的轻提示 */
 .toasts {
   position: fixed;
