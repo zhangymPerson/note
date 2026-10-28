@@ -927,6 +927,35 @@ input {
   text-align: center;
 }
 
+/* 回收站行尾的两个动作：恢复 / 彻底删除 */
+.trash-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+@media (max-width: 560px) {
+  .note-row {
+    flex-wrap: wrap;
+  }
+
+  .trash-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+/* 详情页的回收站提示条 */
+.trash-banner {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .pager {
   display: flex;
   align-items: center;

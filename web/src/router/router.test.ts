@@ -76,6 +76,15 @@ describe("matchRoute", () => {
     expect(matchRoute("/info/extra")).toEqual({ name: "notFound", params: {} });
   });
 
+  it("matches the trash route and keeps it apart from note ids", () => {
+    expect(matchRoute("/trash")).toEqual({ name: "trash", params: {} });
+    expect(matchRoute("/trash?page=2")).toEqual({ name: "trash", params: {} });
+    expect(matchRoute("/notes/trash")).toEqual({
+      name: "detail",
+      params: { id: "trash" },
+    });
+  });
+
   it("decodes id segments", () => {
     expect(matchRoute("/notes/a%20b")).toEqual({
       name: "detail",

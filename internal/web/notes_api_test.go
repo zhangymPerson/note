@@ -367,9 +367,12 @@ func TestStatsCountsCRUDAndViewEvents(t *testing.T) {
 	if rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/"+id, token, ""); rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 on delete, got %d: %s", rec.Code, rec.Body.String())
 	}
-	// 已删除的笔记再读一次只能是 404，不该被计成「查看」
-	if rec = apiRequest(t, handler, http.MethodGet, "/api/notes/"+id, token, ""); rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 after delete, got %d", rec.Code)
+	// 回收站里的详情读取不算「查看」：删掉的笔记看的是维护动作，不是使用
+	if rec = apiRequest(t, handler, http.MethodGet, "/api/notes/"+id, token, ""); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on trashed detail, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "deleted_at") {
+		t.Fatalf("expected deleted_at in trashed detail: %s", body)
 	}
 	if rec = apiRequest(t, handler, http.MethodGet, "/api/notes?q=%E8%B4%A6%E7%B0%BF", token, ""); rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 on search, got %d", rec.Code)
@@ -471,9 +474,30 @@ func TestNotesAPIGetUpdateDelete(t *testing.T) {
 		t.Fatalf("expected empty body on 204, got %q", rec.Body.String())
 	}
 
+	// 删除是软删除：详情仍可读，但带上 deleted_at，且不在默认列表里
+	rec = apiRequest(t, handler, http.MethodGet, "/api/notes/"+id, token, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on trashed detail, got %d", rec.Code)
+	}
+	if deletedAt, _ := decodeNote(t, rec)["deleted_at"].(string); deletedAt == "" {
+		t.Fatalf("expected deleted_at on trashed note, got %v", decodeNote(t, rec))
+	}
+	rec = apiRequest(t, handler, http.MethodGet, "/api/notes", token, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on list, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "待办2") {
+		t.Fatalf("trashed note must not show up in the default list: %s", rec.Body.String())
+	}
+
+	// 彻底删除只对回收站里的笔记生效，删完就真的不存在了
+	rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/"+id+"?purge=1", token, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on purge, got %d: %s", rec.Code, rec.Body.String())
+	}
 	rec = apiRequest(t, handler, http.MethodGet, "/api/notes/"+id, token, "")
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 after delete, got %d", rec.Code)
+		t.Fatalf("expected 404 after purge, got %d", rec.Code)
 	}
 	if code := errorBody(t, rec).Error.Code; code != "not_found" {
 		t.Fatalf("expected not_found, got %q", code)
@@ -486,5 +510,100 @@ func TestNotesAPIGetUpdateDelete(t *testing.T) {
 	rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/missing-id", token, "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 on deleting missing note, got %d", rec.Code)
+	}
+}
+
+func TestNotesAPIRecycleBinFlow(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	token := csrfTokenFor(t, handler)
+
+	rec := apiRequest(t, handler, http.MethodPost, "/api/categories", token, `{"name":"归档"}`)
+	var category struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &category); err != nil {
+		t.Fatalf("decode category: %v (%s)", err, rec.Body.String())
+	}
+	payload := `{"title":"待归档","content":"正文","category_id":` + strconv.FormatInt(category.ID, 10) + `}`
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes", token, payload)
+	id, _ := decodeNote(t, rec)["id"].(string)
+
+	// 删除 = 移入回收站
+	if rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/"+id, token, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on soft delete, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = apiRequest(t, handler, http.MethodGet, "/api/notes?deleted=1", token, "")
+	var page struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode trash page: %v (%s)", err, rec.Body.String())
+	}
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0]["id"] != id {
+		t.Fatalf("expected the note in the recycle bin, got %+v", page)
+	}
+	if deletedAt, _ := page.Items[0]["deleted_at"].(string); deletedAt == "" {
+		t.Fatalf("expected deleted_at in the recycle bin row, got %+v", page.Items[0])
+	}
+
+	// 回收站列表不影响默认列表，也不受分类筛选牵连
+	rec = apiRequest(t, handler, http.MethodGet, "/api/notes", token, "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode default page: %v", err)
+	}
+	if page.Total != 0 {
+		t.Fatalf("expected empty default list, got %+v", page)
+	}
+
+	// 已经在回收站里：再删一次 404，彻底删除之后才真消失
+	if rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/"+id, token, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 on repeated delete, got %d", rec.Code)
+	}
+
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes/"+id+"/restore", token, "null")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on restore, got %d: %s", rec.Code, rec.Body.String())
+	}
+	restored := decodeNote(t, rec)
+	if _, ok := restored["deleted_at"]; ok {
+		t.Fatalf("expected deleted_at cleared after restore, got %v", restored)
+	}
+	if got, _ := restored["category_id"].(float64); int64(got) != category.ID {
+		t.Fatalf("expected category %d to survive restore, got %v", category.ID, restored["category_id"])
+	}
+
+	// 不在回收站里的笔记：恢复与彻底删除都返回 409，而不是假装成功
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes/"+id+"/restore", token, "null")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 on restoring a live note, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if code := errorBody(t, rec).Error.Code; code != "not_in_trash" {
+		t.Fatalf("expected not_in_trash, got %q", code)
+	}
+	rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/"+id+"?purge=1", token, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 on purging a live note, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 彻底删除：先移入回收站，再 purge
+	if rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/"+id, token, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on soft delete, got %d", rec.Code)
+	}
+	if rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/"+id+"?purge=1", token, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on purge, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = apiRequest(t, handler, http.MethodGet, "/api/notes?deleted=1", token, "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode trash page after purge: %v", err)
+	}
+	if page.Total != 0 {
+		t.Fatalf("expected empty recycle bin after purge, got %+v", page)
+	}
+
+	// 回收站接口同样受 CSRF 双提交保护
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes/"+id+"/restore", "", "null")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without csrf token, got %d", rec.Code)
 	}
 }

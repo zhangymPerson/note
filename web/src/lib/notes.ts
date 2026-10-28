@@ -23,6 +23,8 @@ export interface NoteMeta {
   content: string | null;
   cipher_b64?: string;
   kdf_params?: string;
+  // deleted_at 非空表示这条笔记在回收站里（软删除后仍可读、可恢复）。
+  deleted_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -35,6 +37,7 @@ export interface NoteListItem {
   content?: string;
   category_id: number | null;
   category_name?: string;
+  deleted_at?: string | null;
   updated_at: string;
 }
 
@@ -61,6 +64,8 @@ export interface ListNotesFilter {
   q?: string;
   category?: number;
   page?: number;
+  // deleted 为真时只看回收站（/api/notes?deleted=1）
+  deleted?: boolean;
 }
 
 // 加密笔记的 AAD 绑定笔记 id，所以新建时 id 必须先在浏览器生成，才能加密后再提交。
@@ -82,6 +87,7 @@ export function listNotes(filter: ListNotesFilter): Promise<NotePage> {
   if (filter.q) params.set("q", filter.q);
   if (filter.category) params.set("category", String(filter.category));
   if (filter.page) params.set("page", String(filter.page));
+  if (filter.deleted) params.set("deleted", "1");
   const query = params.toString();
   return getJSON<NotePage>(query ? `/api/notes?${query}` : "/api/notes");
 }
@@ -101,8 +107,22 @@ export function updateNote(
   return putJSON<NoteMeta>(`/api/notes/${encodeURIComponent(id)}`, payload);
 }
 
+// 删除是软删除：笔记进回收站，正文/密文仍留在库里，可以恢复。
 export function deleteNote(id: string): Promise<void> {
   return deleteJSON(`/api/notes/${encodeURIComponent(id)}`);
+}
+
+// 彻底删除：只对已经在回收站里的笔记生效，服务端返回 409 not_in_trash。
+export function purgeNote(id: string): Promise<void> {
+  return deleteJSON(`/api/notes/${encodeURIComponent(id)}?purge=1`);
+}
+
+// 从回收站恢复（不需要请求体，但写请求仍带 CSRF 双提交令牌）。
+export function restoreNote(id: string): Promise<NoteMeta> {
+  return postJSON<NoteMeta>(
+    `/api/notes/${encodeURIComponent(id)}/restore`,
+    null,
+  );
 }
 
 export function listCategories(): Promise<Category[]> {

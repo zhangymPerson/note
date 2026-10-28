@@ -38,13 +38,15 @@ func (e ErrCategoryNotEmpty) Error() string {
 
 // ListCategories 按 id 升序返回全部分类，含每个分类的笔记数。
 // 默认分类的笔记数包含 category_id IS NULL 的笔记——「未分类」就是这么存的。
+// 计数只算未删除的笔记：回收站里的不算，否则树上的数字与列表条数对不上。
 func (s *Store) ListCategories(ctx context.Context) ([]Category, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT c.id, c.name,
 		        COUNT(n.id) AS note_count
          FROM categories c
-         LEFT JOIN notes n ON n.category_id = c.id
-                            OR (c.id = ? AND n.category_id IS NULL)
+         LEFT JOIN notes n ON (n.category_id = c.id
+                               OR (c.id = ? AND n.category_id IS NULL))
+                              AND n.deleted_at IS NULL
          GROUP BY c.id, c.name
          ORDER BY c.id`, defaultCategoryID)
 	if err != nil {
@@ -161,11 +163,14 @@ func (s *Store) DeleteCategory(ctx context.Context, id int64) error {
 			return ErrNotFound
 		}
 
-		// 参数以 VALUES(?) 子查询传入，避免 COUNT(*) 自引用被删除行的歧义
+		// 参数以 VALUES(?) 子查询传入，避免 COUNT(*) 自引用被删除行的歧义。
+		// 只数未删除的笔记：分类里只剩回收站笔记时允许删除（那些笔记会被
+		// 下面的 UPDATE 摘成分未分类，恢复后落在「未分类」）。
 		var count int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM notes n
-             WHERE n.category_id IN (SELECT id FROM categories WHERE id = ?)`,
+             WHERE n.deleted_at IS NULL
+               AND n.category_id IN (SELECT id FROM categories WHERE id = ?)`,
 			id,
 		).Scan(&count); err != nil {
 			return fmt.Errorf("count notes in category: %w", err)
@@ -174,6 +179,7 @@ func (s *Store) DeleteCategory(ctx context.Context, id int64) error {
 			return ErrCategoryNotEmpty{Count: count}
 		}
 
+		// 无需过滤 deleted_at：外键不区分软删除，回收站里的笔记也得先摘掉分类
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE notes SET category_id = NULL WHERE category_id = ?`, id,
 		); err != nil {

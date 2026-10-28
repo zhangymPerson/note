@@ -39,10 +39,10 @@ func TestActivityEventsRecordedForNoteAndCategoryCRUD(t *testing.T) {
 	if err := st.RecordActivity(ctx, ActivityNoteView); err != nil {
 		t.Fatalf("record view: %v", err)
 	}
-	if _, err := st.ListNotes(ctx, "周报", 0, 1); err != nil {
+	if _, err := st.ListNotes(ctx, NoteFilter{Q: "周报", Page: 1}); err != nil {
 		t.Fatalf("search notes: %v", err)
 	}
-	if err := st.DeleteNote(ctx, created.ID); err != nil {
+	if _, err := st.SoftDeleteNote(ctx, created.ID); err != nil {
 		t.Fatalf("delete note: %v", err)
 	}
 	if err := st.DeleteCategory(ctx, cat.ID); err != nil {
@@ -117,7 +117,7 @@ func TestActivityEventsSkippedWhenWriteFails(t *testing.T) {
 	if _, err := st.UpdateNote(ctx, "8f1a1a1a-0000-4000-8000-000000000000", NoteInput{Title: "无", Content: &body}); !errors.Is(err, ErrNoteNotFound) {
 		t.Fatalf("expected note not found, got %v", err)
 	}
-	if err := st.DeleteNote(ctx, "8f1a1a1a-0000-4000-8000-000000000000"); !errors.Is(err, ErrNoteNotFound) {
+	if _, err := st.SoftDeleteNote(ctx, "8f1a1a1a-0000-4000-8000-000000000000"); !errors.Is(err, ErrNoteNotFound) {
 		t.Fatalf("expected note not found, got %v", err)
 	}
 	if err := st.RenameCategory(ctx, defaultCategoryID, "改名"); !errors.Is(err, ErrReservedCategory) {
@@ -130,7 +130,7 @@ func TestActivityEventsSkippedWhenWriteFails(t *testing.T) {
 		}
 	}
 
-	if err := st.DeleteNote(ctx, note.ID); err != nil {
+	if _, err := st.SoftDeleteNote(ctx, note.ID); err != nil {
 		t.Fatalf("delete note: %v", err)
 	}
 	if err := st.DeleteCategory(ctx, cat.ID); err != nil {

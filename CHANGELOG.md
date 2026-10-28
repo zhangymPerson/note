@@ -8,6 +8,17 @@
 
 ### Added
 
+- 删除改为可恢复的软删除 + 回收站（P0，实现过程与关键逻辑）：
+  - **迁移** `sql/0006_note_soft_delete.sql`：`ALTER TABLE notes ADD COLUMN deleted_at TEXT`（UTC 秒级文本，`NULL` = 未删除，存量行升级后全是 `NULL`），并建两个部分索引 `idx_notes_active`（`updated_at DESC WHERE deleted_at IS NULL`）与 `idx_notes_deleted_at`（`deleted_at DESC WHERE deleted_at IS NOT NULL`），让默认列表与回收站列表各走一条窄索引；`user_version` 升到 6。不碰既有迁移与 `notes` 的 CHECK——软删除行仍保留 `content` 或 `cipher`，校验照旧成立。
+  - **store 层**：`DeleteNote` 拆成 `SoftDeleteNote`（写 `deleted_at`）、`RestoreNote`（清 `deleted_at`）、`PurgeNote`（真 `DELETE`，事务提交后 `PRAGMA wal_checkpoint(TRUNCATE)`，必须在事务外才能生效）。三者的写入点都在事务内顺带记一条活动事件（`note_delete` / `note_restore` / `note_purge`），失败路径因为回滚不留事件；`RestoreNote`/`PurgeNote` 用 `classifyMissingNote` 区分「不存在」（404 `not_found`）与「存在但不在回收站」（409 `not_in_trash`）。
+  - **语义取舍**：软删除与恢复都不动 `updated_at`、不 `rev + 1`——删了又恢复不该让笔记在按更新时间倒序的列表里跳到最前；恢复保留原 `category_id`。`GetNote` 仍读得到回收站笔记（详情页要显示恢复/彻底删除），但 `UpdateNote` 一律按 404 拒绝，编辑入口不会误写回收站笔记。
+  - **读路径口径**：`ListNotes` 改签名 `ListNotes(ctx, NoteFilter{Q, CategoryID, Page, Deleted})`，默认只看 `deleted_at IS NULL`；`Deleted` 为真时按 `deleted_at DESC` 排序且不套用「标题命中排前」（回收站是按扔掉时间看的维护列表）。分类计数只算未删除笔记，但分类删除仍会把**所有**笔记（含回收站里的）的 `category_id` 置 `NULL`——外键不认软删除，否则删分类会留下悬挂引用。详情页的 `note_view` 只在笔记未删除时记录，回收站里的读取不算「使用」。
+  - **API**：`DELETE /api/notes/{id}` 默认软删除，`?purge=1` 彻底删除（仅对回收站里的笔记生效）；新增 `POST /api/notes/{id}/restore` 返回完整笔记；`GET /api/notes?deleted=1` 列出回收站。`ErrNoteNotInTrash` 映射为 409 `not_in_trash`（「这条笔记不在回收站」）。恢复走 `postJSON`，因此照旧带 CSRF 双提交令牌。
+  - **加密笔记的解锁门禁（前端门禁，守住服务端零密码学）**：列表与回收站里加密行的「删除 / 彻底删除」按钮直接 `disabled` 并用 `title` 说明要去详情解锁；详情页在 `awaitingKey`（没有会话密钥或 GCM 解密失败）时不渲染删除按钮，只显示「解锁后才能删除这条加密笔记」。回收站里加密行的「恢复」不设门禁——恢复不是读取明文。忘记密码页的「删除笔记」改成「软删除 + 立即彻底删除」：那条笔记谁也解不开，留在回收站只会变成一条既解不开也清不掉的残留。
+  - **前端**：`lib/notes.ts` 增加 `purgeNote` / `restoreNote`、`deleted` 查询参数与 `deleted_at` 字段；新增 `views/TrashView.svelte`（`/trash`：移入时间、原分类、恢复、彻底删除、分页、空状态）与顶栏「回收站」入口；`App.svelte` 注册路由与 `document.title`；`NoteDetailView` 增加回收站提示条与「恢复 / 彻底删除 / 返回回收站」动作组；`lib/stats.ts` 把 `note_purge` 折进「删除笔记」柱、`note_restore` 单列一行。
+  - TDD：`internal/store/note_trash_test.go`（默认读路径全部隐藏、回收站可见、恢复保留分类与时间戳、`restore`/`purge` 的 409/404 边界、重复删除 404、三类事件各一条、只剩回收站笔记的分类可删且恢复后落到「未分类」）、`store_test.go` 的 `TestMigration0006SoftDeleteColumn`、`internal/web/notes_api_test.go` 的 `TestNotesAPIRecycleBinFlow`（详情带 `deleted_at`、默认列表不出现、`deleted=1` 列出、恢复回原分类、`not_in_trash` 409、purge 后 404、无令牌 403）、`web/src/views/TrashView.test.ts` 5 例（jsdom 组件测试）、`lib/notes.test.ts` / `lib/stats.test.ts` / `router/router.test.ts` 补充。
+  - 验证：`just test`（Go 8 包 152 项 + 前端 15 文件 132 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；真实二进制 + Edge headless 用 `.run/trash-verify.mjs` 跑 44 项全 PASS：软删除后列表/搜索/详情/事件口径、恢复后排回原位、`not_in_trash` 409、彻底删除后 404、忘记密码页的一次性丢弃、加密行在列表/详情/回收站三处的删除门禁，以及 1440 / 768 / 390 / 360 四个视口无横向溢出、窄屏动作按钮换行铺满。
+
 - 首页「使用频率」的事件口径从「只统计查询」扩展到「查询 + 笔记与分类的读写」（实现过程与关键逻辑）：
   - **迁移** `sql/0005_activity_events.sql`：SQLite 不能就地改 CHECK，按「新建 `activities_v5` → `INSERT … SELECT` 拷数据 → `DROP TABLE activities` → `RENAME TO activities`」重建，再把 0002 的三条索引补回来（DROP 会把旧索引一起带走）。新 CHECK 枚举 `search` / `note_view` / `note_create` / `note_update` / `note_delete` / `note_restore` / `note_purge` / `category_create` / `category_rename` / `category_delete`——后两个 `note_*` 只是给第 2 条（软删除与回收站）预留，当前无写入点，避免以后为同一件事再重建一次表。`query` 列改为 `NOT NULL DEFAULT ''`：非搜索事件写空串，不引入 NULL 三值语义；历史 `search` 行原样保留，`user_version` 升到 5。
   - **写入点**：`internal/store/activity.go` 新增 `Activity*` 常量、`allowedActivityKinds` 校验表与 `insertActivity` / `recordActivityTx`（同时接受 `*sql.DB` 与 `*sql.Tx`）。笔记的建/改/删与分类的增/改/删都在**业务事务内**顺手插一行事件：`CreateNote` 为此从裸 `ExecContext` 改成 `inTx`、`DeleteNote` 把 `DELETE` 收进事务（`PRAGMA wal_checkpoint(TRUNCATE)` 仍留在事务外），失败路径（不存在、默认分类、非空分类、重名）因为回滚而不留事件。详情页「查看」只能写在 `handleGetNote`：`CreateNote`/`UpdateNote` 内部也会调 `GetNote`，埋在 store 层会把写操作重复计成查看；埋点失败只 `slog.Warn`，绝不影响详情返回。
@@ -57,9 +68,13 @@
 
 ### Security
 
+- 软删除把「删除即清页」的安全不变量收窄成「彻底删除才清页」：回收站期间明文与密文仍在库里，因此 PRD FR-3.12 / NFR-S4 与附录 B 的口径同步改为「软删除只是标记，`secure_delete` + WAL checkpoint 只在 `PurgeNote` 后执行」。加密笔记在回收站里仍要求解锁才能彻底删除，忘记密码页的删除是「软删除后立即彻底删除」，不在库里留下既解不开也清不掉的密文残留。
+
 - 新增只对本地可见的关停凭证：`/api/shutdown` 需要 32 字节随机令牌（`X-Shutdown-Token`，常量时间比较），令牌只存在于 `0600` 的 `note.json`，不进日志、响应、命令行或环境变量；该端点只在后台模式注册，仍受 `hostGuard` 约束，CSRF 豁免只覆盖这一条路径。`note web status` 的探测只读 `GET /api/info`（本就 `no-store` 且不含正文/密文/盐/令牌）。
 
 ### Changed
+
+- 删除语义从「立即永久删除」改为「先移入回收站」：`DELETE /api/notes/{id}` 只打 `deleted_at`，彻底清除走 `?purge=1`；数据库 schema 升到 `user_version = 6`（旧库启动自动加列并建两个部分索引，存量笔记全部视为未删除）。加密笔记的删除改为**必须先解锁**——这与旧 PRD FR-1.4「加密笔记删除不要求密码」相反，门禁落在前端交互层（服务端仍零密码学）。页面数量增至 10 个主视图（新增回收站 `/trash`）。
 
 - 首页「使用统计」不再显示单一的「总查询次数」，改为「累计事件 + 活跃天数 + 事件构成（六行）」，热力图与活跃天数改为按全部事件（查询 / 查看 / 新建 / 编辑 / 删除 / 分类维护）统计；`/api/stats` 新增 `total_events` 与 `events_by_kind`，`total_searches` 与 `top_queries` 保留但仅指查询。数据库 schema 升到 `user_version = 5`（旧库首次启动自动重建成 `activities` 表，历史查询记录不丢）。
 - 前端页面数量回到 9 个主视图：「分类管理」页并入「全部笔记」页右侧的分类树，分类的新增、改名、删除与筛选都在树内完成；`/categories` 退化为指向列表页的旧地址兼容。

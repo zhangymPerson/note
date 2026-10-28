@@ -9,10 +9,11 @@ describe("groupEvents", () => {
       "新建笔记",
       "编辑笔记",
       "删除笔记",
+      "恢复笔记",
       "查询",
       "分类维护",
     ]);
-    expect(groups.map((g) => g.count)).toEqual([0, 0, 0, 0, 3, 0]);
+    expect(groups.map((g) => g.count)).toEqual([0, 0, 0, 0, 0, 3, 0]);
   });
 
   it("folds the three category kinds into 分类维护", () => {
@@ -24,6 +25,16 @@ describe("groupEvents", () => {
     const category = groups.find((g) => g.key === "category");
     expect(category?.count).toBe(4);
     expect(category?.share).toBe(1);
+  });
+
+  it("folds 彻底删除 into 删除笔记 and keeps 恢复笔记 separate", () => {
+    const groups = groupEvents([
+      { kind: "note_delete", count: 2 },
+      { kind: "note_purge", count: 1 },
+      { kind: "note_restore", count: 3 },
+    ]);
+    expect(groups.find((g) => g.key === "note_delete")?.count).toBe(3);
+    expect(groups.find((g) => g.key === "note_restore")?.count).toBe(3);
   });
 
   it("computes shares over the displayed total", () => {
@@ -38,7 +49,7 @@ describe("groupEvents", () => {
   it("sums unknown kinds into 其他 so the total still adds up", () => {
     const groups = groupEvents([
       { kind: "note_create", count: 1 },
-      { kind: "note_restore", count: 2 },
+      { kind: "note_archive", count: 2 },
     ]);
     const other = groups.find((g) => g.key === "other");
     expect(other?.count).toBe(2);

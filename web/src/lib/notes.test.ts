@@ -14,7 +14,9 @@ import {
   listEncryptedCiphers,
   listNotes,
   newClientNoteID,
+  purgeNote,
   renameCategory,
+  restoreNote,
   setMasterPassword,
   updateMasterQuestion,
   updateNote,
@@ -93,6 +95,12 @@ describe("listNotes", () => {
     await listNotes({});
     expect(calls[0].url).toBe("/api/notes");
   });
+
+  it("回收站用 deleted=1 单独查询", async () => {
+    mockFetch([ok({ items: [], total: 0, page: 2, per_page: 20 })]);
+    await listNotes({ deleted: true, page: 2 });
+    expect(calls[0].url).toBe("/api/notes?page=2&deleted=1");
+  });
 });
 
 describe("createNote", () => {
@@ -136,6 +144,25 @@ describe("deleteNote", () => {
         (call) => call.method === "DELETE" && call.url === "/api/notes/n3",
       ),
     ).toBe(true);
+  });
+});
+
+describe("purgeNote / restoreNote", () => {
+  it("彻底删除带 purge=1，恢复走 POST /restore 并带回笔记", async () => {
+    mockFetch([{ status: 204 }, ok({ id: "n3", deleted_at: null })]);
+    await expect(purgeNote("n3")).resolves.toBeUndefined();
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "DELETE" && call.url === "/api/notes/n3?purge=1",
+      ),
+    ).toBe(true);
+
+    const restored = await restoreNote("n3");
+    expect(restored.id).toBe("n3");
+    const post = calls.find((call) => call.method === "POST");
+    expect(post?.url).toBe("/api/notes/n3/restore");
+    expect(post?.headers["X-CSRF-Token"]).toMatch(/^tok-/);
   });
 });
 

@@ -25,8 +25,8 @@ func TestOpenCreatesDatabaseAndAppliesMigrations(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 5 {
-		t.Fatalf("expected schema version 5, got %d", version)
+	if version != 6 {
+		t.Fatalf("expected schema version 6, got %d", version)
 	}
 
 	var mode string
@@ -69,8 +69,8 @@ func TestOpenExistingDatabaseIsIdempotent(t *testing.T) {
 	if err := second.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 5 {
-		t.Fatalf("expected schema version 5, got %d", version)
+	if version != 6 {
+		t.Fatalf("expected schema version 6, got %d", version)
 	}
 }
 
@@ -206,6 +206,53 @@ func TestMigration0005ActivityKinds(t *testing.T) {
 			`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index,
 		).Scan(&name); err != nil {
 			t.Fatalf("expected index %s to be recreated: %v", index, err)
+		}
+	}
+}
+
+func TestMigration0006SoftDeleteColumn(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "notes.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+
+	var columnType string
+	var notNull int
+	if err := store.db.QueryRow(
+		`SELECT type, "notnull" FROM pragma_table_info('notes') WHERE name = 'deleted_at'`,
+	).Scan(&columnType, &notNull); err != nil {
+		t.Fatalf("expected notes.deleted_at column: %v", err)
+	}
+	if columnType != "TEXT" || notNull != 0 {
+		t.Fatalf("expected nullable TEXT deleted_at, got %q notnull=%d", columnType, notNull)
+	}
+
+	// 默认值必须是 NULL：存量笔记升级后全是「未删除」
+	if _, err := store.db.Exec(
+		`INSERT INTO notes (id, title, content, created_at, updated_at)
+         VALUES ('legacy', '旧笔记', '正文', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatalf("insert legacy note: %v", err)
+	}
+	var deleted sql.NullString
+	if err := store.db.QueryRow(`SELECT deleted_at FROM notes WHERE id = 'legacy'`).Scan(&deleted); err != nil {
+		t.Fatalf("read deleted_at: %v", err)
+	}
+	if deleted.Valid {
+		t.Fatalf("expected NULL deleted_at for existing rows, got %q", deleted.String)
+	}
+
+	for _, index := range []string{"idx_notes_active", "idx_notes_deleted_at"} {
+		var name string
+		if err := store.db.QueryRow(
+			`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index,
+		).Scan(&name); err != nil {
+			t.Fatalf("expected index %s: %v", index, err)
 		}
 	}
 }

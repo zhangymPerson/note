@@ -122,7 +122,7 @@ func TestDefaultCategoryCoversUncategorizedNotes(t *testing.T) {
 		t.Fatalf("expected default category to count uncategorized notes, got %+v", cats[0])
 	}
 
-	uncat, err := st.ListNotes(ctx, "", defaultCategoryID, 1)
+	uncat, err := st.ListNotes(ctx, NoteFilter{CategoryID: defaultCategoryID, Page: 1})
 	if err != nil {
 		t.Fatalf("list notes in default category: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestDefaultCategoryCoversUncategorizedNotes(t *testing.T) {
 		}
 	}
 
-	all, err := st.ListNotes(ctx, "", 0, 1)
+	all, err := st.ListNotes(ctx, NoteFilter{Page: 1})
 	if err != nil {
 		t.Fatalf("list all notes: %v", err)
 	}

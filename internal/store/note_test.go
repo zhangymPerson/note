@@ -205,15 +205,32 @@ func TestUpdateAndDeleteNote(t *testing.T) {
 	if _, err := st.UpdateNote(ctx, "missing-id", NoteInput{Title: "x", Content: &v2}); !errors.Is(err, ErrNoteNotFound) {
 		t.Fatalf("expected ErrNoteNotFound on update, got %v", err)
 	}
-	if err := st.DeleteNote(ctx, "missing-id"); !errors.Is(err, ErrNoteNotFound) {
+	if _, err := st.SoftDeleteNote(ctx, "missing-id"); !errors.Is(err, ErrNoteNotFound) {
 		t.Fatalf("expected ErrNoteNotFound on delete, got %v", err)
 	}
 
-	if err := st.DeleteNote(ctx, note.ID); err != nil {
-		t.Fatalf("delete: %v", err)
+	if err := st.PurgeNote(ctx, note.ID); !errors.Is(err, ErrNoteNotInTrash) {
+		t.Fatalf("expected ErrNoteNotInTrash on purge of a live note, got %v", err)
+	}
+	deleted, err := st.SoftDeleteNote(ctx, note.ID)
+	if err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+	if deleted.DeletedAt == nil {
+		t.Fatal("expected deleted_at to be set after soft delete")
+	}
+	// 软删除不是内容修订：rev 与 updated_at 原样保留
+	if deleted.Rev != updated.Rev || deleted.UpdatedAt != updated.UpdatedAt {
+		t.Fatalf("soft delete must not touch rev/updated_at: %+v", deleted)
+	}
+	if _, err := st.UpdateNote(ctx, note.ID, NoteInput{Title: "\u518d\u6539", Content: &v2}); !errors.Is(err, ErrNoteNotFound) {
+		t.Fatalf("expected trashed note to be rejected by update, got %v", err)
+	}
+	if err := st.PurgeNote(ctx, note.ID); err != nil {
+		t.Fatalf("purge: %v", err)
 	}
 	if _, err := st.GetNote(ctx, note.ID); !errors.Is(err, ErrNoteNotFound) {
-		t.Fatalf("expected ErrNoteNotFound on get, got %v", err)
+		t.Fatalf("expected ErrNoteNotFound after purge, got %v", err)
 	}
 }
 
@@ -233,14 +250,14 @@ func TestListNotesPaging(t *testing.T) {
 		}
 	}
 
-	page1, err := st.ListNotes(ctx, "", 0, 1)
+	page1, err := st.ListNotes(ctx, NoteFilter{Page: 1})
 	if err != nil {
 		t.Fatalf("list page 1: %v", err)
 	}
 	if len(page1.Items) != 20 || page1.Total != 45 || page1.Page != 1 || page1.PerPage != 20 {
 		t.Fatalf("unexpected page 1: %d items, total %d", len(page1.Items), page1.Total)
 	}
-	page3, err := st.ListNotes(ctx, "", 0, 3)
+	page3, err := st.ListNotes(ctx, NoteFilter{Page: 3})
 	if err != nil {
 		t.Fatalf("list page 3: %v", err)
 	}
@@ -267,7 +284,7 @@ func TestListNotesSearchOrdersTitleHitsFirst(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	page, err := st.ListNotes(ctx, "会议", 0, 1)
+	page, err := st.ListNotes(ctx, NoteFilter{Q: "会议", Page: 1})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -306,7 +323,7 @@ func TestListNotesSearchTreatsLikeWildcardsAsLiterals(t *testing.T) {
 		{"a_b", 1},
 		{"普通", 1},
 	} {
-		page, err := st.ListNotes(ctx, tc.q, 0, 1)
+		page, err := st.ListNotes(ctx, NoteFilter{Q: tc.q, Page: 1})
 		if err != nil {
 			t.Fatalf("list %q: %v", tc.q, err)
 		}
@@ -333,7 +350,7 @@ func TestListNotesCategoryFilterAndEmptyQuery(t *testing.T) {
 		t.Fatalf("create uncategorized note: %v", err)
 	}
 
-	page, err := st.ListNotes(ctx, "", work.ID, 1)
+	page, err := st.ListNotes(ctx, NoteFilter{CategoryID: work.ID, Page: 1})
 	if err != nil {
 		t.Fatalf("list by category: %v", err)
 	}
@@ -347,7 +364,7 @@ func TestListNotesCategoryFilterAndEmptyQuery(t *testing.T) {
 		t.Fatal("expected summary content for plaintext note")
 	}
 
-	all, err := st.ListNotes(ctx, "", 0, 1)
+	all, err := st.ListNotes(ctx, NoteFilter{Page: 1})
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}

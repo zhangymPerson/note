@@ -135,6 +135,8 @@ func writeNoteStoreError(w http.ResponseWriter, err error, fields map[string]str
 	switch {
 	case errors.Is(err, store.ErrNoteNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "笔记不存在")
+	case errors.Is(err, store.ErrNoteNotInTrash):
+		writeError(w, http.StatusConflict, "not_in_trash", "这条笔记不在回收站")
 	case errors.Is(err, store.ErrMasterPasswordMissing):
 		writeError(w, http.StatusConflict, "master_password_missing", "请先设置主密码再保存加密笔记")
 	case errors.Is(err, store.ErrEncryptedImmutable):
@@ -153,6 +155,8 @@ func writeNoteStoreError(w http.ResponseWriter, err error, fields map[string]str
 	}
 }
 
+// handleListNotes 支持 q / category / page / deleted 四个查询参数；
+// deleted=1 时只返回回收站（软删除）里的笔记。
 func (app *application) handleListNotes(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	q := query.Get("q")
@@ -163,7 +167,12 @@ func (app *application) handleListNotes(w http.ResponseWriter, r *http.Request) 
 	page := atoiOr(query.Get("page"), 1)
 	categoryID := atoiOr(query.Get("category"), 0)
 
-	result, err := app.store.ListNotes(r.Context(), q, int64(categoryID), page)
+	result, err := app.store.ListNotes(r.Context(), store.NoteFilter{
+		Q:          q,
+		CategoryID: int64(categoryID),
+		Page:       page,
+		Deleted:    query.Get("deleted") == "1",
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "查询失败，请稍后重试")
 		return
@@ -200,9 +209,12 @@ func (app *application) handleGetNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 「查看」是唯一的只读事件：埋点在内层方法里做不到（Create/Update 内部也会 GetNote），
-	// 只能放在这里；写失败只记日志，绝不影响详情返回。
-	if err := app.store.RecordActivity(r.Context(), store.ActivityNoteView); err != nil {
-		slog.Warn("record note view", "error", err)
+	// 只能放在这里；写失败只记日志，绝不影响详情返回。回收站里的笔记不算使用（看
+	// 回收站是维护动作），但恢复与彻底删除各有自己的事件。
+	if note.DeletedAt == nil {
+		if err := app.store.RecordActivity(r.Context(), store.ActivityNoteView); err != nil {
+			slog.Warn("record note view", "error", err)
+		}
 	}
 	writeJSON(w, http.StatusOK, note)
 }
@@ -229,13 +241,32 @@ func (app *application) handleUpdateNote(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, note)
 }
 
+// handleDeleteNote 默认是软删除（移入回收站）；带 purge=1 时彻底删除，
+// 只对已经在回收站里的笔记生效。两者都是 204，响应体为空。
 func (app *application) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
-	if err := app.store.DeleteNote(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	var err error
+	if r.URL.Query().Get("purge") == "1" {
+		err = app.store.PurgeNote(r.Context(), id)
+	} else {
+		_, err = app.store.SoftDeleteNote(r.Context(), id)
+	}
+	if err != nil {
 		writeNoteStoreError(w, err, nil)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRestoreNote 把笔记从回收站取回，返回恢复后的完整笔记（含分类）。
+func (app *application) handleRestoreNote(w http.ResponseWriter, r *http.Request) {
+	note, err := app.store.RestoreNote(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeNoteStoreError(w, err, nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, note)
 }
 
 // categoryExists 校验 category_id 指向存在的分类，不存在时写入字段错误。

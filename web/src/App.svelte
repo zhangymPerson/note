@@ -8,6 +8,7 @@
   import MasterPasswordView from './views/MasterPasswordView.svelte'
   import InfoView from './views/InfoView.svelte'
   import ForgotPasswordView from './views/ForgotPasswordView.svelte'
+  import TrashView from './views/TrashView.svelte'
   import NotFoundView from './views/NotFoundView.svelte'
   import { loadSettings, settings } from './lib/settings'
   import { decideStep } from './lib/onboarding'
@@ -22,6 +23,7 @@
     forgot: '忘记密码',
     master: '主密码',
     info: '用户与信息',
+    trash: '回收站',
     notFound: '页面不存在',
   }
 
@@ -64,6 +66,8 @@
       <MasterPasswordView />
     {:else if $route.name === 'info'}
       <InfoView />
+    {:else if $route.name === 'trash'}
+      <TrashView />
     {:else}
       <NotFoundView />
     {/if}

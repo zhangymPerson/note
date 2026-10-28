@@ -2,10 +2,10 @@
 
 | 项目     | 内容                                                                                                                                                                                                                                                                          |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 文档版本 | v1.6                                                                                                                                                                                                                                                                          |
+| 文档版本 | v1.7                                                                                                                                                                                                                                                                          |
 | 日期     | 2026-10-28                                                                                                                                                                                                                                                                    |
 | 状态     | 已实现（与本文件第 6、7.1、9 节一致；偏离来源见 PRD 2.4 与 2.5）                                                                                                                                                                                                              |
-| 关联文档 | [产品需求文档 v1.6](./PRD.md)、[后台运行设计](./superpowers/specs/2026-10-28-background-web-design.md)、[信息页与改密设计](./superpowers/specs/2026-10-27-user-info-page-design.md)、[已实现设计说明](./superpowers/specs/2026-10-27-note-crud-category-encryption-design.md) |
+| 关联文档 | [产品需求文档 v1.7](./PRD.md)、[后台运行设计](./superpowers/specs/2026-10-28-background-web-design.md)、[信息页与改密设计](./superpowers/specs/2026-10-27-user-info-page-design.md)、[已实现设计说明](./superpowers/specs/2026-10-27-note-crud-category-encryption-design.md) |
 | 目标     | 将 PRD 落地为可实现的 Go + SQLite + Svelte 5 技术方案                                                                                                                                                                                                                         |
 
 ---
@@ -104,7 +104,8 @@ note/
 │   ├── 0002_activity.sql         # 活动事件表（0005 重建了 kind 枚举）
 │   ├── 0003_note_fields.sql      # kind/remark/rev
 │   ├── 0004_note_app.sql         # categories、master_password、notes.category_id
-│   └── 0005_activity_events.sql  # activities 重建：kind 枚举扩到查询 + 笔记/分类读写
+│   ├── 0005_activity_events.sql  # activities 重建：kind 枚举扩到查询 + 笔记/分类读写
+│   └── 0006_note_soft_delete.sql # notes.deleted_at + 活动/回收站两条部分索引
 ├── internal/
 │   ├── build/info.go             # 版本/git hash/构建日期变量（ldflags 注入）+ vcs 回落
 │   ├── cli/                      # 命令行界面：解析、菜单、信息/状态渲染、帮助
@@ -159,7 +160,7 @@ note/
 │   │   │   ├── markdown.ts       # marked + DOMPurify 净化
 │   │   │   ├── stats.ts / theme.ts / toast.ts / settings.ts
 │   │   ├── components/           # Layout、Markdown、CategoryTree、ActivityHeatmap、ThemeSwitch
-│   │   ├── views/                # 列表、详情、编辑器、主密码、信息、忘记密码、概览、引导、404
+│   │   ├── views/                # 列表、详情、编辑器、回收站、主密码、信息、忘记密码、概览、引导、404
 │   │   ├── router/               # 约 60 行 History 路由
 │   │   ├── app.css               # 全局样式与三主题变量
 │   │   ├── App.svelte
@@ -200,7 +201,7 @@ note/
 | ID       | `github.com/google/uuid`（Go 标准做法，当前为直接实现） | UUID v4，避免自增 ID 泄露数量；加密笔记由浏览器先生成 ID 以绑定 AAD |
 | 前端     | Vite + Svelte 5 + TypeScript                            | 独立轻量 SPA，不使用 SvelteKit                                      |
 | Markdown | `marked` + `dompurify`                                  | 构建期内嵌，无外部请求；净化后才能进入 `{@html}`                    |
-| 路由     | 自写 History 路由                                       | 视图不足十个，不引入路由库                                          |
+| 路由     | 自写 History 路由                                       | 视图只有十来个，不引入路由库                                        |
 | 样式     | Svelte scoped CSS + 全局 reset 与主题变量               | 不引入 CSS 框架；亮/暗/护眼三主题                                   |
 | 前端测试 | Vitest（DOM 用例按文件启用 jsdom 环境）                 | 加密往返、Markdown 净化、API 客户端、路由匹配                       |
 | 类型检查 | `svelte-check`                                          | 在构建和 CI 中执行                                                  |
@@ -327,7 +328,8 @@ GET    /api/notes/encrypted       # 密文清单（改密迁移用），静态�
 GET    /api/notes/{id}
 PUT    /api/notes/{id}
 PUT    /api/notes/{id}/cipher     # 只替换密文（需 CSRF）
-DELETE /api/notes/{id}
+DELETE /api/notes/{id}           # 默认软删除；?purge=1 彻底删除（仅回收站内）
+POST   /api/notes/{id}/restore    # 从回收站恢复
 GET    /api/categories
 POST   /api/categories
 PUT    /api/categories/{id}
@@ -365,13 +367,14 @@ GET    /*                     # 非 API GET → index.html
 | 处理器                                         | 职责                                                                             | 关键校验                                                                                                                                       |
 | ---------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/csrf`                                | 签发/复用 CSRF Token                                                             | 无                                                                                                                                             |
-| `GET /api/notes`                               | 列表、搜索与分类筛选                                                             | `q` ≤ 200 字符；`page` ≥ 1；`category` 可选；页大小固定 20                                                                                     |
+| `GET /api/notes`                               | 列表、搜索与分类筛选；`deleted=1` 改为回收站视图                                 | `q` ≤ 200 字符；`page` ≥ 1；`category` 可选；`deleted` 仅接受 `1`；页大小固定 20                                                               |
 | `POST /api/notes`                              | 创建明文笔记或写入浏览器密文                                                     | 标题、正文或密文二选一、`kdf_params`、`category_id`、可选客户端 `id`                                                                           |
 | `GET /api/notes/{id}`                          | 详情；加密笔记返回元数据 + base64 密文，永不含 `content`                         | UUID 合法；否则 404                                                                                                                            |
 | `PUT /api/notes/{id}`                          | 更新标题/正文或提交新密文                                                        | 同 POST；加密笔记不允许改回明文                                                                                                                |
 | `PUT /api/notes/{id}/cipher`                   | 改密迁移：只替换单条笔记的密文与派生参数                                         | 只接受 `cipher_b64` + `kdf_params`，其余字段不接受；长度与 base64 语义同 POST（共用 `decodeCipher`）；明文笔记 409 `not_encrypted`，不存在 404 |
 | `GET /api/notes/encrypted`                     | 全部加密笔记的 `{id, cipher_b64, kdf_params}` 清单，按 `created_at, id` 稳定排序 | 无；不含标题与正文，空清单序列化为 `[]`                                                                                                        |
-| `DELETE /api/notes/{id}`                       | 永久删除，不要求密码                                                             | UUID 合法                                                                                                                                      |
+| `DELETE /api/notes/{id}`                       | 默认软删除（记 `note_delete`）；`?purge=1` 彻底删除（记 `note_purge`）           | UUID 合法；`purge` 仅接受 `1`；笔记不在回收站时 purge 返回 409 `not_in_trash`                                                                  |
+| `POST /api/notes/{id}/restore`                 | 从回收站恢复，返回完整笔记（含分类）                                             | UUID 合法；不在回收站返回 409 `not_in_trash`，不存在 404                                                                                       |
 | `GET /api/master-password`                     | 返回 `{configured, salt_b64, question}`                                          | 无；盐是公开 KDF 参数                                                                                                                          |
 | `POST /api/master-password`                    | 首次设置盐与助记问题（引导页步骤 2）                                             | `salt_b64` 解码后恰好 16 字节；`question` 1–100 字符；已存在返回 409                                                                           |
 | `PUT /api/master-password/question`            | 只改助记问题，不换盐                                                             | `question` 去空白后 1–100 码点；未配置主密码返回 409 `master_password_missing`                                                                 |
@@ -452,7 +455,7 @@ GET    /*                     # 非 API GET → index.html
 
 ### 5.1 Schema
 
-结构由 `sql/` 下的编号迁移脚本累积而成，当前 schema 版本 `user_version = 5`。以下是迁移全部执行完之后的最终形态：
+结构由 `sql/` 下的编号迁移脚本累积而成，当前 schema 版本 `user_version = 6`。以下是迁移全部执行完之后的最终形态：
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -491,6 +494,13 @@ CREATE TABLE IF NOT EXISTS notes (
 
 CREATE INDEX IF NOT EXISTS idx_notes_updated_at
     ON notes(updated_at DESC);
+
+-- 0006_note_soft_delete.sql：软删除列 + 两个部分索引（活动列表 / 回收站列表各走各的）
+ALTER TABLE notes ADD COLUMN deleted_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_notes_active
+    ON notes(updated_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_notes_deleted_at
+    ON notes(deleted_at DESC) WHERE deleted_at IS NOT NULL;
 
 -- 0002_activity.sql：首页活动频率与高频查询词的数据源（0005 重建了 kind 枚举）
 CREATE TABLE IF NOT EXISTS activities (
@@ -560,6 +570,7 @@ CREATE INDEX IF NOT EXISTS idx_activities_query      ON activities(query);
 - `notes.kind` / `notes.remark` / `notes.rev`：0003 引入。创建写 `'note'` 与空备注，每次更新 `rev + 1`；`kind`、`remark` 目前没有编辑入口，原值透传。
 - `notes.extra` / `notes.last_visited_at`：0003 预留列，应用当前只读 schema、不写入，保持 `NULL`。
 - `notes.category_id`：所属分类；`NULL` 与 `id = 1`「未分类」在展示与筛选上等价（见 5.4）。
+- `notes.deleted_at`：0006 引入的软删除标记；`NULL` = 正常，非空 = 在回收站里（值就是移入时刻，UTC 秒级）。列表、搜索、分类计数、统计都只看 `deleted_at IS NULL`。
 - 时间：UTC，固定格式 `2006-01-02T15:04:05Z`（秒级），便于字符串排序；相同时间以 `id DESC` 兜底。
 - `master_password` 是单行表（`CHECK (id = 1)`），只存派生参数，永不存口令本身；`question` 为助记问题原文，只用于展示提示。
 - `kdf_params` 非法时解密失败，属预期行为；不存在需要解析失败的 JSON 列。
@@ -591,6 +602,7 @@ CREATE INDEX IF NOT EXISTS idx_activities_query      ON activities(query);
 - 表结构定义集中在仓库根目录 `sql/`：
   - `0001_init.sql`：v1 的 `notes` 表与索引，内容与 5.1 一致；
   - `0005_activity_events.sql`：`activities` 重建（新建 → 拷数据 → 删旧 → 改名），把 `kind` 的 CHECK 从 `('search')` 扩到查询 + 笔记/分类读写，并补回三条索引；
+  - `0006_note_soft_delete.sql`：`ALTER TABLE notes ADD COLUMN deleted_at TEXT`（存量行保持 `NULL`，升级后全是「未删除」），并建两个部分索引 `idx_notes_active`（`deleted_at IS NULL`，按 `updated_at DESC`）与 `idx_notes_deleted_at`（按 `deleted_at DESC`），让默认列表与回收站列表各走一条窄索引；
   - `embed.go`：用 `//go:embed *.sql` 暴露嵌入文件系统，供 `internal/store` 读取。
 - 文件名前缀为版本号；启动时按版本升序执行，已执行版本由 `PRAGMA user_version` 记录。
 - 每个版本的迁移在单个事务内执行；任一语句失败则回滚并拒绝启动，成功后更新 `user_version`。
@@ -621,20 +633,25 @@ SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.update
 - 转义顺序：`\` → `\\`，`%` → `\%`，`_` → `\_`，全部配合 `ESCAPE '\'`。
 - `q` 去首尾空白；为空时返回最近更新列表。web 层限制 `q` 不超过 200 个字符，超限返回字段级校验错误，前端搜索框同步 `maxlength="200"`。
 - `page` 最小为 1；页大小固定 20（`notesPerPage`）；总数用同条件 `COUNT(*)`。
+- `deleted=1` 走回收站：只看 `deleted_at IS NOT NULL`，按 `deleted_at DESC` 排序，标题命中排序（`title == q` 优先）只在非回收站视图生效——回收站是按「何时扔进来的」看的列表，不是搜索结果。
 - `categoryID` 为 0 表示不按分类过滤；等于 `1`（默认分类）时匹配 `category_id = 1 OR category_id IS NULL`——未分类的笔记在库里存的是 `NULL`，`ListCategories` 的笔记数用同一条规则计入默认分类。
 - 摘要：只取明文笔记的 `content`，在 Go 侧按码点截断到 140（`truncateRunes`），保留换行；加密笔记的列表项没有 `content` 字段（`omitempty`）。
 - SQLite `LIKE` 对 ASCII 大小写不敏感，对中文为精确子串；不做分词、拼音和纠错。
 - 每次非空搜索写一条 `activities(kind='search')`，供首页活动频率与高频词统计；查询词本身只进数据库，不进日志。
 - 查询词通过 URL 参数传递，会进入浏览器历史。
-- 活动事件（`activities`）：写操作在自己那个事务里顺带插一行（`recordActivityTx`），创建/更新/删除失败就不会留下事件；`note_view` 由 `handleGetNote` 在详情成功返回后写（`CreateNote`/`UpdateNote` 内部也会调 `GetNote`，埋在 store 层会把写操作重复计成查看），写失败只 `slog.Warn` 不影响详情返回。事件只落 `kind`、`created_at` 与（仅搜索时的）`query`，不记录标题、正文、分类名。
+- 活动事件（`activities`）：写操作在自己那个事务里顺带插一行（`recordActivityTx`），创建/更新/软删除/恢复/彻底删除失败就不会留下事件；`note_restore`/`note_purge` 与 `note_delete` 分开计，前端把 `note_purge` 折进「删除笔记」柱、`note_restore` 单列；`note_view` 由 `handleGetNote` 在详情成功返回后写（回收站里的笔记不算「使用」，`deleted_at` 非空时不记；`CreateNote`/`UpdateNote` 内部也会调 `GetNote`，埋在 store 层会把写操作重复计成查看），写失败只 `slog.Warn` 不影响详情返回。事件只落 `kind`、`created_at` 与（仅搜索时的）`query`，不记录标题、正文、分类名。
 - 数据量增长后评估 FTS5 `trigram`，仅索引明文笔记；当前不引入。
 - 改密迁移用的两条查询在 `note.go`：`ListEncryptedCiphers` 只选 `id / cipher / kdf_params`，按 `created_at, id` 稳定排序（迁移过程中新增或删除笔记不会让分页错位）；`UpdateNoteCipher` 只写 `cipher / kdf_params / kdf_salt`，先在事务外做只读探针区分「不存在」与「未加密」（`SetMaxOpenConns(1)` 下事务内再开第二条查询会死锁，全局盐也必须事务外取）。语义与取舍见 6.9。
 
 ### 5.5 备份、删除与残留
 
 - 备份对象：`notes.db`、`notes.db-wal`、`notes.db-shm`；推荐停止应用或使用 `sqlite3 notes.db ".backup 'backup.db'"`。
-- 删除为永久删除；不提供回收站。
-- 全局 `secure_delete=ON`；`DeleteNote` 提交后立即执行 `PRAGMA wal_checkpoint(TRUNCATE)`，`Store.Close()` 再执行一次。
+- 删除分两步：默认 `DELETE /api/notes/{id}` 只写 `deleted_at`（回收站），`DELETE /api/notes/{id}?purge=1` 才真正 `DELETE` 行。
+- 软删除不是内容修订：不动 `updated_at`、不 `rev + 1`；恢复同理（清空 `deleted_at`），所以笔记不会因为删了又恢复就跳到列表最前。
+- 恢复保留原 `category_id`。分类删除沿用既有规则：只允许删空分类——「空」指未删除笔记数为 0，因此只剩回收站笔记的分类可以删掉，那条笔记的 `category_id` 被置 `NULL`（外键不认软删除），恢复后落在「未分类」。
+- 已删除的笔记 `GetNote` 仍读得到（详情页要能显示「恢复/彻底删除」），但 `UpdateNote` 一律当作 404，编辑入口不会误写一条回收站笔记。
+- 硬删除只在 `PurgeNote` 里发生；`not_in_trash` 与 `not_found` 分开映射（409 / 404），前端才能给出可读提示。
+- 全局 `secure_delete=ON`；`PurgeNote` 提交后立即执行 `PRAGMA wal_checkpoint(TRUNCATE)`（必须在事务外，`wal_checkpoint` 在事务里无效），`Store.Close()` 再执行一次。软删除不清页：密文/正文明文仍在库里，这是回收站能恢复的前提。
 - 明文可能留在 WAL 的窗口：从一次写入（或明文转加密、编辑重加密）到下一次 checkpoint 之间。应用只在删除与退出时主动压缩，接受这个窗口；退出后 WAL 已截断。
 - 改密迁移同样只在 WAL 里留下**旧密文**（对它没有口令，也不打算解），明文一侧不产生任何新残留：新密文由浏览器用旧密钥解密后重新加密，明文与两把派生密钥都只在页面内存。
 - `VACUUM` 作为可选维护操作；不自动执行，避免大库启动耗时。
@@ -1355,34 +1372,35 @@ Referrer-Policy: no-referrer
 
 ### 12.1 Go 单元与集成测试
 
-| 文件                                       | 覆盖                                                                                                                                                                                                                                                                        |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `internal/config/config_test.go`           | 内置默认值、YAML 解析、命令行覆盖、未知键拒绝、非回环绑定需 `--allow-remote`、缺失显式配置报错、用户段读写往返、`-c` 短参数、`-p/--port` 只覆盖端口（含 IPv6）、`--remote` 别名、默认路径解析与 `ConfigFound`                                                               |
-| `internal/config/paths_test.go`            | 默认配置/数据目录解析（环境变量隔离，各平台期望路径；Linux 的 `XDG_DATA_HOME` 缺省回退 `~/.local/share`）                                                                                                                                                                   |
-| `internal/cli/parse_test.go`               | 子命令分发（菜单/web/info）、全局 `-c`、帮助变体（`-h`/`--help`/`help`/`help web`/`web -h`）、带值参数的 `-h` 预扫描（`--config -h` 不是帮助）、未知命令/参数与缺值报错                                                                                                     |
-| `internal/cli/menu_test.go`                | 菜单模型：光标上下移动与越界保持、回车选中当前项、q/Esc 保持零值退出、视图含全部菜单项；非终端环境 `RunMenu` 返回回退动作                                                                                                                                                   |
-| `internal/cli/info_test.go`                | `FormatInfo`：分区与字段齐全、缺库占位、CJK 标签按显示宽度对齐（逐行解析值列）、`humanSize` 三档                                                                                                                                                                            |
-| `internal/cli/usage_test.go`               | 总帮助覆盖命令/全局参数/默认位置说明；`UsageFor` 各主题参数齐全，未知主题回退总帮助                                                                                                                                                                                         |
-| `internal/cli/parse_test.go`（web 动作）   | `web start`/`stop`/`status` 识别（动作后的 flag 原样透传）、`web --addr` 不受影响、未知 web 子命令报错并要求退出码 2                                                                                                                                                        |
-| `internal/cli/status_test.go`              | `FormatStatus` 三种形态（运行中/未运行/进程在但不响应）、pid 行仅在有 pid 时出现、状态文件四态（存在/不存在/残留已清理/属于另一个库）、uptime 与文件大小文案、CJK 对齐                                                                                                      |
-| `internal/daemon/state_test.go`            | `note.json` 往返、`0600`（Windows 跳过）、临时文件 + rename 原子覆盖、损坏 JSON 与非存在文件的错误区分、`StatePath`/`LogPath` 推导、`RemoveIfPid` 只在 pid 匹配时删除、令牌 32 字节且每次不同                                                                               |
-| `internal/daemon/control_test.go`          | 通配地址映射（`0.0.0.0`→`127.0.0.1`、`::`→`::1`）、空地址与不可解析地址原样返回                                                                                                                                                                                             |
-| `internal/daemon/pid_test.go`（+windows）  | 自身 pid 存活、不存在的 pid 判死、pid ≤ 0 判死；Windows 专有：已退出但对象未回收的 pid 必须判死（回归 `os.FindProcess` 假阳性）                                                                                                                                             |
-| `internal/daemon/probe_test.go`            | `Probe` 解析 `addr`/`started_at`/`build_label`、非 200 与超时返回错误；`RequestStop` 的路径/方法/令牌头、202 成功、403 映射为「关停令牌无效」                                                                                                                               |
-| `internal/daemon/spawn_test.go`            | 分离进程启动后父进程立即返回、子进程经日志 fd 写入 `note.log`、环境变量 `NOTE_DAEMON_STATE` 传递                                                                                                                                                                            |
-| `internal/web/shutdown_api_test.go`        | 正确令牌 → 202 且回调只调用一次；错误/缺失令牌 → 403；未启用（Token 为空）→ 403 `shutdown_disabled`；GET → 405 带 `Allow`；不带 CSRF Cookie 也能通过；非法 Host 仍被 `hostGuard` 拦下                                                                                       |
-| `internal/store/store_test.go`             | 空库自动建表并跑完 5 个迁移、重复打开幂等、`user_version` 高于程序时拒绝启动、非法文件拒绝启动、0004 对象存在、0005 的 kind 枚举与索引重建、0003 扩展列默认值与 CHECK                                                                                                       |
-| `internal/store/activity_test.go`          | 笔记与分类的增删改各写一条对应事件、`RecordActivity` 只接受已知 kind、失败的写操作（不存在/非空分类/默认分类）不留事件、`GetStats` 的总量/活跃天数/按天计数覆盖全部事件而 Top 查询只算 `search`                                                                             |
-| `internal/store/category_test.go`          | 分类 CRUD 与笔记数、大小写不敏感重名、默认分类守卫（改名/删除）、非空分类删除返回条数、**未分类（`category_id IS NULL`）计入默认分类并可被筛出**                                                                                                                            |
-| `internal/store/master_test.go`            | 主密码只写一次、盐长度与空问题拒绝、`UpdateMasterQuestion` 只改问题列（空/超 100 码点拒绝、未配置时报 `master_password_missing`、盐与 `created_at` 不动）                                                                                                                   |
-| `internal/store/note_test.go`              | id 形态、明文/密文建改删、明文转加密、`rev`/`updated_at`、分页、标题命中排前、分类筛选与空查询、按码点计数的 2000 边界、结构非法拒绝、`ListEncryptedCiphers` 只含加密行且不带 `content`、`UpdateNoteCipher` 只换密文（`title/content/category_id/rev/updated_at` 逐字不变） |
-| `internal/build/info_test.go`              | `Describe()` 的「已注入」与「回落到 vcs 信息」两分支、`Label()` 的开发构建标注                                                                                                                                                                                              |
-| `internal/web/handlers_info_test.go`       | `/api/info` 字段齐全、`no-store`、时间戳形如 `2006-01-02T15:04:05Z`                                                                                                                                                                                                         |
-| `internal/web/note_cipher_api_test.go`     | 清单不含 title/content、缺 `kdf_params` 与非法 base64 各返回对应字段错误、对明文笔记 409 `not_encrypted`、不存在的 id 404、不带 `X-CSRF-Token` 的 PUT 403 且库里密文未变、`/api/notes/encrypted` 不被 `{id}` 通配吃掉                                                       |
-| `internal/web/master_question_api_test.go` | `PUT /api/master-password/question` 的成功、字段校验与 CSRF 拒绝                                                                                                                                                                                                            |
-| `internal/web/server_test.go`              | SPA 回退与安全头、`/assets` 长缓存与缺失 404、未知 API 返回 JSON 404、CSRF 签发与复用、Host 白名单、带扩展名非 HTML 路径 404、设置门禁与改名、统计与搜索端点                                                                                                                |
-| `internal/web/notes_api_test.go`           | 创建与字段级校验、密文笔记往返、客户端自带 id、列表分页与筛选、`q` 超长 400、读改删与 404/409 映射、增删改查与详情查看各自落一条事件（删除后读 404 不计数）                                                                                                                 |
-| `internal/web/categories_api_test.go`      | 主密码 GET/POST 与重复设置 409、分类增删改与错误码、非空删除 409 带 `note_count`                                                                                                                                                                                            |
+| 文件                                       | 覆盖                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal/config/config_test.go`           | 内置默认值、YAML 解析、命令行覆盖、未知键拒绝、非回环绑定需 `--allow-remote`、缺失显式配置报错、用户段读写往返、`-c` 短参数、`-p/--port` 只覆盖端口（含 IPv6）、`--remote` 别名、默认路径解析与 `ConfigFound`                                                                                                                               |
+| `internal/config/paths_test.go`            | 默认配置/数据目录解析（环境变量隔离，各平台期望路径；Linux 的 `XDG_DATA_HOME` 缺省回退 `~/.local/share`）                                                                                                                                                                                                                                   |
+| `internal/cli/parse_test.go`               | 子命令分发（菜单/web/info）、全局 `-c`、帮助变体（`-h`/`--help`/`help`/`help web`/`web -h`）、带值参数的 `-h` 预扫描（`--config -h` 不是帮助）、未知命令/参数与缺值报错                                                                                                                                                                     |
+| `internal/cli/menu_test.go`                | 菜单模型：光标上下移动与越界保持、回车选中当前项、q/Esc 保持零值退出、视图含全部菜单项；非终端环境 `RunMenu` 返回回退动作                                                                                                                                                                                                                   |
+| `internal/cli/info_test.go`                | `FormatInfo`：分区与字段齐全、缺库占位、CJK 标签按显示宽度对齐（逐行解析值列）、`humanSize` 三档                                                                                                                                                                                                                                            |
+| `internal/cli/usage_test.go`               | 总帮助覆盖命令/全局参数/默认位置说明；`UsageFor` 各主题参数齐全，未知主题回退总帮助                                                                                                                                                                                                                                                         |
+| `internal/cli/parse_test.go`（web 动作）   | `web start`/`stop`/`status` 识别（动作后的 flag 原样透传）、`web --addr` 不受影响、未知 web 子命令报错并要求退出码 2                                                                                                                                                                                                                        |
+| `internal/cli/status_test.go`              | `FormatStatus` 三种形态（运行中/未运行/进程在但不响应）、pid 行仅在有 pid 时出现、状态文件四态（存在/不存在/残留已清理/属于另一个库）、uptime 与文件大小文案、CJK 对齐                                                                                                                                                                      |
+| `internal/daemon/state_test.go`            | `note.json` 往返、`0600`（Windows 跳过）、临时文件 + rename 原子覆盖、损坏 JSON 与非存在文件的错误区分、`StatePath`/`LogPath` 推导、`RemoveIfPid` 只在 pid 匹配时删除、令牌 32 字节且每次不同                                                                                                                                               |
+| `internal/daemon/control_test.go`          | 通配地址映射（`0.0.0.0`→`127.0.0.1`、`::`→`::1`）、空地址与不可解析地址原样返回                                                                                                                                                                                                                                                             |
+| `internal/daemon/pid_test.go`（+windows）  | 自身 pid 存活、不存在的 pid 判死、pid ≤ 0 判死；Windows 专有：已退出但对象未回收的 pid 必须判死（回归 `os.FindProcess` 假阳性）                                                                                                                                                                                                             |
+| `internal/daemon/probe_test.go`            | `Probe` 解析 `addr`/`started_at`/`build_label`、非 200 与超时返回错误；`RequestStop` 的路径/方法/令牌头、202 成功、403 映射为「关停令牌无效」                                                                                                                                                                                               |
+| `internal/daemon/spawn_test.go`            | 分离进程启动后父进程立即返回、子进程经日志 fd 写入 `note.log`、环境变量 `NOTE_DAEMON_STATE` 传递                                                                                                                                                                                                                                            |
+| `internal/web/shutdown_api_test.go`        | 正确令牌 → 202 且回调只调用一次；错误/缺失令牌 → 403；未启用（Token 为空）→ 403 `shutdown_disabled`；GET → 405 带 `Allow`；不带 CSRF Cookie 也能通过；非法 Host 仍被 `hostGuard` 拦下                                                                                                                                                       |
+| `internal/store/store_test.go`             | 空库自动建表并跑完 6 个迁移、重复打开幂等、`user_version` 高于程序时拒绝启动、非法文件拒绝启动、0004 对象存在、0005 的 kind 枚举与索引重建、0006 的 `deleted_at` 为可空 TEXT 且存量行为 `NULL` + 两个部分索引存在、0003 扩展列默认值与 CHECK                                                                                                |
+| `internal/store/activity_test.go`          | 笔记与分类的增删改各写一条对应事件、`RecordActivity` 只接受已知 kind、失败的写操作（不存在/非空分类/默认分类）不留事件、`GetStats` 的总量/活跃天数/按天计数覆盖全部事件而 Top 查询只算 `search`                                                                                                                                             |
+| `internal/store/category_test.go`          | 分类 CRUD 与笔记数、大小写不敏感重名、默认分类守卫（改名/删除）、非空分类删除返回条数、**未分类（`category_id IS NULL`）计入默认分类并可被筛出**                                                                                                                                                                                            |
+| `internal/store/master_test.go`            | 主密码只写一次、盐长度与空问题拒绝、`UpdateMasterQuestion` 只改问题列（空/超 100 码点拒绝、未配置时报 `master_password_missing`、盐与 `created_at` 不动）                                                                                                                                                                                   |
+| `internal/store/note_test.go`              | id 形态、明文/密文建改删、明文转加密、`rev`/`updated_at`、分页、标题命中排前、分类筛选与空查询、按码点计数的 2000 边界、结构非法拒绝、软删除不碰 `rev`/`updated_at` 且删除后不可更新、彻底删除后 404、`ListEncryptedCiphers` 只含加密行且不带 `content`、`UpdateNoteCipher` 只换密文（`title/content/category_id/rev/updated_at` 逐字不变） |
+| `internal/store/note_trash_test.go`        | 软删除后列表/搜索/分类计数全部看不到它而 `deleted=1` 能列出、恢复到原分类且 `updated_at`/`rev` 不变、`restore`/`purge` 对未删除笔记返回 `ErrNoteNotInTrash` 而对不存在返回 `ErrNoteNotFound`、重复删除 404、软删除/恢复/彻底删除各落一条事件、只剩回收站笔记的分类可删且恢复后落到「未分类」                                                |
+| `internal/build/info_test.go`              | `Describe()` 的「已注入」与「回落到 vcs 信息」两分支、`Label()` 的开发构建标注                                                                                                                                                                                                                                                              |
+| `internal/web/handlers_info_test.go`       | `/api/info` 字段齐全、`no-store`、时间戳形如 `2006-01-02T15:04:05Z`、`schema_version` 为 6                                                                                                                                                                                                                                                  |
+| `internal/web/note_cipher_api_test.go`     | 清单不含 title/content、缺 `kdf_params` 与非法 base64 各返回对应字段错误、对明文笔记 409 `not_encrypted`、不存在的 id 404、不带 `X-CSRF-Token` 的 PUT 403 且库里密文未变、`/api/notes/encrypted` 不被 `{id}` 通配吃掉                                                                                                                       |
+| `internal/web/master_question_api_test.go` | `PUT /api/master-password/question` 的成功、字段校验与 CSRF 拒绝                                                                                                                                                                                                                                                                            |
+| `internal/web/server_test.go`              | SPA 回退与安全头、`/assets` 长缓存与缺失 404、未知 API 返回 JSON 404、CSRF 签发与复用、Host 白名单、带扩展名非 HTML 路径 404、设置门禁与改名、统计与搜索端点                                                                                                                                                                                |
+| `internal/web/notes_api_test.go`           | 创建与字段级校验、密文笔记往返、客户端自带 id、列表分页与筛选、`q` 超长 400、读改删与 404/409 映射、回收站全流程（软删除后详情带 `deleted_at`、默认列表不出现、`deleted=1` 列出、恢复回原分类、`not_in_trash` 409、`?purge=1` 后 404、restore 的 CSRF 拒绝）、增删改查与详情查看各自落一条事件（回收站详情不算查看）                        |
+| `internal/web/categories_api_test.go`      | 主密码 GET/POST 与重复设置 409、分类增删改与错误码、非空删除 409 带 `note_count`                                                                                                                                                                                                                                                            |
 
 - 运行 `just test`（内含 `go test ./...`）与 `just check`（`go vet ./...`）。
 - LIKE 转义由 `TestListNotesSearchOrdersTitleHitsFirst` 等搜索用例间接覆盖；没有独立的 fuzz 目标。
@@ -1393,7 +1411,7 @@ Referrer-Policy: no-referrer
 
 - Vitest 5，不引入组件测试库；需要 DOM 的文件用 `// @vitest-environment jsdom` 单独声明。
 - 覆盖（`web/src/**/*.test.ts`）：
-  - `router/router.test.ts`：路径匹配、参数解析、`edit`/`forgot` 优先于 `detail`、未知路径；
+  - `router/router.test.ts`：路径匹配、参数解析、`edit`/`forgot` 优先于 `detail`、`/trash` 与 `/notes/trash` 不混淆、未知路径；
   - `lib/crypto.test.ts`：口令 NFC、加解密往返、错误口令与篡改密文归并为 `DecryptError`、KDF 参数边界、base64 工具；
   - `lib/markdown.test.ts`：GFM 渲染、脚本与 `onerror` 被净化、外链补 `noopener noreferrer`；
   - `lib/draft.test.ts`、`lib/notes.test.ts`、`lib/stats.test.ts`、`lib/theme.test.ts`、`lib/toast.test.ts`：内存草稿单槽语义、API 载荷与错误映射、热力图分桶与事件构成分组（固定顺序、分类合并、占比、未知 kind 归入「其他」）、主题持久化与提示队列；
@@ -1401,9 +1419,9 @@ Referrer-Policy: no-referrer
   - `lib/info.test.ts`：`buildRows` 的 14 行中文键、缺失值统一「未知」、字节数与运行时长格式化、`allow_remote` 的是/否；
   - `lib/onboarding.test.ts`：`decideStep(nameSet, masterConfigured)` 的四个组合；
   - `lib/settings.test.ts`：并行读两个端点、主密码端点失败必须整体进 `error` 态（这条先用旧实现跑出 RED——引导判据不能建立在半套数据上）；
-  - `lib/notes.test.ts` 另含密文清单与单条替换的载荷与错误映射；`router/router.test.ts` 另含 `/info` 与 `/info?x=1`。
+  - `lib/notes.test.ts` 另含密文清单与单条替换的载荷与错误映射、回收站的 `deleted=1` 查询串与 `purge=1`/`restore` 的载荷；`lib/stats.test.ts` 另含 `note_purge` 折进「删除笔记」、`note_restore` 单列；`router/router.test.ts` 另含 `/info` 与 `/info?x=1`。
 - `just check` 跑 `svelte-check --tsconfig ./tsconfig.app.json` 与 `tsc -p tsconfig.node.json`，构建脚本 `npm run build` 会先跑同一套检查。
-- 视图组件不在单测里渲染，由 12.4 的端到端脚本覆盖。
+- 视图组件不在单测里渲染，由 12.4 的端到端脚本覆盖（含回收站的恢复/彻底删除与多视口排版）。
 
 ### 12.3 端到端验证
 

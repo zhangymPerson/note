@@ -11,6 +11,7 @@
     type Category,
     type NoteListItem,
   } from '../lib/notes'
+  import { toast } from '../lib/toast'
   import { navigate } from '../router/router'
 
   function paramsFromUrl(): URLSearchParams {
@@ -148,11 +149,14 @@
     navigate(`/notes/${encodeURIComponent(note.id)}`)
   }
 
+  // 删除是软删除：进回收站，可以恢复。加密笔记要求先解锁（详情页），
+  // 所以列表里对加密行关掉这个按钮，避免一条解锁门禁被列表绕过。
   async function remove(note: NoteListItem): Promise<void> {
-    if (!window.confirm(`永久删除「${note.title}」？删除后无法恢复。`)) return
+    if (!window.confirm(`把「${note.title}」移入回收站？之后可以在回收站恢复。`)) return
     pendingId = note.id
     try {
       await deleteNote(note.id)
+      toast('已移入回收站')
       await refresh(committedQ, category, page)
       categories = await listCategories()
     } catch (cause) {
@@ -234,7 +238,8 @@
               <button
                 class="button button-quiet"
                 type="button"
-                disabled={pendingId === note.id}
+                disabled={pendingId === note.id || note.encrypted}
+                title={note.encrypted ? '加密笔记请打开详情、解锁后再删除' : '删除后先进回收站，可以恢复'}
                 onclick={() => remove(note)}
               >
                 {pendingId === note.id ? '删除中…' : '删除'}

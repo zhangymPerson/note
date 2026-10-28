@@ -1,8 +1,16 @@
 <script lang="ts">
   import Markdown from '../components/Markdown.svelte'
   import { decryptNoteContent, paramsFromNote } from '../lib/crypto'
-  import { deleteNote, getMasterPassword, getNote, type NoteMeta } from '../lib/notes'
+  import {
+    deleteNote,
+    getMasterPassword,
+    getNote,
+    purgeNote,
+    restoreNote,
+    type NoteMeta,
+  } from '../lib/notes'
   import { hasKey, lockSession, sessionKey, unlockWithPassword } from '../lib/session-key'
+  import { toast } from '../lib/toast'
   import { navigate } from '../router/router'
 
   let { id = '' }: { id: string } = $props()
@@ -23,6 +31,9 @@
 
   const encrypted = $derived(note?.encrypted === true)
   const awaitingKey = $derived(encrypted && (!$hasKey || decryptFailed))
+  // 回收站里的笔记只能恢复或彻底删除，不能编辑；加密笔记要先解锁才能删。
+  const inTrash = $derived(Boolean(note?.deleted_at))
+  const canDelete = $derived(!awaitingKey)
   const body = $derived(encrypted ? plain : (note?.content ?? ''))
   // 模板里的点击回调是闭包，读不到 {#if note} 的收窄，所以预先取出 id。
   const noteId = $derived(note?.id ?? '')
@@ -102,14 +113,46 @@
     decryptFailed = false
   }
 
+  // 删除是软删除：进回收站，可以恢复。加密笔记必须先解锁（awaitingKey 时按钮不渲染），
+  // 服务端零密码学，这道门禁只能落在交互层。
   async function remove(): Promise<void> {
     if (!note) return
-    if (!window.confirm(`永久删除「${note.title}」？删除后无法恢复。`)) return
+    if (!window.confirm(`把「${note.title}」移入回收站？之后可以在回收站恢复。`)) return
     busy = true
     try {
       await deleteNote(note.id)
       lock()
+      toast('已移入回收站')
       navigate('/notes')
+    } catch (cause) {
+      error = message(cause)
+    } finally {
+      busy = false
+    }
+  }
+
+  async function bringBack(): Promise<void> {
+    if (!note) return
+    busy = true
+    try {
+      note = await restoreNote(note.id)
+      toast('已恢复')
+    } catch (cause) {
+      error = message(cause)
+    } finally {
+      busy = false
+    }
+  }
+
+  async function purge(): Promise<void> {
+    if (!note) return
+    if (!window.confirm(`彻底删除「${note.title}」？删除后无法恢复。`)) return
+    busy = true
+    try {
+      await purgeNote(note.id)
+      lock()
+      toast('已彻底删除')
+      navigate('/trash')
     } catch (cause) {
       error = message(cause)
     } finally {
@@ -146,8 +189,17 @@
         {#if note.category_name}
           · 分类「{note.category_name}」
         {/if}
+        {#if inTrash && note.deleted_at}
+          · 移入回收站于 {shownAt(note.deleted_at)}
+        {/if}
       </p>
     </header>
+
+    {#if inTrash}
+      <p class="trash-banner" role="status">
+        这条笔记在回收站里，不会出现在列表与搜索结果中。恢复后回到原来的分类。
+      </p>
+    {/if}
 
     {#if awaitingKey}
       <div class="card lock-card">
@@ -190,18 +242,40 @@
       <p class="form-error" role="alert">{error}</p>
     {/if}
 
-    <div class="actions">
-      <a class="button" href="/notes/{noteId}/edit" onclick={(event) => { event.preventDefault(); navigate(`/notes/${noteId}/edit`) }}>
-        编辑
-      </a>
-      {#if encrypted && !awaitingKey}
-        <button class="button button-quiet" type="button" onclick={lock}>锁定</button>
+    {#if inTrash}
+      <div class="actions">
+        <button class="button" type="button" disabled={busy} onclick={bringBack}>恢复</button>
+        {#if canDelete}
+          <button class="button button-quiet" type="button" disabled={busy} onclick={purge}>
+            彻底删除
+          </button>
+        {/if}
+        <a class="button button-quiet" href="/trash" onclick={(event) => { event.preventDefault(); navigate('/trash') }}>
+          返回回收站
+        </a>
+      </div>
+      {#if encrypted && awaitingKey}
+        <p class="muted">解锁后才能彻底删除这条加密笔记。</p>
       {/if}
-      <button class="button button-quiet" type="button" disabled={busy} onclick={remove}>删除</button>
-      <a class="button button-quiet" href="/notes" onclick={(event) => { event.preventDefault(); navigate('/notes') }}>
-        返回
-      </a>
-    </div>
+    {:else}
+      <div class="actions">
+        <a class="button" href="/notes/{noteId}/edit" onclick={(event) => { event.preventDefault(); navigate(`/notes/${noteId}/edit`) }}>
+          编辑
+        </a>
+        {#if encrypted && !awaitingKey}
+          <button class="button button-quiet" type="button" onclick={lock}>锁定</button>
+        {/if}
+        {#if canDelete}
+          <button class="button button-quiet" type="button" disabled={busy} onclick={remove}>移入回收站</button>
+        {/if}
+        <a class="button button-quiet" href="/notes" onclick={(event) => { event.preventDefault(); navigate('/notes') }}>
+          返回
+        </a>
+      </div>
+      {#if encrypted && awaitingKey}
+        <p class="muted">解锁后才能删除这条加密笔记。</p>
+      {/if}
+    {/if}
 
     {#if encrypted && $hasKey}
       <p class="muted">解密正文只保留在当前页面，刷新或点「锁定」后需要重新输入密码。</p>

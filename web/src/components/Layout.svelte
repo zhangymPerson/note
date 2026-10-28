@@ -54,6 +54,7 @@
       <a href="/" onclick={(event) => link(event, '/')}>概览</a>
       <a href="/notes" onclick={(event) => link(event, '/notes')}>全部笔记</a>
       <a href="/notes/new" onclick={(event) => link(event, '/notes/new')}>新建</a>
+      <a href="/trash" onclick={(event) => link(event, '/trash')}>回收站</a>
     </nav>
     <a class="who" href="/info" title="用户与信息" onclick={(event) => link(event, '/info')}>
       {$settings.name}

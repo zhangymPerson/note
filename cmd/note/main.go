@@ -298,7 +298,7 @@ func buildInfoData(cfg config.Config) cli.InfoData {
 			if schema, err := st.SchemaVersion(ctx); err == nil {
 				data.DB.SchemaVersion = schema
 			}
-			if page, err := st.ListNotes(ctx, "", 0, 1); err == nil {
+			if page, err := st.ListNotes(ctx, store.NoteFilter{Page: 1}); err == nil {
 				data.DB.Notes = page.Total
 			}
 			if ciphers, err := st.ListEncryptedCiphers(ctx); err == nil {

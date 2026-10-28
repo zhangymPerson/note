@@ -45,7 +45,12 @@ const EVENT_GROUPS: { key: string; label: string; kinds: string[] }[] = [
   { key: "note_view", label: "查看笔记", kinds: ["note_view"] },
   { key: "note_create", label: "新建笔记", kinds: ["note_create"] },
   { key: "note_update", label: "编辑笔记", kinds: ["note_update"] },
-  { key: "note_delete", label: "删除笔记", kinds: ["note_delete"] },
+  {
+    key: "note_delete",
+    label: "删除笔记",
+    kinds: ["note_delete", "note_purge"],
+  },
+  { key: "note_restore", label: "恢复笔记", kinds: ["note_restore"] },
   { key: "search", label: "查询", kinds: ["search"] },
   {
     key: "category",

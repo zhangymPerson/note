@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { deleteNote, getMasterPassword, getNote, type NoteMeta } from '../lib/notes'
+  import {
+    deleteNote,
+    getMasterPassword,
+    getNote,
+    purgeNote,
+    type NoteMeta,
+  } from '../lib/notes'
   import { lockSession } from '../lib/session-key'
   import { navigate } from '../router/router'
 
@@ -31,12 +37,15 @@
     load()
   })
 
+  // 忘记密码只能丢弃：先软删除，再彻底删除。
+  // 这条笔记谁也解不开，留在回收站只会变成一条永远无法解锁、也无法清除的残留。
   async function remove(): Promise<void> {
     if (!note) return
-    if (!window.confirm(`永久删除「${note.title}」？删除后无法恢复。`)) return
+    if (!window.confirm(`永久删除「${note.title}」？密码无法找回，删除后这条笔记就彻底没了。`)) return
     busy = true
     try {
       await deleteNote(note.id)
+      await purgeNote(note.id)
       lockSession()
       navigate('/notes')
     } catch (cause) {

@@ -24,6 +24,8 @@ const (
 var (
 	// ErrNoteNotFound 表示笔记 id 不存在。
 	ErrNoteNotFound = errors.New("note not found")
+	// ErrNoteNotInTrash 表示操作要求笔记在回收站里，但它其实没被软删除（或已被彻底删除）。
+	ErrNoteNotInTrash = errors.New("note is not in trash")
 	// ErrEncryptedImmutable 表示试图把加密笔记改回明文（0001 约定加密后不可取消）。
 	ErrEncryptedImmutable = errors.New("encrypted note cannot be converted back to plaintext")
 	// ErrNotEncrypted 表示对明文笔记调用只适用于加密笔记的操作。
@@ -33,6 +35,7 @@ var (
 )
 
 // Note 是一条笔记的全量记录；加密笔记只带密文，正文列恒为 nil。
+// DeletedAt 非空表示这条笔记在回收站里（0006 软删除）。
 type Note struct {
 	ID           string  `json:"id"`
 	Title        string  `json:"title"`
@@ -45,6 +48,7 @@ type Note struct {
 	Content      *string `json:"content"`
 	CipherB64    string  `json:"cipher_b64,omitempty"`
 	KDFParams    *string `json:"kdf_params,omitempty"`
+	DeletedAt    *string `json:"deleted_at,omitempty"`
 	CreatedAt    string  `json:"created_at"`
 	UpdatedAt    string  `json:"updated_at"`
 }
@@ -68,7 +72,16 @@ type NoteListItem struct {
 	Content      *string `json:"content,omitempty"`
 	CategoryID   *int64  `json:"category_id"`
 	CategoryName string  `json:"category_name,omitempty"`
+	DeletedAt    *string `json:"deleted_at,omitempty"`
 	UpdatedAt    string  `json:"updated_at"`
+}
+
+// NoteFilter 是列表与搜索的入参。Deleted=true 时只返回回收站里的笔记。
+type NoteFilter struct {
+	Q          string
+	CategoryID int64
+	Page       int
+	Deleted    bool
 }
 
 // NotePage 是分页结果。
@@ -127,7 +140,8 @@ func (s *Store) CreateNote(ctx context.Context, in NoteInput) (Note, error) {
 	return s.GetNote(ctx, id)
 }
 
-// GetNote 读取单条笔记，含分类名。
+// GetNote 读取单条笔记，含分类名。回收站里的笔记照常返回（DeletedAt 非空），
+// 详情页靠这个字段决定展示「恢复/彻底删除」而不是「编辑/删除」。
 func (s *Store) GetNote(ctx context.Context, id string) (Note, error) {
 	var note Note
 	row := s.db.QueryRowContext(ctx,
@@ -137,11 +151,12 @@ func (s *Store) GetNote(ctx context.Context, id string) (Note, error) {
 		encrypted  int
 		cipher     []byte
 		categoryNm sql.NullString
+		deletedAt  sql.NullString
 	)
 	if err := row.Scan(
 		&note.ID, &note.Title, &note.Content, &encrypted, &cipher, &note.KDFParams,
 		&note.CategoryID, &categoryNm, &note.Kind, &note.Remark, &note.Rev,
-		&note.CreatedAt, &note.UpdatedAt,
+		&deletedAt, &note.CreatedAt, &note.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Note{}, ErrNoteNotFound
@@ -151,6 +166,10 @@ func (s *Store) GetNote(ctx context.Context, id string) (Note, error) {
 
 	note.Encrypted = encrypted == 1
 	note.CategoryName = categoryNm.String
+	if deletedAt.Valid {
+		value := deletedAt.String
+		note.DeletedAt = &value
+	}
 	if cipher != nil {
 		note.CipherB64 = base64.StdEncoding.EncodeToString(cipher)
 	}
@@ -158,6 +177,7 @@ func (s *Store) GetNote(ctx context.Context, id string) (Note, error) {
 }
 
 // UpdateNote 整体替换笔记内容；rev 自增、updated_at 刷新，不存在时报错。
+// 回收站里的笔记不可编辑：先恢复再改（与列表、搜索保持一致）。
 func (s *Store) UpdateNote(ctx context.Context, id string, in NoteInput) (Note, error) {
 	title, err := normalizeTitle(in.Title)
 	if err != nil {
@@ -176,7 +196,7 @@ func (s *Store) UpdateNote(ctx context.Context, id string, in NoteInput) (Note, 
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		var wasEncrypted int
 		if err := tx.QueryRowContext(ctx,
-			`SELECT is_encrypted FROM notes WHERE id = ?`, id,
+			`SELECT is_encrypted FROM notes WHERE id = ? AND deleted_at IS NULL`, id,
 		).Scan(&wasEncrypted); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNoteNotFound
@@ -191,7 +211,7 @@ func (s *Store) UpdateNote(ctx context.Context, id string, in NoteInput) (Note, 
 			`UPDATE notes
              SET title = ?, content = ?, is_encrypted = ?, cipher = ?, kdf_salt = ?, kdf_params = ?, category_id = ?,
                  rev = rev + 1, updated_at = ?
-             WHERE id = ?`,
+             WHERE id = ? AND deleted_at IS NULL`,
 			title, body, boolInt(encrypted), cipher, kdfSalt, params, in.CategoryID, nowUTC(), id)
 		if err != nil {
 			return fmt.Errorf("update note: %w", err)
@@ -306,17 +326,19 @@ func (s *Store) UpdateNoteCipher(ctx context.Context, id, cipherB64, kdfParams s
 	return s.GetNote(ctx, id)
 }
 
-// DeleteNote 删除笔记，提交后立刻 TRUNCATE WAL，避免已删正文在日志文件里残留。
-// 删除事件与删除本身同事务；wal_checkpoint 必须在事务外执行。
-func (s *Store) DeleteNote(ctx context.Context, id string) error {
+// SoftDeleteNote 把笔记移进回收站：只写 deleted_at，正文/密文与 rev、updated_at 都不动。
+// 这是「删除」的默认语义（0006）；真正清数据走 PurgeNote。
+func (s *Store) SoftDeleteNote(ctx context.Context, id string) (Note, error) {
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `DELETE FROM notes WHERE id = ?`, id)
+		res, err := tx.ExecContext(ctx,
+			`UPDATE notes SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`,
+			nowUTC(), id)
 		if err != nil {
-			return fmt.Errorf("delete note: %w", err)
+			return fmt.Errorf("soft delete note: %w", err)
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return fmt.Errorf("delete note rows affected: %w", err)
+			return fmt.Errorf("soft delete note rows affected: %w", err)
 		}
 		if n == 0 {
 			return ErrNoteNotFound
@@ -324,32 +346,107 @@ func (s *Store) DeleteNote(ctx context.Context, id string) error {
 		return recordActivityTx(ctx, tx, ActivityNoteDelete)
 	})
 	if err != nil {
+		return Note{}, err
+	}
+	return s.GetNote(ctx, id)
+}
+
+// RestoreNote 把笔记从回收站取回：只清 deleted_at，不改 updated_at（
+// 恢复不是内容修订，也不该让它在列表里跳到最前），分类保持不变。
+func (s *Store) RestoreNote(ctx context.Context, id string) (Note, error) {
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE notes SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL`, id)
+		if err != nil {
+			return fmt.Errorf("restore note: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("restore note rows affected: %w", err)
+		}
+		if n == 0 {
+			// 不存在与「不在回收站」是两件事，前端要能用 409 提示而不是 404
+			return classifyMissingNote(ctx, tx, id, ErrNoteNotInTrash)
+		}
+		return recordActivityTx(ctx, tx, ActivityNoteRestore)
+	})
+	if err != nil {
+		return Note{}, err
+	}
+	return s.GetNote(ctx, id)
+}
+
+// PurgeNote 彻底删除回收站里的笔记：真删行，提交后立刻 TRUNCATE WAL，
+// 避免已删正文在日志文件里残留。未删除的笔记不允许直接彻底删除。
+func (s *Store) PurgeNote(ctx context.Context, id string) error {
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM notes WHERE id = ? AND deleted_at IS NOT NULL`, id)
+		if err != nil {
+			return fmt.Errorf("purge note: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("purge note rows affected: %w", err)
+		}
+		if n == 0 {
+			return classifyMissingNote(ctx, tx, id, ErrNoteNotInTrash)
+		}
+		return recordActivityTx(ctx, tx, ActivityNotePurge)
+	})
+	if err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-		return fmt.Errorf("wal checkpoint after delete: %w", err)
+		return fmt.Errorf("wal checkpoint after purge: %w", err)
 	}
 	return nil
 }
 
+// classifyMissingNote 区分「行不存在」（ErrNoteNotFound）与「存在但不在回收站」
+// （otherwise），让 404 与 409 各自可读。
+func classifyMissingNote(ctx context.Context, tx *sql.Tx, id string, otherwise error) error {
+	var present int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM notes WHERE id = ?`, id).Scan(&present)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNoteNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("probe note %s: %w", id, err)
+	}
+	return otherwise
+}
+
 const noteSelectSQL = `SELECT n.id, n.title, n.content, n.is_encrypted, n.cipher, n.kdf_params,
-        n.category_id, c.name, n.kind, n.remark, n.rev, n.created_at, n.updated_at
+        n.category_id, c.name, n.kind, n.remark, n.rev, n.deleted_at, n.created_at, n.updated_at
         FROM notes n LEFT JOIN categories c ON c.id = n.category_id`
 
-// ListNotes 分页列出或搜索笔记：categoryID 为 0 时不过滤，page 从 1 起。
-// q 非空时记录一次查询活动，且标题命中的笔记排在正文命中之前。
-func (s *Store) ListNotes(ctx context.Context, q string, categoryID int64, page int) (NotePage, error) {
+// ListNotes 分页列出或搜索笔记：CategoryID 为 0 时不过滤，Page 从 1 起。
+// Deleted=false 只看未删除的（默认）；Deleted=true 只看回收站，并按移入时间倒序。
+// Q 非空时记录一次查询活动，且标题命中的笔记排在正文命中之前。
+func (s *Store) ListNotes(ctx context.Context, filter NoteFilter) (NotePage, error) {
+	page := filter.Page
 	if page < 1 {
 		page = 1
 	}
 	result := NotePage{Items: []NoteListItem{}, Page: page, PerPage: notesPerPage}
 
 	where := []string{"1 = 1"}
+	if filter.Deleted {
+		where = append(where, "n.deleted_at IS NOT NULL")
+	} else {
+		where = append(where, "n.deleted_at IS NULL")
+	}
 	var args []any
 	var like string
 	titleRank := ""
+	// 回收站按移入时间倒序；活动列表按更新时间倒序
+	orderBy := "n.updated_at DESC, n.id DESC"
+	if filter.Deleted {
+		orderBy = "n.deleted_at DESC, n.id DESC"
+	}
 
-	if trimmed := strings.TrimSpace(q); trimmed != "" {
+	if trimmed := strings.TrimSpace(filter.Q); trimmed != "" {
 		like = "%" + escapeLike(trimmed) + "%"
 		args = append(args, like, like)
 		where = append(where, `(n.title LIKE ? ESCAPE '\' OR (n.is_encrypted = 0 AND n.content LIKE ? ESCAPE '\'))`)
@@ -357,9 +454,9 @@ func (s *Store) ListNotes(ctx context.Context, q string, categoryID int64, page 
 			return result, err
 		}
 	}
-	if categoryID > 0 {
-		args = append(args, categoryID)
-		if categoryID == defaultCategoryID {
+	if filter.CategoryID > 0 {
+		args = append(args, filter.CategoryID)
+		if filter.CategoryID == defaultCategoryID {
 			// 未分类的笔记存的是 category_id IS NULL，点默认分类时要把它们一起带出来
 			where = append(where, `(n.category_id = ? OR n.category_id IS NULL)`)
 		} else {
@@ -375,7 +472,7 @@ func (s *Store) ListNotes(ctx context.Context, q string, categoryID int64, page 
 	}
 
 	// 标题命中排前：ORDER BY 的占位符必须排在 WHERE 之后、LIMIT 之前
-	if like != "" {
+	if like != "" && !filter.Deleted {
 		titleRank = `CASE WHEN n.title LIKE ? ESCAPE '\' THEN 0 ELSE 1 END, `
 		args = append(args, like)
 	}
@@ -383,7 +480,7 @@ func (s *Store) ListNotes(ctx context.Context, q string, categoryID int64, page 
 
 	rows, err := s.db.QueryContext(ctx,
 		listSelectSQL+` WHERE `+clause+`
-         ORDER BY `+titleRank+`n.updated_at DESC, n.id DESC
+         ORDER BY `+titleRank+orderBy+`
          LIMIT ? OFFSET ?`,
 		args...)
 	if err != nil {
@@ -398,10 +495,11 @@ func (s *Store) ListNotes(ctx context.Context, q string, categoryID int64, page 
 			content    *string
 			categoryID sql.NullInt64
 			categoryNm sql.NullString
+			deletedAt  sql.NullString
 		)
 		if err := rows.Scan(
 			&item.ID, &item.Title, &content, &encrypted,
-			&categoryID, &categoryNm, &item.UpdatedAt,
+			&categoryID, &categoryNm, &deletedAt, &item.UpdatedAt,
 		); err != nil {
 			return result, fmt.Errorf("scan note list item: %w", err)
 		}
@@ -412,6 +510,10 @@ func (s *Store) ListNotes(ctx context.Context, q string, categoryID int64, page 
 			item.CategoryID = &value
 		}
 		item.CategoryName = categoryNm.String
+		if deletedAt.Valid {
+			value := deletedAt.String
+			item.DeletedAt = &value
+		}
 		// 加密笔记没有明文摘要列；明文只回前 140 码点用于预览
 		if content != nil && !item.Encrypted {
 			summary := truncateRunes(*content, summaryRunes)
@@ -425,7 +527,7 @@ func (s *Store) ListNotes(ctx context.Context, q string, categoryID int64, page 
 	return result, nil
 }
 
-const listSelectSQL = `SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.updated_at
+const listSelectSQL = `SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.deleted_at, n.updated_at
         FROM notes n LEFT JOIN categories c ON c.id = n.category_id`
 
 func truncateRunes(s string, limit int) string {
