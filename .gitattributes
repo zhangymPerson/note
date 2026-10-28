@@ -1,0 +1,3 @@
+* text=auto eol=lf
+# Windows PowerShell 5.1 对 CRLF 兼容最好
+*.ps1 text eol=crlf

@@ -1,7 +1,7 @@
 /* 三主题：亮/暗取自 GitHub Primer 官方色板，护眼为低饱和米绿纸色。
    data-theme 由 lib/theme.ts 在启动时写入 <html>（localStorage 优先，否则跟随系统）。 */
 :root,
-:root[data-theme='light'] {
+:root[data-theme="light"] {
   --bg: #ffffff;
   --surface: #f6f8fa;
   --text: #1f2328;
@@ -20,22 +20,22 @@
   font-family:
     system-ui,
     -apple-system,
-    'Segoe UI',
+    "Segoe UI",
     Roboto,
-    'Noto Sans SC',
+    "Noto Sans SC",
     sans-serif;
   line-height: 1.6;
   color: var(--text);
   background: var(--bg);
 
   --font-display:
-    'Noto Serif SC', 'Source Han Serif SC', 'Source Han Serif CN', 'Songti SC',
-    'SimSun', Georgia, serif;
+    "Noto Serif SC", "Source Han Serif SC", "Source Han Serif CN", "Songti SC",
+    "SimSun", Georgia, serif;
   --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
   --cell: 11px;
 }
 
-:root[data-theme='dark'] {
+:root[data-theme="dark"] {
   --bg: #0d1117;
   --surface: #161b22;
   --text: #e6edf3;
@@ -53,7 +53,7 @@
   color-scheme: dark;
 }
 
-:root[data-theme='eye-care'] {
+:root[data-theme="eye-care"] {
   --bg: #e9efdf;
   --surface: #f2f6e9;
   --text: #33402f;
@@ -169,7 +169,7 @@ nav {
   cursor: pointer;
 }
 
-.theme-option[aria-pressed='true'] {
+.theme-option[aria-pressed="true"] {
   background: var(--accent);
   color: var(--accent-contrast);
 }
@@ -342,7 +342,7 @@ input {
   font-size: 0.8rem;
 }
 
-.onboarding-steps [aria-current='step'] {
+.onboarding-steps [aria-current="step"] {
   color: var(--text);
   font-weight: 600;
 }
@@ -485,23 +485,23 @@ input {
   place-self: center;
 }
 
-.heat-cell[data-level='1'] {
+.heat-cell[data-level="1"] {
   background: var(--heat-1);
 }
 
-.heat-cell[data-level='2'] {
+.heat-cell[data-level="2"] {
   background: var(--heat-2);
 }
 
-.heat-cell[data-level='3'] {
+.heat-cell[data-level="3"] {
   background: var(--heat-3);
 }
 
-.heat-cell[data-level='4'] {
+.heat-cell[data-level="4"] {
   background: var(--heat-4);
 }
 
-.heat-cell[data-level='empty'] {
+.heat-cell[data-level="empty"] {
   background: transparent;
 }
 
@@ -782,7 +782,7 @@ input {
   cursor: pointer;
 }
 
-.chip[data-active='true'] {
+.chip[data-active="true"] {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-contrast);
@@ -967,8 +967,8 @@ input {
   color: var(--muted);
 }
 
-.stack-form input[type='password'],
-.stack-form input[type='text'] {
+.stack-form input[type="password"],
+.stack-form input[type="text"] {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);

@@ -15,7 +15,7 @@ default:
     just --list
 
 # 按 package-lock.json 安装前端依赖
-install:
+install: format
     npm --prefix web ci
 
 # 构建前端产物到 internal/web/dist，供 go:embed 使用

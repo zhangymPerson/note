@@ -2,55 +2,55 @@
 // 密码原文与派生密钥都永不离开浏览器、永不落盘（见设计文档 §2）。
 
 export interface KdfParams {
-  algo: 'pbkdf2'
-  prf: 'HMAC-SHA256'
-  iter: number
-  keylen: number
+  algo: "pbkdf2";
+  prf: "HMAC-SHA256";
+  iter: number;
+  keylen: number;
 }
 
 export const KDF_PARAMS: KdfParams = {
-  algo: 'pbkdf2',
-  prf: 'HMAC-SHA256',
+  algo: "pbkdf2",
+  prf: "HMAC-SHA256",
   iter: 150_000,
   keylen: 32,
-}
+};
 
-const MIN_ITER = 100_000
-const MAX_ITER = 1_000_000
-const NONCE_BYTES = 12
-const AAD_PREFIX = 'note:v1:'
-const SALT_BYTES = 16
+const MIN_ITER = 100_000;
+const MAX_ITER = 1_000_000;
+const NONCE_BYTES = 12;
+const AAD_PREFIX = "note:v1:";
+const SALT_BYTES = 16;
 
 /** 所有解密失败（密码错误、密文损坏、id 不匹配）都归并为同一个错误。 */
 export class DecryptError extends Error {
   constructor() {
-    super('密码错误或数据损坏')
-    this.name = 'DecryptError'
+    super("密码错误或数据损坏");
+    this.name = "DecryptError";
   }
 }
 
 // 密码按 NFC 规范化：同一密码在浏览器、CLI、未来实现里派生出同一个密钥。
 export function normalizePassword(password: string): string {
-  return password.normalize('NFC')
+  return password.normalize("NFC");
 }
 
 export function bytesToB64(bytes: Uint8Array): string {
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 export function b64ToBytes(value: string) {
-  const binary = atob(value)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
-  return bytes
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 export function generateSaltB64(): string {
-  const salt = new Uint8Array(SALT_BYTES)
-  crypto.getRandomValues(salt)
-  return bytesToB64(salt)
+  const salt = new Uint8Array(SALT_BYTES);
+  crypto.getRandomValues(salt);
+  return bytesToB64(salt);
 }
 
 export async function deriveKey(
@@ -58,25 +58,34 @@ export async function deriveKey(
   saltB64: string,
   params: KdfParams,
 ): Promise<CryptoKey> {
-  if (params.iter < MIN_ITER || params.iter > MAX_ITER || params.keylen !== 32) {
-    throw new DecryptError()
+  if (
+    params.iter < MIN_ITER ||
+    params.iter > MAX_ITER ||
+    params.keylen !== 32
+  ) {
+    throw new DecryptError();
   }
 
   const baseKey = await crypto.subtle.importKey(
-    'raw',
+    "raw",
     new TextEncoder().encode(normalizePassword(password)),
-    'PBKDF2',
+    "PBKDF2",
     false,
-    ['deriveKey'],
-  )
+    ["deriveKey"],
+  );
 
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: b64ToBytes(saltB64), iterations: params.iter, hash: 'SHA-256' },
+    {
+      name: "PBKDF2",
+      salt: b64ToBytes(saltB64),
+      iterations: params.iter,
+      hash: "SHA-256",
+    },
     baseKey,
-    { name: 'AES-GCM', length: 256 },
+    { name: "AES-GCM", length: 256 },
     false,
-    ['encrypt', 'decrypt'],
-  )
+    ["encrypt", "decrypt"],
+  );
 }
 
 /**
@@ -84,27 +93,27 @@ export async function deriveKey(
  * 越界、畸形 JSON、算法不符一律按数据损坏拒绝——密文是谁写的就该按谁的参数解。
  */
 export function paramsFromNote(raw: string | undefined | null): KdfParams {
-  const text = (raw ?? '').trim()
-  if (text === '') return KDF_PARAMS
+  const text = (raw ?? "").trim();
+  if (text === "") return KDF_PARAMS;
 
-  let parsed: unknown
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(text)
+    parsed = JSON.parse(text);
   } catch {
-    throw new DecryptError()
+    throw new DecryptError();
   }
-  if (typeof parsed !== 'object' || parsed === null) throw new DecryptError()
+  if (typeof parsed !== "object" || parsed === null) throw new DecryptError();
 
-  const declared = parsed as Record<string, unknown>
+  const declared = parsed as Record<string, unknown>;
   if (
     declared.algo !== KDF_PARAMS.algo ||
-    typeof declared.iter !== 'number' ||
+    typeof declared.iter !== "number" ||
     !Number.isInteger(declared.iter) ||
     declared.iter < MIN_ITER ||
     declared.iter > MAX_ITER ||
     declared.keylen !== KDF_PARAMS.keylen
   ) {
-    throw new DecryptError()
+    throw new DecryptError();
   }
 
   return {
@@ -112,11 +121,11 @@ export function paramsFromNote(raw: string | undefined | null): KdfParams {
     prf: KDF_PARAMS.prf,
     iter: declared.iter,
     keylen: KDF_PARAMS.keylen,
-  }
+  };
 }
 
 function aadFor(noteId: string) {
-  return new TextEncoder().encode(AAD_PREFIX + noteId)
+  return new TextEncoder().encode(AAD_PREFIX + noteId);
 }
 
 /** 返回 nonce(12) || ciphertext || tag(16) 的 base64；GCM 标签保证校验。 */
@@ -125,20 +134,25 @@ export async function encryptNoteContent(
   noteId: string,
   content: string,
 ): Promise<string> {
-  const nonce = new Uint8Array(NONCE_BYTES)
-  crypto.getRandomValues(nonce)
+  const nonce = new Uint8Array(NONCE_BYTES);
+  crypto.getRandomValues(nonce);
 
   const sealed = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: nonce, additionalData: aadFor(noteId), tagLength: 128 },
+    {
+      name: "AES-GCM",
+      iv: nonce,
+      additionalData: aadFor(noteId),
+      tagLength: 128,
+    },
     key,
     new TextEncoder().encode(content),
-  )
+  );
 
-  const cipher = new Uint8Array(sealed)
-  const joined = new Uint8Array(nonce.length + cipher.length)
-  joined.set(nonce, 0)
-  joined.set(cipher, nonce.length)
-  return bytesToB64(joined)
+  const cipher = new Uint8Array(sealed);
+  const joined = new Uint8Array(nonce.length + cipher.length);
+  joined.set(nonce, 0);
+  joined.set(cipher, nonce.length);
+  return bytesToB64(joined);
 }
 
 export async function decryptNoteContent(
@@ -147,22 +161,22 @@ export async function decryptNoteContent(
   cipherB64: string,
 ): Promise<string> {
   try {
-    const raw = b64ToBytes(cipherB64)
-    if (raw.length <= NONCE_BYTES) throw new DecryptError()
+    const raw = b64ToBytes(cipherB64);
+    if (raw.length <= NONCE_BYTES) throw new DecryptError();
 
     const plain = await crypto.subtle.decrypt(
       {
-        name: 'AES-GCM',
+        name: "AES-GCM",
         iv: raw.subarray(0, NONCE_BYTES),
         additionalData: aadFor(noteId),
         tagLength: 128,
       },
       key,
       raw.subarray(NONCE_BYTES),
-    )
-    return new TextDecoder().decode(plain)
+    );
+    return new TextDecoder().decode(plain);
   } catch {
     // atob 抛的 InvalidCharacterError 等一律归并为同一个用户可见错误
-    throw new DecryptError()
+    throw new DecryptError();
   }
 }

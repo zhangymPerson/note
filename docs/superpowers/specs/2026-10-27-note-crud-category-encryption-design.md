@@ -4,14 +4,14 @@
 
 ## 1. 需求与对 PRD 的偏离
 
-| 项 | 本设计 | PRD v1.2 原案 | 偏离原因 |
-| --- | --- | --- | --- |
-| 密码模型 | 全局主密码，只配置一次；忘记则所有加密笔记永久不可读 | 每条笔记独立密码（Q2 默认） | 用户明确要求 |
-| 解密位置 | 浏览器端 WebCrypto，服务端只存密文字节 | Go 服务端解密 + 内存会话 | 用户要求简化；本地单机场景增益等价 |
-| 解锁会话 | 密钥仅存页面内存，刷新/锁定即失效 | 服务端 10 分钟空闲会话 | 无服务端状态，天然满足"重启失效" |
-| 助记提示 | 单条问题文本，全局一份，如「你的生日是多少？」 | 每笔记最多 3 组问答 | 用户要求；不存答案，防泄露密码构成材料 |
-| 正文长度 | ≤ 2000 个 Unicode 字符 | ≤ 1 MiB | 用户要求 |
-| 分类 | 新增：笔记可选分类，分类可管理 | 非目标（2.2 标签/文件夹） | 用户要求，覆盖非目标 |
+| 项       | 本设计                                               | PRD v1.2 原案               | 偏离原因                               |
+| -------- | ---------------------------------------------------- | --------------------------- | -------------------------------------- |
+| 密码模型 | 全局主密码，只配置一次；忘记则所有加密笔记永久不可读 | 每条笔记独立密码（Q2 默认） | 用户明确要求                           |
+| 解密位置 | 浏览器端 WebCrypto，服务端只存密文字节               | Go 服务端解密 + 内存会话    | 用户要求简化；本地单机场景增益等价     |
+| 解锁会话 | 密钥仅存页面内存，刷新/锁定即失效                    | 服务端 10 分钟空闲会话      | 无服务端状态，天然满足"重启失效"       |
+| 助记提示 | 单条问题文本，全局一份，如「你的生日是多少？」       | 每笔记最多 3 组问答         | 用户要求；不存答案，防泄露密码构成材料 |
+| 正文长度 | ≤ 2000 个 Unicode 字符                               | ≤ 1 MiB                     | 用户要求                               |
+| 分类     | 新增：笔记可选分类，分类可管理                       | 非目标（2.2 标签/文件夹）   | 用户要求，覆盖非目标                   |
 
 不变的安全底线（继续有效）：密码与派生密钥绝不落盘、不进日志；密文列 CHECK 约束；CSRF/Host/安全头中间件；`no-store`；禁止 `{@html}`；密码/密钥不写 localStorage。
 
@@ -72,17 +72,17 @@ ALTER TABLE notes ADD COLUMN category_id INTEGER REFERENCES categories(id);
 
 ## 4. API（全部经现有 hostGuard/CSRF/securityHeaders 链）
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/notes?q=&page=&category=` | 列表+搜索，updated_at 倒序，每页 20；加密笔记仅标题命中；命中 `q` 记录活动（现有 SearchNotes 扩展） |
-| POST | `/api/notes` | `{title, content? \| cipher_b64?, kdf_params?, category_id?, encrypted}`；201 返回笔记元数据 |
-| GET | `/api/notes/{id}` | 明文笔记含 content；加密笔记只返回元数据+`encrypted:true`（密文 b64 一并返回供前端解密） |
-| PUT | `/api/notes/{id}` | 同 POST 字段；rev+1；加密笔记只接受新密文 |
-| DELETE | `/api/notes/{id}` | 204；加密笔记删除不需要密码 |
-| GET | `/api/master-password` | `{configured, salt_b64, question}`（未配置时后两字段为空串；盐是公开 KDF 参数，浏览器据此派生密钥，密码原文永不经服务端） |
-| POST | `/api/master-password` | `{salt_b64, question}`；仅一次，已存在返回 409 |
-| GET | `/api/categories` | 列表 + 每类笔记计数 |
-| POST / PUT / DELETE | `/api/categories[/{id}]` | 新增/改名/删除；id=1 拒改拒删 409；有笔记拒删 409 |
+| 方法                | 路径                            | 说明                                                                                                                      |
+| ------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| GET                 | `/api/notes?q=&page=&category=` | 列表+搜索，updated_at 倒序，每页 20；加密笔记仅标题命中；命中 `q` 记录活动（现有 SearchNotes 扩展）                       |
+| POST                | `/api/notes`                    | `{title, content? \| cipher_b64?, kdf_params?, category_id?, encrypted}`；201 返回笔记元数据                              |
+| GET                 | `/api/notes/{id}`               | 明文笔记含 content；加密笔记只返回元数据+`encrypted:true`（密文 b64 一并返回供前端解密）                                  |
+| PUT                 | `/api/notes/{id}`               | 同 POST 字段；rev+1；加密笔记只接受新密文                                                                                 |
+| DELETE              | `/api/notes/{id}`               | 204；加密笔记删除不需要密码                                                                                               |
+| GET                 | `/api/master-password`          | `{configured, salt_b64, question}`（未配置时后两字段为空串；盐是公开 KDF 参数，浏览器据此派生密钥，密码原文永不经服务端） |
+| POST                | `/api/master-password`          | `{salt_b64, question}`；仅一次，已存在返回 409                                                                            |
+| GET                 | `/api/categories`               | 列表 + 每类笔记计数                                                                                                       |
+| POST / PUT / DELETE | `/api/categories[/{id}]`        | 新增/改名/删除；id=1 拒改拒删 409；有笔记拒删 409                                                                         |
 
 - 校验（400 + 字段级错误）：标题 1–200 字符；正文 ≤ 2000 字符（`utf8.RuneCountInString`）；分类名 1–30 字符非重复；密文 b64 ≤ 64 KiB；请求体上限沿用 decodeJSON。
 - 服务端永不明文参与：不校验密文内容合法性以外的任何密码字段；加密笔记的 cipher 对服务端是黑盒字节。

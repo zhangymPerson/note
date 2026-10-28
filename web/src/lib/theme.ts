@@ -1,34 +1,42 @@
-import { writable } from 'svelte/store'
+import { writable } from "svelte/store";
 
-export type ThemeName = 'light' | 'dark' | 'eye-care'
+export type ThemeName = "light" | "dark" | "eye-care";
 
-const STORAGE_KEY = 'note.theme'
+const STORAGE_KEY = "note.theme";
 
-export function resolveTheme(stored: string | null, systemPrefersDark: boolean): ThemeName {
-  if (stored === 'light' || stored === 'dark' || stored === 'eye-care') {
-    return stored
+export function resolveTheme(
+  stored: string | null,
+  systemPrefersDark: boolean,
+): ThemeName {
+  if (stored === "light" || stored === "dark" || stored === "eye-care") {
+    return stored;
   }
-  return systemPrefersDark ? 'dark' : 'light'
+  return systemPrefersDark ? "dark" : "light";
 }
 
 function detectTheme(): ThemeName {
-  const stored = typeof localStorage === 'undefined' ? null : localStorage.getItem(STORAGE_KEY)
+  const stored =
+    typeof localStorage === "undefined"
+      ? null
+      : localStorage.getItem(STORAGE_KEY);
   const prefersDark =
-    typeof matchMedia === 'undefined' ? false : matchMedia('(prefers-color-scheme: dark)').matches
-  return resolveTheme(stored, prefersDark)
+    typeof matchMedia === "undefined"
+      ? false
+      : matchMedia("(prefers-color-scheme: dark)").matches;
+  return resolveTheme(stored, prefersDark);
 }
 
-export const theme = writable<ThemeName>(detectTheme())
+export const theme = writable<ThemeName>(detectTheme());
 
 theme.subscribe((name) => {
-  if (typeof document !== 'undefined') {
-    document.documentElement.dataset.theme = name
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.theme = name;
   }
-})
+});
 
 export function setTheme(name: ThemeName): void {
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY, name)
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(STORAGE_KEY, name);
   }
-  theme.set(name)
+  theme.set(name);
 }

@@ -55,3 +55,6 @@ Thumbs.db
 # Editor/IDE
 # .idea/
 # .vscode/
+
+.qoder
+test/

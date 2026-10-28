@@ -1,12 +1,12 @@
-import { mount } from 'svelte'
-import './app.css'
-import App from './App.svelte'
-import { startRouter } from './router/router'
+import { mount } from "svelte";
+import "./app.css";
+import App from "./App.svelte";
+import { startRouter } from "./router/router";
 
-startRouter()
+startRouter();
 
 const app = mount(App, {
-  target: document.getElementById('app')!,
-})
+  target: document.getElementById("app")!,
+});
 
-export default app
+export default app;

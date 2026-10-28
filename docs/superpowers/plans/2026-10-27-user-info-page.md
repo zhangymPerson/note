@@ -37,6 +37,7 @@
 ### Task 1: 构建信息注入与 `GET /api/info`
 
 **Files:**
+
 - Create: `internal/build/info.go`
 - Test: `internal/build/info_test.go`
 - Create: `internal/web/handlers_info.go`
@@ -47,6 +48,7 @@
 - Modify: `justfile:50`（ldflags 注入）
 
 **Interfaces:**
+
 - Consumes: 无（首个任务）
 - Produces:
   - `build.Info` 结构体与 `build.Describe() Info`；`build.Version/GitHash/GitDirty/BuildDate` 四个包级 `var`
@@ -126,17 +128,17 @@ func TestInfoEndpointHasNoSecrets(t *testing.T) {
 
 `func (app *application) handleGetInfo(w http.ResponseWriter, r *http.Request)`，`writeJSON(w, 200, map[string]any{...})`，字段名用 Step 4 列出的 snake_case。取值来源：
 
-| 字段 | 来源 |
-| --- | --- |
-| `build_label`, `git_dirty`, `version` | `build.Describe()` |
-| `go_version`, `goos`, `goarch` | `runtime` |
-| `hostname` | `os.Hostname()`，出错时置 `"未知"` 而非返回 500 |
-| `cpu_count` | `runtime.NumCPU()` |
-| `mem_alloc_bytes`, `mem_sys_bytes` | `runtime.ReadMemStats` |
-| `started_at`, `uptime_seconds` | `app.startedAt` 与 `time.Since` |
-| `db_path` | `app.cfg.DBPath` |
-| `schema_version` | `app.store.SchemaVersion(r.Context())`，出错时返回 500 `internal` |
-| `addr`, `allow_remote` | `app.cfg` |
+| 字段                                  | 来源                                                              |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| `build_label`, `git_dirty`, `version` | `build.Describe()`                                                |
+| `go_version`, `goos`, `goarch`        | `runtime`                                                         |
+| `hostname`                            | `os.Hostname()`，出错时置 `"未知"` 而非返回 500                   |
+| `cpu_count`                           | `runtime.NumCPU()`                                                |
+| `mem_alloc_bytes`, `mem_sys_bytes`    | `runtime.ReadMemStats`                                            |
+| `started_at`, `uptime_seconds`        | `app.startedAt` 与 `time.Since`                                   |
+| `db_path`                             | `app.cfg.DBPath`                                                  |
+| `schema_version`                      | `app.store.SchemaVersion(r.Context())`，出错时返回 500 `internal` |
+| `addr`, `allow_remote`                | `app.cfg`                                                         |
 
 `application` 加 `startedAt time.Time`，在 `newApplication` 里 `time.Now().UTC()`。`store.SchemaVersion` 读 `PRAGMA user_version`。路由注册 `mux.HandleFunc("GET /api/info", app.handleGetInfo)`。
 
@@ -174,10 +176,12 @@ git commit -m "feat(api): 新增 GET /api/info，构建信息经 ldflags 注入"
 ### Task 2: store 层——加密笔记清单与密文替换
 
 **Files:**
+
 - Modify: `internal/store/note.go`
 - Test: `internal/store/note_test.go`
 
 **Interfaces:**
+
 - Consumes: 现有 `openTestStore(t)`、`normalizeBody`、`inTx`、`nowUTC`
 - Produces:
   - `store.EncryptedCipher{ID string `json:"id"`; CipherB64 string `json:"cipher_b64"`; KDFParams string `json:"kdf_params"`}`
@@ -232,11 +236,13 @@ git commit -m "feat(store): 加密笔记清单与只换密文不动元数据的�
 ### Task 3: web 层——清单端点与密文替换端点
 
 **Files:**
+
 - Create: `internal/web/handlers_note_cipher.go`
 - Test: `internal/web/note_cipher_api_test.go`
 - Modify: `internal/web/server.go`（两条路由）
 
 **Interfaces:**
+
 - Consumes: Task 2 的 `ListEncryptedCiphers`、`UpdateNoteCipher`、`ErrNotEncrypted`
 - Produces:
   - `GET /api/notes/encrypted` → `{"notes":[{id,cipher_b64,kdf_params}]}`
@@ -298,6 +304,7 @@ git commit -m "feat(api): 加密笔记清单与密文替换端点"
 ### Task 4: 助记问题可改
 
 **Files:**
+
 - Modify: `internal/store/master.go`
 - Test: `internal/store/master_test.go`
 - Modify: `internal/web/handlers_categories.go`（新 handler + 改 `master_password_exists` 文案）
@@ -305,6 +312,7 @@ git commit -m "feat(api): 加密笔记清单与密文替换端点"
 - Modify: `internal/web/server.go`
 
 **Interfaces:**
+
 - Consumes: `MasterPassword` 结构、`ErrMasterPasswordMissing`
 - Produces:
   - `func (s *Store) UpdateMasterQuestion(ctx context.Context, question string) (MasterPassword, error)`
@@ -360,26 +368,66 @@ git commit -m "feat(api): 助记问题可单独修改，盐与创建时间不变
 ### Task 5: 浏览器端迁移引擎 `reencrypt.ts`
 
 **Files:**
+
 - Create: `web/src/lib/reencrypt.ts`
 - Test: `web/src/lib/reencrypt.test.ts`
 
 **Interfaces:**
+
 - Consumes: `crypto.ts` 的 `deriveKey/encryptNoteContent/decryptNoteContent/paramsFromNote/KDF_PARAMS/DecryptError`
 - Produces（Task 7 依赖这些确切名字）:
+
   ```ts
-  export interface EncryptedItem { id: string; cipher_b64: string; kdf_params?: string }
-  export type MigrationOutcome = 'done' | 'already_done' | 'skipped_gone' | 'failed_old_key' | 'failed_network'
-  export interface MigrationRow { id: string; outcome: MigrationOutcome; message?: string }
-  export interface MigrationReport { rows: MigrationRow[]; done: number; skipped: number; failed: number; remaining: number }
-  export interface ReencryptDeps {
-    decrypt: (key: CryptoKey, id: string, cipherB64: string) => Promise<string>
-    encrypt: (key: CryptoKey, id: string, plain: string) => Promise<string>
-    putCipher: (id: string, cipherB64: string, kdfParams: string) => Promise<void>
-    paramsJSON?: string
+  export interface EncryptedItem {
+    id: string;
+    cipher_b64: string;
+    kdf_params?: string;
   }
-  export async function verifyOldPassword(items: EncryptedItem[], oldKey: CryptoKey, deps: ReencryptDeps): Promise<boolean>
-  export async function planMigration(items: EncryptedItem[], newKey: CryptoKey, deps: ReencryptDeps): Promise<EncryptedItem[]>
-  export async function runMigration(items: EncryptedItem[], oldKey: CryptoKey, newKey: CryptoKey, deps: ReencryptDeps, onProgress?: (row: MigrationRow) => void): Promise<MigrationReport>
+  export type MigrationOutcome =
+    | "done"
+    | "already_done"
+    | "skipped_gone"
+    | "failed_old_key"
+    | "failed_network";
+  export interface MigrationRow {
+    id: string;
+    outcome: MigrationOutcome;
+    message?: string;
+  }
+  export interface MigrationReport {
+    rows: MigrationRow[];
+    done: number;
+    skipped: number;
+    failed: number;
+    remaining: number;
+  }
+  export interface ReencryptDeps {
+    decrypt: (key: CryptoKey, id: string, cipherB64: string) => Promise<string>;
+    encrypt: (key: CryptoKey, id: string, plain: string) => Promise<string>;
+    putCipher: (
+      id: string,
+      cipherB64: string,
+      kdfParams: string,
+    ) => Promise<void>;
+    paramsJSON?: string;
+  }
+  export async function verifyOldPassword(
+    items: EncryptedItem[],
+    oldKey: CryptoKey,
+    deps: ReencryptDeps,
+  ): Promise<boolean>;
+  export async function planMigration(
+    items: EncryptedItem[],
+    newKey: CryptoKey,
+    deps: ReencryptDeps,
+  ): Promise<EncryptedItem[]>;
+  export async function runMigration(
+    items: EncryptedItem[],
+    oldKey: CryptoKey,
+    newKey: CryptoKey,
+    deps: ReencryptDeps,
+    onProgress?: (row: MigrationRow) => void,
+  ): Promise<MigrationReport>;
   ```
 
 - [ ] **Step 1: 写失败测试**
@@ -424,12 +472,14 @@ git commit -m "feat(web): 主密码改密的浏览器端迁移引擎"
 ### Task 6: 前端 API 客户端、settings 与路由
 
 **Files:**
+
 - Modify: `web/src/lib/notes.ts`
 - Modify: `web/src/lib/settings.ts`
 - Modify: `web/src/router/router.ts`
 - Test: `web/src/router/router.test.ts`、`web/src/lib/settings.test.ts`（若无则新建）
 
 **Interfaces:**
+
 - Consumes: Task 3、Task 4 的端点；Task 5 的 `EncryptedItem` 类型（`notes.ts` 用 `import type { EncryptedItem } from './reencrypt'`，不重复定义）
 - Produces:
   - `notes.ts`: `listEncryptedCiphers(): Promise<{ notes: EncryptedItem[] }>`、`updateNoteCipher(id, cipherB64, kdfParams): Promise<void>`、`updateMasterQuestion(question): Promise<{ configured: boolean; question: string }>`
@@ -466,6 +516,7 @@ git commit -m "feat(web): 信息页所需客户端接口与引导完成判据"
 ### Task 7: `InfoView` 四张卡
 
 **Files:**
+
 - Create: `web/src/lib/info.ts`
 - Test: `web/src/lib/info.test.ts`
 - Create: `web/src/views/InfoView.svelte`
@@ -474,6 +525,7 @@ git commit -m "feat(web): 信息页所需客户端接口与引导完成判据"
 - Modify: `web/src/app.css:139`（`.who` 作为链接的样式）与新增信息页行样式
 
 **Interfaces:**
+
 - Consumes: Task 1 的 `/api/info`、Task 5 的 `reencrypt.ts`、Task 6 的三个客户端函数、`session-key.ts` 的 `deriveKey/unlockWithPassword/sessionKey`
 - Produces: 路由 `/info` 的完整页面；`GET /api/info` 的读取函数 `getInfo()`（放 `web/src/lib/info.ts`）
 
@@ -508,6 +560,7 @@ git commit -m "feat(web): 用户信息页——运行信息、改名、改助记
 ### Task 8: 引导页两步式
 
 **Files:**
+
 - Modify: `web/src/views/OnboardingView.svelte`
 - Modify: `web/src/App.svelte:31-45`（标题与门槛判据）
 - Modify: `web/src/views/MasterPasswordView.svelte:80-90`（只读卡改指向 `/info`）
@@ -515,16 +568,17 @@ git commit -m "feat(web): 用户信息页——运行信息、改名、改助记
 - Test: `web/src/views/onboarding.test.ts`（把两步判定抽成纯函数 `decideStep(nameSet, masterConfigured)`）
 
 **Interfaces:**
+
 - Consumes: Task 6 的 `settings.masterConfigured`、`notes.setMasterPassword/getMasterPassword`、`session-key.unlockKey`
 - Produces: `decideStep(nameSet: boolean, masterConfigured: boolean): 0 | 1 | 2`（0 = 引导已完成，不进引导页）
 
 - [ ] **Step 1: 写失败测试**
 
 ```ts
-it('decideStep(false, false) === 1')
-it('decideStep(false, true) === 1')    // 老库先设过密码但没设名字
-it('decideStep(true, false) === 2')    // 名字存了密码没配 → 仍在引导，直接第二步  ← Review Focus 2
-it('decideStep(true, true) === 0')     // 两步都齐 → 正常进主界面
+it("decideStep(false, false) === 1");
+it("decideStep(false, true) === 1"); // 老库先设过密码但没设名字
+it("decideStep(true, false) === 2"); // 名字存了密码没配 → 仍在引导，直接第二步  ← Review Focus 2
+it("decideStep(true, true) === 0"); // 两步都齐 → 正常进主界面
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -560,9 +614,11 @@ git commit -m "feat(web): 引导页改为名字+初始主密码两步，主密�
 ### Task 9: 端到端实测
 
 **Files:**
+
 - Create: `.run/info-e2e.mjs`（Playwright 驱动 Edge headless，独立端口 + 独立库，沿用仓库既有 `.run/*.mjs` 约定与 `.gitignore`）
 
 **Interfaces:**
+
 - Consumes: 前面全部任务
 - Produces: 一份可重跑的验证脚本与结论
 
@@ -597,11 +653,13 @@ git commit -m "feat(web): 引导页改为名字+初始主密码两步，主密�
 ### Task 10: 文档同步
 
 **Files:**
+
 - Modify: `docs/PRD.md`
 - Modify: `docs/TECH_DESIGN.md`
 - Modify: `AGENTS.md`
 
 **Interfaces:**
+
 - Consumes: 设计文档 §9 的同步清单
 - Produces: 文档与实现一致
 

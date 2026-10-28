@@ -15,7 +15,7 @@ import (
 const (
 	maxTitleRunes   = 200
 	maxContentRunes = 2000
-	minCipherBytes  = 29  // nonce(12) + 空明文 + tag(16)
+	minCipherBytes  = 29 // nonce(12) + 空明文 + tag(16)
 	maxCipherBytes  = 65536
 	summaryRunes    = 140
 	notesPerPage    = 20

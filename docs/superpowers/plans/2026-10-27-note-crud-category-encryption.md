@@ -36,10 +36,12 @@
 ### Task 1: 迁移 0004（categories / master_password / notes.category_id）
 
 **Files:**
+
 - Create: `sql/0004_note_app.sql`
 - Modify: `internal/store/store_test.go`（版本号断言 3 → 4）
 
 **Interfaces:**
+
 - Produces: 表 `categories(id INTEGER PK AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, created_at TEXT NOT NULL)`（含预置行 id=1「未分类」）、单行表 `master_password(id INTEGER PK CHECK(id=1), salt BLOB NOT NULL, question TEXT NOT NULL, created_at TEXT NOT NULL)`、列 `notes.category_id INTEGER`（NULL=未分类）。
 
 - [ ] **Step 1: 写失败测试** — `store_test.go` 两个 Open 测试的 `user_version` 期望改为 4；新增 `TestMigration0004Objects`：打开临时库后断言 `categories` 首行为 `(1,'未分类')`、`INSERT INTO categories(name,created_at) VALUES('未分类',…)` 因 UNIQUE 失败、`notes` 表存在 `category_id` 列（`PRAGMA table_info`）、`INSERT INTO master_password` 第二行因 `CHECK(id=1)` 失败。
@@ -51,12 +53,15 @@
 ### Task 2: store 分类层
 
 **Files:**
+
 - Create: `internal/store/category.go`
 - Test: `internal/store/category_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 1 的表。
 - Produces:
+
 ```go
 type Category struct { ID int64 `json:"id"`; Name string `json:"name"`; NoteCount int `json:"note_count"` }
 var ErrCategoryExists / ErrReservedCategory / ErrNotFound            // sentinel errors
@@ -76,11 +81,14 @@ func (s *Store) DeleteCategory(ctx, id int64) error                  // id==1→
 ### Task 3: store 主密码配置层
 
 **Files:**
+
 - Create: `internal/store/master.go`
 - Test: `internal/store/master_test.go`
 
 **Interfaces:**
+
 - Produces:
+
 ```go
 type MasterPassword struct { SaltB64 string `json:"salt_b64"`; Question string `json:"question"`; CreatedAt string `json:"created_at"` }
 var ErrMasterPasswordExists
@@ -97,12 +105,15 @@ func (s *Store) SetMasterPassword(ctx, salt []byte, question string) (MasterPass
 ### Task 4: store 笔记层（CRUD + 列表搜索分页）
 
 **Files:**
+
 - Create: `internal/store/note.go`
 - Test: `internal/store/note_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 1 列、Task 2 分类、`RecordSearch`（activity.go）。
 - Produces:
+
 ```go
 type Note struct { // json tag 蛇形：id,title,encrypted,category_id,kind,remark,rev,content,cipher_b64,kdf_params,created_at,updated_at
   ID string; Title string; Content *string; Encrypted bool; Cipher []byte; KDFParams *string
@@ -130,11 +141,13 @@ func (s *Store) ListNotes(ctx, q string, categoryID int64, page int) (NotePage, 
 ### Task 5: web 笔记 API
 
 **Files:**
+
 - Create: `internal/web/handlers_notes.go`
 - Modify: `internal/web/server.go`（注册路由，移除 `GET /api/notes` 旧行）、`internal/web/handlers_stats.go`（删除 handleSearchNotes，保留 handleStats）
 - Test: `internal/web/notes_api_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 4 store 方法、`decodeJSON`（errors.go）、现有错误码约定（`writeError(w, code, ...)`）。
 - Produces: 路由 `GET /api/notes?q=&page=&category=`、`POST /api/notes`、`GET/PUT/DELETE /api/notes/{id}`；请求体 `{title, content?, cipher_b64?, kdf_params?, category_id?}`；响应 Note JSON；错误码 `validation_failed`(400+fields)、`not_found`(404)、`body_invalid`(400)。
 
@@ -147,11 +160,13 @@ func (s *Store) ListNotes(ctx, q string, categoryID int64, page int) (NotePage, 
 ### Task 6: web 分类与主密码 API
 
 **Files:**
+
 - Create: `internal/web/handlers_categories.go`、`internal/web/handlers_master.go`
 - Modify: `internal/web/server.go`（注册路由）
 - Test: `internal/web/cats_master_api_test.go`
 
 **Interfaces:**
+
 - Produces: `GET /api/categories` → `{items:[Category]}`；`POST /api/categories {name}` → 201；`PUT /api/categories/{id} {name}` → 200；`DELETE /api/categories/{id}` → 204；`GET /api/master-password` → `{configured, salt_b64, question}`（未配置时后两字段空串）；`POST /api/master-password {salt_b64, question}` → 201。错误映射：`ErrCategoryExists`/`ErrMasterPasswordExists`→409 `already_exists`；`ErrReservedCategory`→409 `reserved_category`；`ErrCategoryNotEmpty`→409 `category_not_found_or_in_use` 改为 `category_in_use`（message 含笔记数）；`ErrNotFound`→404；名称 1–30 码点、question 1–100 码点、salt_b64 解码必须 16 字节 → 400。
 
 - [ ] **Step 1: 写失败测试** — 分类：初始 GET 只含未分类；POST "工作" 201；再 POST "工作" → 409；POST "WORK" 后 PUT 该 id 为 "work" → 409（NOCASE）；PUT/DELETE id=1 → 409 reserved；建笔记挂分类后 DELETE → 409 且 message 含 "1"；DELETE 空分类 → 204。主密码：GET configured=false；POST 合法 201；二次 POST → 409；POST 非法 salt（10 字节 b64）→ 400。
@@ -163,12 +178,15 @@ func (s *Store) ListNotes(ctx, q string, categoryID int64, page int) (NotePage, 
 ### Task 7: 前端 crypto.ts + session-key.ts
 
 **Files:**
+
 - Create: `web/src/lib/crypto.ts`、`web/src/lib/session-key.ts`
 - Test: `web/src/lib/crypto.test.ts`
 
 **Interfaces:**
+
 - Consumes: Node 24 内置 `globalThis.crypto.subtle`（vitest 直接可用）。
 - Produces:
+
 ```ts
 export interface KdfParams { algo:'pbkdf2'; prf:'HMAC-SHA256'; iter:number; keylen:number }
 export const KDF_PARAMS: KdfParams // {algo:'pbkdf2',prf:'HMAC-SHA256',iter:150000,keylen:32}
@@ -183,6 +201,7 @@ export async function decryptNoteContent(key:CryptoKey, noteId:string, cipherB64
 export const sessionKey: { current(): CryptoKey|null; set(k:CryptoKey|null):void } // 模块级内存变量，非 store
 export const hasKey: readable<boolean>   // 内部 writable 镜像，set() 时同步；供 Layout 锁定按钮显隐
 ```
+
 AAD 固定 `new TextEncoder().encode('note:v1:' + noteId)`。
 
 - [ ] **Step 1: 写失败测试** — 往返：deriveKey('密码pàss123…', salt) → encrypt → decrypt 等于原文（含 emoji/换行）；错误密码 decrypt → 抛 DecryptError 且 message 精确等于「密码错误或数据损坏」；把密文 b64 中间一个字符翻转 → 同错误；用另一 noteId 解密同密文（AAD 移植）→ 同错误；deriveKey iter=99999 → DecryptError；generateSaltB64 长度 16 字节且两次不同。
@@ -194,15 +213,19 @@ AAD 固定 `new TextEncoder().encode('note:v1:' + noteId)`。
 ### Task 8: Markdown 渲染管道
 
 **Files:**
+
 - Create: `web/src/lib/markdown.ts`、`web/src/components/Markdown.svelte`
 - Modify: `web/package.json`（`npm --prefix web i marked dompurify` 加 dependencies；`npm --prefix web i -D jsdom` 仅测试环境用）
 - Test: `web/src/lib/markdown.test.ts`（文件头 `// @vitest-environment jsdom`）
 
 **Interfaces:**
+
 - Produces:
+
 ```ts
-export function renderMarkdown(source: string): string // marked.parse(source,{async:false,gfm:true}) → DOMPurify.sanitize(html,{ADD_ATTR:['target']}) → 输出
+export function renderMarkdown(source: string): string; // marked.parse(source,{async:false,gfm:true}) → DOMPurify.sanitize(html,{ADD_ATTR:['target']}) → 输出
 ```
+
 `Markdown.svelte`：`let { source }: { source: string } = $props()`；`<div class="md">{@html renderMarkdown(source)}</div>`（全仓唯一 `{@html}`）。
 
 - [ ] **Step 1: 安装依赖** — `npm --prefix web i marked dompurify && npm --prefix web i -D jsdom`（锁文件随之更新，属功能依赖非 CSS/UI 库，符合 Global Constraints 例外）。
@@ -215,13 +238,16 @@ export function renderMarkdown(source: string): string // marked.parse(source,{a
 ### Task 9: 前端 API 客户端（api.ts 扩展 + notes.ts）
 
 **Files:**
+
 - Modify: `web/src/lib/api.ts`
 - Create: `web/src/lib/notes.ts`
 - Test: `web/src/lib/notes.test.ts`
 
 **Interfaces:**
+
 - Consumes: 后端 Task 5/6 的 JSON 形状。
 - Produces:
+
 ```ts
 // api.ts 新增（putJSON 重构为共用 sendJSON(method, path, payload?)，保留 403 刷新重试）：
 export async function postJSON<T>(path:string, payload:unknown): Promise<T>
@@ -244,11 +270,13 @@ getMasterPassword(): Promise<{configured:boolean; salt_b64:string; question:stri
 ### Task 10: 编辑器视图（Markdown 预览 + 分类 + 加密勾选）
 
 **Files:**
+
 - Rewrite: `web/src/views/NoteEditorView.svelte`（现为占位）
 - Modify: `web/src/app.css`（编辑器/预览/计数样式）、`web/src/App.svelte`（titles 增删）
 - Test: 手工（视图层不进 vitest，逻辑已在 lib 层测）
 
 **Interfaces:**
+
 - Consumes: Task 7/8/9 全部导出；`settings` store；路由 `edit`/`new` 已有。
 
 - [ ] **Step 1: 实现编辑器** — 字段：标题 input、分类 select（listCategories 填充，首项「未分类」=null）、textarea 正文 + 右侧/下方 `Markdown.svelte` 实时预览（`$derived` + 300ms 防抖）、码点计数 `Array.from(text).length`/2000 超限红字并禁用保存、加密勾选框。
@@ -260,6 +288,7 @@ getMasterPassword(): Promise<{configured:boolean; salt_b64:string; question:stri
 ### Task 11: 列表视图 + 首页搜索对接新 API
 
 **Files:**
+
 - Rewrite: `web/src/views/NoteListView.svelte`
 - Modify: `web/src/views/HomeView.svelte`（search 结果改用 listNotes 响应形状）、`web/src/components/Layout.svelte`（导航加「分类」）、`web/src/app.css`
 
@@ -271,6 +300,7 @@ getMasterPassword(): Promise<{configured:boolean; salt_b64:string; question:stri
 ### Task 12: 详情/解锁/忘记密码 + 主密码设置页 + 分类管理页 + 路由
 
 **Files:**
+
 - Rewrite: `web/src/views/NoteDetailView.svelte`、`web/src/views/EncryptView.svelte`→删除、`web/src/views/ForgotPasswordView.svelte`
 - Create: `web/src/views/MasterPasswordView.svelte`、`web/src/views/CategoryManagerView.svelte`
 - Modify: `web/src/router/router.ts`（RouteName 增 `'master'|'categories'`，patterns 增 `/master-password`、`/categories`；删 `encrypt` 路由）、`web/src/App.svelte`（路由渲染分支与 titles；`encrypt` 分支移除）、`web/src/components/Layout.svelte`（`sessionKey` 有值时显示「锁定」按钮）
@@ -285,6 +315,7 @@ getMasterPassword(): Promise<{configured:boolean; salt_b64:string; question:stri
 ### Task 13: 端到端验证 + 文档同步
 
 **Files:**
+
 - Modify: `docs/PRD.md`（v1.3：偏离表 6 项 + Markdown 移出非目标 + AC 增删）、`docs/TECH_DESIGN.md`（8.4/8.5 替换为 spec 第 2/5 节，1.2 不变量修订）、`AGENTS.md`（`{@html}` 例外表述）、`CHANGELOG.md`
 
 - [ ] **Step 1: Playwright 全链路** — Edge 无头脚本（沿用 `.run/verify.mjs` 模式）：设主密码 → 新建 Markdown 笔记勾选加密 → 数据库断言 content NULL/cipher 非空 → 刷新 → 错误密码统一提示 → 正确密码解锁 → 编辑保存 nonce 变化 → 锁定 → 分类增改删全周期（含 409 用例界面文案）→ 截图三主题下详情页。
