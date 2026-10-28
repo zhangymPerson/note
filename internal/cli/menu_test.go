@@ -39,12 +39,12 @@ func update(m menuModel, key string) menuModel {
 
 func TestMenuViewListsAllItems(t *testing.T) {
 	view := newMenuModel().View()
-	for _, label := range []string{"启动 Web 服务", "系统信息", "退出"} {
+	for _, label := range []string{"启动 Web 服务（后台）", "系统信息", "退出"} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("view 缺少菜单项 %q:\n%s", label, view)
 		}
 	}
-	if !strings.Contains(view, "> 启动 Web 服务") {
+	if !strings.Contains(view, "> 启动 Web 服务（后台）") {
 		t.Fatalf("view 未在第一项显示光标:\n%s", view)
 	}
 }

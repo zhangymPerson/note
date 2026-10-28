@@ -74,12 +74,12 @@
 
 `note web status` 先做 HTTP 探测（`GET /api/info`，不需要令牌），再与状态文件合并判定：
 
-| 探测 | 状态文件 | 结论 | 退出码 |
-| --- | --- | --- | --- |
-| 200 | pid 存活 | 运行中（后台） | 0 |
-| 200 | 无 / pid 已死 | 运行中（前台或状态文件缺失），顺手清理残留 | 0 |
-| 失败 | pid 存活 | 进程存在但不响应（附 pid 与日志路径） | 1 |
-| 失败 | 无 / pid 已死 | 未运行（顺手清理残留） | 3 |
+| 探测 | 状态文件      | 结论                                       | 退出码 |
+| ---- | ------------- | ------------------------------------------ | ------ |
+| 200  | pid 存活      | 运行中（后台）                             | 0      |
+| 200  | 无 / pid 已死 | 运行中（前台或状态文件缺失），顺手清理残留 | 0      |
+| 失败 | pid 存活      | 进程存在但不响应（附 pid 与日志路径）      | 1      |
+| 失败 | 无 / pid 已死 | 未运行（顺手清理残留）                     | 3      |
 
 进程存活判定按平台分文件：Unix `syscall.Kill(pid, 0)`（`EPERM` 也算活）；Windows `os.FindProcess(pid)` 出错即不存在（不引入 `golang.org/x/sys` 直接依赖）。
 
@@ -162,14 +162,14 @@ note web · 未运行
 
 ## 7. 测试计划（TDD：先 RED 后 GREEN）
 
-| 层 | 用例 |
-| --- | --- |
-| `internal/daemon/state_test.go` | Save/Load round-trip；`0600` 权限；临时文件 + rename 原子替换（旧文件被覆盖）；损坏 JSON 报错；`StatePath`/`LogPath` 推导 |
-| `internal/daemon/probe_test.go` | `httptest` 起假服务：`Probe` 解析 `addr`/`started_at`/`build_label`；非 200 返回错误；`RequestStop` 的路径、方法、`X-Shutdown-Token` 头与错误状态映射 |
-| `internal/daemon/pid_test.go` | 自身 pid 存活；不存在的 pid 判死 |
-| `internal/web/shutdown_api_test.go` | 正确令牌 → 202 且回调被调用一次；错误/缺失令牌 → 403；未启用 → 403 `shutdown_disabled`；GET → 405；不带 CSRF cookie 也能过；Host 非法仍被 `hostGuard` 拦下 |
-| `internal/cli/parse_test.go` | `web start|stop|status` 识别；动作后的 flag 透传；`web status -h` → help；未知动作报错；`web --addr` 不受影响 |
-| `internal/cli/status_test.go` | `FormatStatus` 三种形态的渲染、uptime 文案、大小文案、CJK 对齐 |
+| 层                                                 | 用例                                                                                                                                                                                                                                        |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal/daemon/state_test.go`                    | Save/Load round-trip；`0600` 权限；临时文件 + rename 原子替换（旧文件被覆盖）；损坏 JSON 报错；`StatePath`/`LogPath` 推导                                                                                                                   |
+| `internal/daemon/probe_test.go`                    | `httptest` 起假服务：`Probe` 解析 `addr`/`started_at`/`build_label`；非 200 返回错误；`RequestStop` 的路径、方法、`X-Shutdown-Token` 头与错误状态映射                                                                                       |
+| `internal/daemon/pid_test.go`                      | 自身 pid 存活；不存在的 pid 判死                                                                                                                                                                                                            |
+| `internal/web/shutdown_api_test.go`                | 正确令牌 → 202 且回调被调用一次；错误/缺失令牌 → 403；未启用 → 403 `shutdown_disabled`；GET → 405；不带 CSRF cookie 也能过；Host 非法仍被 `hostGuard` 拦下                                                                                  |
+| `internal/cli/parse_test.go`                       | `web start                                                                                                                                                                                                                                  | stop | status` 识别；动作后的 flag 透传；`web status -h` → help；未知动作报错；`web --addr` 不受影响 |
+| `internal/cli/status_test.go`                      | `FormatStatus` 三种形态的渲染、uptime 文案、大小文案、CJK 对齐                                                                                                                                                                              |
 | 真实二进制冒烟（记录进 CHANGELOG，不进 `go test`） | `just build` → `note web start --addr 127.0.0.1:8099`（确认返回、状态文件与日志生成）→ `status`（0）→ `info`（有日志行）→ `stop`（进程消失、状态文件删除、日志有 `shutting down`）→ `status`（3）→ 前台 `note web` 仍正常、关停端点返回 403 |
 
 改动合入前必须 `just test` 与 `just check` 全绿（仓库硬性约定）。

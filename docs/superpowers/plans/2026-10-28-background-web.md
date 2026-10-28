@@ -35,10 +35,12 @@
 ### Task 1: `internal/daemon` 状态文件与路径推导
 
 **Files:**
+
 - Create: `internal/daemon/state.go`
 - Test: `internal/daemon/state_test.go`
 
 **Interfaces:**
+
 - Produces:
   - `type State struct { Pid int; Addr string; URLs []string; StartedAt string; DB string; Log string; Token string; Version string }`（JSON 键依次为 `pid` / `addr` / `urls` / `started_at` / `db` / `log` / `token` / `version`）
   - `func StatePath(dbPath string) string`、`func LogPath(dbPath string) string`（均为 `filepath.Join(filepath.Dir(dbPath), "note.json" | "note.log")`）
@@ -217,10 +219,12 @@ git commit -m "feat(daemon): 状态文件与日志路径推导"
 ### Task 2: 控制地址推导 `ControlAddr`
 
 **Files:**
+
 - Create: `internal/daemon/control.go`
 - Test: `internal/daemon/control_test.go`
 
 **Interfaces:**
+
 - Produces: `func ControlAddr(addr string) string` —— `stop`/`status`/`Probe` 一律经它把监听地址转成可连接的请求地址。
 
 - [ ] **Step 1: Write the failing test**
@@ -275,10 +279,12 @@ git commit -m "feat(daemon): 控制地址推导，通配监听到回环"
 ### Task 3: 进程存活判定（平台分文件）
 
 **Files:**
+
 - Create: `internal/daemon/pid_unix.go`（`//go:build !windows`）、`internal/daemon/pid_windows.go`（`//go:build windows`）
 - Test: `internal/daemon/pid_test.go`
 
 **Interfaces:**
+
 - Produces: `func ProcessAlive(pid int) bool`（Unix `syscall.Kill(pid, 0)`，`EPERM` 视为存活；Windows `os.FindProcess` 出错即判死）。
 
 - [ ] **Step 1: Write the failing test**
@@ -336,10 +342,12 @@ git commit -m "feat(daemon): 平台相关的进程存活判定"
 ### Task 4: HTTP 探测与关停请求
 
 **Files:**
+
 - Create: `internal/daemon/probe.go`
 - Test: `internal/daemon/probe_test.go`
 
 **Interfaces:**
+
 - Produces:
   - `type ServerInfo struct { Addr string; StartedAt string; UptimeSeconds int64; Version string; DBPath string }`
   - `func Probe(addr string) (ServerInfo, error)` —— `GET http://<ControlAddr(addr)>/api/info`，客户端超时 2s，非 200 返回错误。
@@ -461,10 +469,12 @@ git commit -m "feat(daemon): 探测运行实例与请求关停"
 ### Task 5: 脱离终端的子进程启动 `RunDetached`
 
 **Files:**
+
 - Create: `internal/daemon/spawn_unix.go`、`internal/daemon/spawn_windows.go`
 - Test: `internal/daemon/spawn_test.go`
 
 **Interfaces:**
+
 - Produces:
   - `const EnvStatePath = "NOTE_DAEMON_STATE"`
   - `func RunDetached(exe string, args []string, logPath, statePath string) (*exec.Cmd, error)` —— 打开日志（`O_APPEND|O_CREATE|O_WRONLY`, `0o600`）作为子进程 stdout/stderr，`Env = append(os.Environ(), EnvStatePath+"="+statePath)`，平台 `SysProcAttr`，`cmd.Start()` 成功后关闭父进程侧的日志句柄并返回 `cmd`。
@@ -549,6 +559,7 @@ git commit -m "feat(daemon): 脱离终端的子进程启动"
 ### Task 6: `/api/shutdown` 与 `Control` 注入
 
 **Files:**
+
 - Create: `internal/web/control.go`
 - Modify: `internal/web/server.go`（`New` → 转发 `NewWithControl`；mux 注册 `POST /api/shutdown`）
 - Modify: `internal/web/middleware.go`（`csrfProtect` 放行 `shutdownPath`）
@@ -556,6 +567,7 @@ git commit -m "feat(daemon): 脱离终端的子进程启动"
 - Test: `internal/web/shutdown_api_test.go`
 
 **Interfaces:**
+
 - Produces:
   - `type Control struct { Token string; Shutdown func() }`、`func NewWithControl(cfg config.Config, st *store.Store, dist fs.FS, ctl Control) http.Handler`
   - `const shutdownPath = "/api/shutdown"`、`const shutdownTokenHeader = "X-Shutdown-Token"`
@@ -686,7 +698,6 @@ func TestShutdownRejectsNonPostAndForeignHost(t *testing.T) {
 }
 ```
 
-
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/web/ -run TestShutdown -v`
@@ -713,11 +724,13 @@ git commit -m "feat(web): 后台模式关停端点与 Control 注入"
 ### Task 7: CLI 解析 `web start|stop|status`
 
 **Files:**
+
 - Modify: `internal/cli/parse.go`（`WebAction`、`Options.WebAction`、`web` 分支）
 - Modify: `internal/cli/usage.go`（总帮助与 `webUsage`）
 - Test: `internal/cli/parse_test.go`、`internal/cli/usage_test.go`
 
 **Interfaces:**
+
 - Produces: `type WebAction int` + 常量 `WebForeground`（零值）/ `WebStart` / `WebStop` / `WebStatus`；`Options.WebAction WebAction`。
 - Consumes: 现有 `containsHelpFlag`。
 
@@ -793,11 +806,13 @@ git commit -m "feat(cli): note web start/stop/status 子动作"
 ### Task 8: `note info` 的日志行与 `status` 输出渲染
 
 **Files:**
+
 - Modify: `internal/cli/info.go`（`InfoData` 加 `LogPath` / `LogExists` / `LogSizeBytes`，数据段加「日志」）
 - Create: `internal/cli/status.go`、`internal/cli/status_test.go`
 - Modify: `internal/cli/info_test.go`（断言「日志」行）
 
 **Interfaces:**
+
 - Produces:
   - `type StatusData struct { Running bool; Unresponsive bool; Pid int; URLs []string; StartedAt string; UptimeSeconds int64; LogPath string; LogExists bool; LogSizeBytes int64; DBPath string; Version string; StatePath string; StateExists bool; StalePid int }`
   - `func FormatStatus(d StatusData) string`
@@ -896,9 +911,11 @@ git commit -m "feat(cli): note web status 渲染与 info 日志行"
 ### Task 9: 子进程侧——后台模式写状态文件并接关停
 
 **Files:**
+
 - Modify: `cmd/note/main.go`（`runWeb` → `serve`；后台模式分支；菜单项改后台启动）
 
 **Interfaces:**
+
 - Consumes: `daemon.EnvStatePath`、`daemon.NewToken`、`daemon.StatePath`、`daemon.LogPath`、`daemon.Save`、`daemon.RemoveIfPid`、`daemon.State`、`web.Control`、`web.NewWithControl`。
 - Produces: `func serve(cfg config.Config) error`（前台与后台共用的服务主体）。
 
@@ -951,11 +968,13 @@ git commit -m "feat(note): 后台子进程写状态文件并接受关停请求"
 ### Task 10: `note web start / stop / status` 与菜单
 
 **Files:**
+
 - Create: `cmd/note/web_service.go`（`runWebStart` / `runWebStop` / `runWebStatus` 与它们的纯逻辑辅助）
 - Modify: `cmd/note/main.go`（`run()` 的 `CommandWeb` 分派、菜单动作、`runInfo` 补日志字段）
 - Modify: `internal/cli/menu.go`（菜单项文案改「启动 Web 服务（后台）」）
 
 **Interfaces:**
+
 - Consumes: Task 1–9 的全部导出接口。
 - Produces: 三个 `func runWebXxx(globalConfigPath string, args []string) error`。
 
@@ -1054,6 +1073,7 @@ git commit -m "feat(note): note web start/stop/status 与后台菜单入口"
 ### Task 11: 文档同步与 CHANGELOG
 
 **Files:**
+
 - Modify: `docs/PRD.md`（§8.9 / §8.10 / §8.11、验收标准、修订说明与版本号）
 - Modify: `docs/TECH_DESIGN.md`（§4.1 / §4.2 / §4.3 / §4.4 附注 / §4.6 / §14.1、新增 ADR、里程碑）
 - Modify: `AGENTS.md`（部署形态 + 硬性约定）

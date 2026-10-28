@@ -23,7 +23,10 @@ type StatusData struct {
 	Version       string
 	StatePath     string
 	StateExists   bool
-	StalePid      int // 已清理的残留状态文件里的 pid；0 表示没有残留
+	// StateOtherDB 非空表示状态文件登记的是同一目录下的另一个数据库，
+	// 本次命令不认领它（既不当成「在运行」，也不覆盖）。
+	StateOtherDB string
+	StalePid     int // 已清理的残留状态文件里的 pid；0 表示没有残留
 }
 
 // FormatStatus 把运行情况渲染成与 note info 同风格的对齐键值文本。
@@ -37,7 +40,7 @@ func FormatStatus(d StatusData) string {
 	}
 
 	rows := [][2]string{}
-	if d.Running || d.Unresponsive {
+	if (d.Running || d.Unresponsive) && d.Pid > 0 {
 		rows = append(rows, [2]string{"pid", strconv.Itoa(d.Pid)})
 	}
 	if d.Running && len(d.URLs) > 0 {
@@ -97,6 +100,9 @@ func fileSummary(path string, exists bool, size int64) string {
 }
 
 func stateSummary(d StatusData) string {
+	if d.StateOtherDB != "" {
+		return d.StatePath + "（属于另一个数据库 " + d.StateOtherDB + "）"
+	}
 	if d.StalePid > 0 {
 		return d.StatePath + "（残留 pid " + strconv.Itoa(d.StalePid) + "，已清理）"
 	}

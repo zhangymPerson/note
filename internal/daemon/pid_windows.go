@@ -2,15 +2,34 @@
 
 package daemon
 
-import "os"
+import (
+	"errors"
+	"syscall"
+)
 
-// ProcessAlive 判断 pid 是否仍指向一个存在的进程。
-// Windows 上 os.FindProcess 会真正 OpenProcess，进程不存在时返回错误
-// （与 Unix 不同），因此不需要额外探测；权限不足同样返回错误。
+// ProcessAlive 判断 pid 是否仍指向一个**未退出**的进程。
+//
+// 这里不能用 os.FindProcess：Windows 上它只做 OpenProcess，对「已经退出、
+// 但进程对象还被某个句柄引用着」的 pid 依然成功，于是刚优雅退出的实例会
+// 被判成存活（stop 白等 10 秒后去强杀、start 以为端口还占着）。正确做法是
+// 拿一个可等待的句柄，用 WaitForSingleObject(0) 看它是否已 signaled。
 func ProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	_, err := os.FindProcess(pid)
-	return err == nil
+	handle, err := syscall.OpenProcess(syscall.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		if errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
+			// 拿不到句柄说明进程存在但不属于当前用户：算活着，别当成可清理的残留。
+			return true
+		}
+		return false
+	}
+	defer syscall.CloseHandle(handle)
+
+	event, err := syscall.WaitForSingleObject(handle, 0)
+	if err != nil {
+		return false
+	}
+	return event == syscall.WAIT_TIMEOUT
 }

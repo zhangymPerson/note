@@ -29,7 +29,7 @@ type menuItem struct {
 }
 
 var defaultMenuItems = []menuItem{
-	{label: "启动 Web 服务", action: MenuWeb},
+	{label: "启动 Web 服务（后台）", action: MenuWeb},
 	{label: "系统信息", action: MenuInfo},
 	{label: "退出", action: MenuQuit},
 }

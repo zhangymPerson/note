@@ -25,10 +25,21 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		// 子命令可以指定退出码（status 未运行、stop 拒绝前台实例等），
+		// 这些不是故障，不该再打一行 "startup failed"。
+		var code exitError
+		if errors.As(err, &code) {
+			os.Exit(int(code))
+		}
 		slog.Error("startup failed", "error", err)
 		os.Exit(1)
 	}
 }
+
+// exitError 让子命令指定退出码而不打印错误日志。
+type exitError int
+
+func (e exitError) Error() string { return fmt.Sprintf("exit %d", int(e)) }
 
 // run 是全部命令的分发入口。
 //
@@ -60,7 +71,8 @@ func run(args []string) error {
 		}
 		switch action {
 		case cli.MenuWeb:
-			return runWeb(opts.ConfigPath, nil)
+			// 菜单退出后进程就结束了，前台服务会跟着没，所以走后台。
+			return runWebStart(opts.ConfigPath, nil)
 		case cli.MenuInfo:
 			return runInfo(opts.ConfigPath, nil)
 		case cli.MenuFallback:
@@ -71,6 +83,14 @@ func run(args []string) error {
 		return nil
 
 	case cli.CommandWeb:
+		switch opts.WebAction {
+		case cli.WebStart:
+			return runWebStart(opts.ConfigPath, opts.Args)
+		case cli.WebStop:
+			return runWebStop(opts.ConfigPath, opts.Args)
+		case cli.WebStatus:
+			return runWebStatus(opts.ConfigPath, opts.Args)
+		}
 		return runWeb(opts.ConfigPath, opts.Args)
 
 	case cli.CommandInfo:
@@ -262,6 +282,11 @@ func buildInfoData(cfg config.Config) cli.InfoData {
 		Addr:        cfg.Addr,
 		AllowRemote: cfg.AllowRemote,
 		DBPath:      cfg.DBPath,
+		LogPath:     daemon.LogPath(cfg.DBPath),
+	}
+	if stat, err := os.Stat(data.LogPath); err == nil {
+		data.LogExists = true
+		data.LogSizeBytes = stat.Size()
 	}
 
 	if stat, err := os.Stat(cfg.DBPath); err == nil {
