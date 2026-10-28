@@ -6,7 +6,6 @@
   import NoteDetailView from './views/NoteDetailView.svelte'
   import NoteEditorView from './views/NoteEditorView.svelte'
   import MasterPasswordView from './views/MasterPasswordView.svelte'
-  import CategoryManagerView from './views/CategoryManagerView.svelte'
   import InfoView from './views/InfoView.svelte'
   import ForgotPasswordView from './views/ForgotPasswordView.svelte'
   import NotFoundView from './views/NotFoundView.svelte'
@@ -22,7 +21,6 @@
     edit: '编辑笔记',
     forgot: '忘记密码',
     master: '主密码',
-    categories: '分类管理',
     info: '用户与信息',
     notFound: '页面不存在',
   }
@@ -64,8 +62,6 @@
       <ForgotPasswordView id={$route.params.id ?? ''} />
     {:else if $route.name === 'master'}
       <MasterPasswordView />
-    {:else if $route.name === 'categories'}
-      <CategoryManagerView />
     {:else if $route.name === 'info'}
       <InfoView />
     {:else}

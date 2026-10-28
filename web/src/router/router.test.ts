@@ -36,13 +36,19 @@ describe("matchRoute", () => {
     });
   });
 
-  it("matches the master password and category manager routes", () => {
+  it("matches the master password route", () => {
     expect(matchRoute("/master-password")).toEqual({
       name: "master",
       params: {},
     });
-    expect(matchRoute("/categories")).toEqual({
-      name: "categories",
+  });
+
+  // 分类管理页并入列表页后，旧地址（含旧书签里的查询串）仍落到列表页，
+  // NoteListView 挂载时的 syncUrl() 会把地址纠正成 /notes。
+  it("分类页已并入列表页，旧地址落到列表", () => {
+    expect(matchRoute("/categories")).toEqual({ name: "list", params: {} });
+    expect(matchRoute("/categories?category=3")).toEqual({
+      name: "list",
       params: {},
     });
   });

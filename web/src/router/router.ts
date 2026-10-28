@@ -8,7 +8,6 @@ export type RouteName =
   | "edit"
   | "forgot"
   | "master"
-  | "categories"
   | "info"
   | "notFound";
 
@@ -31,7 +30,8 @@ const patterns: RoutePattern[] = [
   { name: "forgot", pattern: /^\/notes\/([^/]+)\/forgot$/, keys: ["id"] },
   { name: "detail", pattern: /^\/notes\/([^/]+)$/, keys: ["id"] },
   { name: "master", pattern: /^\/master-password$/, keys: [] },
-  { name: "categories", pattern: /^\/categories$/, keys: [] },
+  // 分类管理页已并入列表页；旧地址与旧书签仍落到列表，地址由页面自行纠正
+  { name: "list", pattern: /^\/categories$/, keys: [] },
   { name: "info", pattern: /^\/info$/, keys: [] },
 ];
 

@@ -983,65 +983,6 @@ input {
   margin-top: 3px;
 }
 
-/* 分类管理 */
-.inline-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.inline-form input {
-  flex: 1 1 200px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-}
-
-.inline-form input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.manager {
-  gap: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
-.manager li {
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
-}
-
-.manager li:last-child {
-  border-bottom: 0;
-}
-
-.manager .row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-
-.manager .row-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-}
-
-.manager .row-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
 /* 分类树：列表页右侧，根节点 + 平铺分类，行内完成筛选与增删改 */
 .cat-tree {
   display: flex;
