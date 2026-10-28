@@ -22,6 +22,13 @@ func csrfProtect(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// 后台模式的关停端点凭 32 字节令牌鉴权（见 control.go），
+		// 确实拿着状态文件的调用方没有也不该有 CSRF cookie。
+		// 只放行这一条路径：此豁免不得扩大到其它写接口。
+		if r.URL.Path == shutdownPath {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		cookie, err := r.Cookie(csrfCookieName)
 		token := r.Header.Get("X-CSRF-Token")

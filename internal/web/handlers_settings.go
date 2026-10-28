@@ -73,14 +73,16 @@ func nameError(name string) string {
 type application struct {
 	cfg       config.Config
 	store     *store.Store
+	control   Control
 	settings  settingsState
 	startedAt time.Time
 }
 
-func newApplication(cfg config.Config, st *store.Store) *application {
+func newApplication(cfg config.Config, st *store.Store, ctl Control) *application {
 	return &application{
 		cfg:       cfg,
 		store:     st,
+		control:   ctl,
 		startedAt: time.Now().UTC(),
 		settings: settingsState{
 			name:    cfg.UserName,

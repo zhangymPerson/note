@@ -11,11 +11,22 @@ import (
 	"note/internal/store"
 )
 
+// New 装配前台模式的路由（无关停端点，行为与引入后台模式前完全一致）。
 func New(cfg config.Config, st *store.Store, dist fs.FS) http.Handler {
-	app := newApplication(cfg, st)
+	return NewWithControl(cfg, st, dist, Control{})
+}
+
+// NewWithControl 装配路由；ctl.Token 非空时启用 POST /api/shutdown，
+// 供 note web stop 优雅停止后台实例。
+func NewWithControl(cfg config.Config, st *store.Store, dist fs.FS, ctl Control) http.Handler {
+	app := newApplication(cfg, st, ctl)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/csrf", handleCSRF)
+	// 关停端点显式登记两种方法：只登记 POST 的话，GET 会被 `GET /` 的 SPA
+	// 回退吞成 404；显式登记后错误方法统一得到 405 + Allow: POST。
+	mux.HandleFunc("POST "+shutdownPath, app.handleShutdown)
+	mux.HandleFunc("GET "+shutdownPath, app.handleShutdown)
 	mux.HandleFunc("GET /api/info", app.handleGetInfo)
 	mux.HandleFunc("GET /api/settings", app.handleGetSettings)
 	mux.HandleFunc("PUT /api/settings/name", app.handleSetName)

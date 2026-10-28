@@ -17,6 +17,13 @@ import (
 
 func newTestHandler(t *testing.T) (http.Handler, config.Config) {
 	t.Helper()
+	return newTestHandlerWithControl(t, Control{})
+}
+
+// newTestHandlerWithControl 是 newTestHandler 的可注入版本：后台模式用非空
+// Control 启用关停端点，其余用例传空值即等价于前台模式。
+func newTestHandlerWithControl(t *testing.T, ctl Control) (http.Handler, config.Config) {
+	t.Helper()
 	dist := fstest.MapFS{
 		"index.html":    {Data: []byte("<!doctype html><title>note</title>")},
 		"assets/app.js": {Data: []byte("console.log('ok')")},
@@ -36,7 +43,7 @@ func newTestHandler(t *testing.T) (http.Handler, config.Config) {
 			t.Errorf("close store: %v", err)
 		}
 	})
-	return New(cfg, st, dist), cfg
+	return NewWithControl(cfg, st, dist, ctl), cfg
 }
 
 func doRequest(handler http.Handler, method, target, host, accept string) *httptest.ResponseRecorder {
