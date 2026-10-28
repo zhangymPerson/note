@@ -3,10 +3,16 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 )
+
+// ErrStopDenied 表示关停请求被拒（令牌不对）。
+// 它与「连不上」必须分开：令牌无效说明状态文件已过期、端口上跑的未必是我们的实例，
+// 调用方此时绝不能据此强杀这个 pid。
+var ErrStopDenied = errors.New("关停令牌无效")
 
 // ShutdownTokenHeader 是关停请求携带令牌的请求头，与 internal/web 侧同名常量保持一致。
 const ShutdownTokenHeader = "X-Shutdown-Token"
@@ -75,7 +81,7 @@ func RequestStop(st State) error {
 	case http.StatusAccepted:
 		return nil
 	case http.StatusForbidden:
-		return fmt.Errorf("request stop %s: 关停令牌无效（状态文件可能已过期）", st.Addr)
+		return fmt.Errorf("request stop %s: %w（状态文件可能已过期）", st.Addr, ErrStopDenied)
 	default:
 		return fmt.Errorf("request stop %s: HTTP %d", st.Addr, resp.StatusCode)
 	}

@@ -154,6 +154,12 @@ func runWebStop(globalConfigPath string, args []string) error {
 
 	if err := daemon.RequestStop(st); err != nil {
 		fmt.Printf("优雅关停请求失败：%v\n", err)
+		if errors.Is(err, daemon.ErrStopDenied) {
+			// 令牌不对：端口上跑的多半不是这个状态文件描述的实例，
+			// 这时按 pid 强杀可能杀掉无辜进程，宁可留给用户自己看一眼。
+			fmt.Printf("状态文件里的 pid %d 未被结束，确认后可手动处理该进程。\n", st.Pid)
+			return exitError(1)
+		}
 	}
 
 	if waitExit(st.Pid, stopTimeout) {

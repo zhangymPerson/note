@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,5 +80,9 @@ func TestRequestStopRejectsWrongToken(t *testing.T) {
 	err := RequestStop(State{Addr: addr, Token: "wrong"})
 	if err == nil || !strings.Contains(err.Error(), "关停令牌无效") {
 		t.Fatalf("err = %v, want 关停令牌无效", err)
+	}
+	// 令牌无效必须是可识别的错误：stop 靠它决定「不许按 pid 强杀」。
+	if !errors.Is(err, ErrStopDenied) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrStopDenied)", err)
 	}
 }
