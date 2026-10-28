@@ -8,6 +8,15 @@
 
 ### Added
 
+- 分类树并入「全部笔记」页右侧，删掉独立的分类管理与「分类」tab（前端实现过程与关键逻辑）：
+  - 新增 `web/src/components/CategoryTree.svelte`：只为展示与交互，分类数据与全部 API 调用仍留在 `views/NoteListView.svelte`。组件的三个写操作回调签名统一为 `(…) => Promise<string>`（空串=成功、非空=错误文案），于是 `category_exists` / `category_not_empty` 的 409 文案能就地摆到对应行下面，而组件不碰网络。组件内部状态只有展开、正在改名的 id 与输入值、各节点错误文案。
+  - 树结构：根节点「全部笔记」（`$derived` 求和的总数、可展开收起）+「未分类」+ 各分类，子项显示名称与笔记数；默认分类 `id=1` 不渲染改名/删除按钮。行尾操作按钮常驻 DOM（`opacity: 0` + `:hover`/`:focus-within` 显示），因此键盘可达。改名走行内输入框（Enter 保存、Esc 取消、**失焦不保存**以避免误提交），新增走树底部常驻输入框。
+  - `NoteListView.svelte` 改为 `.list-layout` 两栏（`minmax(0,1fr) 240px`，≤720px 单列并用 `order: -1` 让树排在列表上方）；新增 `createNamed` / `renameTo` / `removeCategory` 三个包装函数，失败时优先取 `ApiRequestError.fields.name`；删除的正是当前筛选分类时把筛选回落到「全部」并回第 1 页，否则列表会停在空结果。`q`/`category`/`page` 的 URL 约定与 `syncUrl()` 不变。
+  - 删除 `views/CategoryManagerView.svelte`、`RouteName` 里的 `categories` 与导航项；`/categories` 在 `router.ts` 里改为映射到 `list`（不是 404）：旧书签仍能打开，`NoteListView` 挂载时 `syncUrl()` 会 `replaceState` 把地址纠正成 `/notes`。同时清掉 `app.css` 里只被 chips 与旧分类页使用的 `.chips`/`.chip*`/`.inline-form*`/`.manager*`。
+  - 测试基建：`web/vitest.config.ts` 原本没有 Svelte 插件、解析条件指向 node，`.svelte` 文件在 Vitest 里根本导入不了。补 `plugins: [svelte()]` + `resolve.conditions: ["browser"]`（Svelte 官方 vitest 配法），不新增依赖，用 Svelte 自带的 `mount`/`flushSync` 写组件测试。
+  - TDD：`CategoryTree.test.ts` 12 例（根节点计数与收起、行点击回传 id 与 `data-active`、未分类无按钮、新建 trim/空白不提交/错误文案落到输入框下、改名 Enter 与 Esc、删除确认与 409 文案、`busy` 禁用）与 `NoteListView.test.ts` 5 例（mock 整个 `lib/notes`：树与列表同渲染且无 chips、点分类以 `{q:"",category:2,page:1}` 重拉、删掉当前筛选分类后以 `category:0` 重拉、分类接口失败时列表仍可读、`?category=99` 无高亮且不崩）。先跑出 12/12 与 4/5 的真实 RED，再实现到全绿。
+  - 验证：`just test`（Go 8 包 + 前端 14 文件 118 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；`.run/cat-verify.mjs` 用 Playwright-core + Edge headless 打真实二进制（独立库与端口）跑 21 项验收全 PASS：导航无「分类」、根节点计数、未分类无按钮、收起展开、筛选写入 `category` 且列表只剩该分类、新建与清空输入、重名文案就地显示、改名 Enter 生效、Esc 取消、非空分类删除 409 文案就地显示、空分类删除后消失、删掉当前筛选分类回到「全部」且 URL 归位、`/categories` 纠正为 `/notes`、≤720px 单列且树在列表上方。
+
 - `note web` 支持后台运行：`note web start` / `note web stop` / `note web status`（v1.6，实现过程与关键逻辑）：
   - 新包 `internal/daemon`（纯库，无业务逻辑）：`state.go` 定义 `State`（pid/addr/urls/started_at/db/log/token/version）与路径纯函数 `StatePath(dbPath)=dir(DBPath)/note.json`、`LogPath(dbPath)=dir(DBPath)/note.log`，`Save` 走临时文件 + `rename` 原子写、权限 `0600`（Windows 权限语义不适用，断言按平台跳过），`Load` 区分「文件不存在」与「JSON 损坏」，`RemoveIfPid` 只在文件里的 pid 仍等于自己时删除（避免删掉新实例的状态文件），`NewToken` 用 `crypto/rand` 生成 32 字节 base64url 令牌。
   - 后台化只能自我 re-exec（Go 无 fork）：`RunDetached` 重新执行自身并立即返回，Unix 用 `SysProcAttr{Setsid: true}` 脱离会话，Windows 用 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`（`0x8|0x200`）+ `HideWindow`；子进程靠环境变量 `NOTE_DAEMON_STATE` 认领后台身份。日志必须在**文件描述符层**接管（`cmd.Stdout`/`cmd.Stderr` 指向 `note.log`）——slog 默认 handler 在启动时就把 `os.Stderr` 绑定死了，运行期换写不出文件。
@@ -41,6 +50,7 @@
 
 ### Changed
 
+- 前端页面数量回到 9 个主视图：「分类管理」页并入「全部笔记」页右侧的分类树，分类的新增、改名、删除与筛选都在树内完成；`/categories` 退化为指向列表页的旧地址兼容。
 - `note web`（不带子命令）语义不变：仍在前台运行、日志进终端、不创建日志文件；后台形态是新增的 `note web start`。交互菜单的「启动 Web 服务」改为后台启动，日志写入数据库同目录的 `note.log`。`note info` 增加「日志」一行。
 - 破坏性：裸 `note` 不再直接启动 Web 服务（改为交互菜单，`note web` 才启动）；默认配置文件从 `./config/note.yaml` 迁到用户配置目录、默认数据库从 `./data/notes.db` 迁到用户数据目录。旧数据继续使用：`note web -c ./config/note.yaml --db ./data/notes.db`，或把文件拷到新默认位置；不做隐式回退，避免双源配置难以排查。
 
