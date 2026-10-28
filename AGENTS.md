@@ -8,7 +8,7 @@
 
 - **后端**：Go 单二进制（`net/http` + `ServeMux`，无框架），SQLite 持久化（纯 Go 驱动 `modernc.org/sqlite`，全程 CGO 关闭）。
 - **前端**：Vite + Svelte 5 + TypeScript 的 History 路由 SPA，构建产物输出到 `internal/web/dist`，由 `go:embed` 内嵌；不使用 SvelteKit、UI 组件库、CSS 框架或状态管理库。
-- **部署形态**：运行时只有一个可执行文件 + 一个 SQLite 数据文件 + 一个 YAML 配置（默认在用户配置/数据目录，`note -c` 可指定）；入口是 CLI 子命令——裸 `note` 进交互菜单（bubbletea），`note web` 才启动服务（默认只监听 `127.0.0.1:8080`），`note info` 输出运行信息。
+- **部署形态**：运行时只有一个可执行文件 + 一个 SQLite 数据文件 + 一个 YAML 配置（默认在用户配置/数据目录，`note -c` 可指定）；入口是 CLI 子命令——裸 `note` 进交互菜单（bubbletea），`note web` 才启动服务（默认只监听 `127.0.0.1:8080`），`note info` 输出运行信息。v1.6 起 `note web` 还有 `start`/`stop`/`status` 三个子命令做后台运行；后台实例的日志 `note.log` 与状态文件 `note.json` 与数据库同目录，不带子命令的 `note web` 仍是前台（日志进终端，不建日志文件）。
 
 需求与架构细节以 `docs/PRD.md` 与 `docs/TECH_DESIGN.md` 为准，改动行为前先读这两份文档。
 
@@ -19,7 +19,8 @@ cmd/note/          入口与优雅退出
 internal/build/    版本与构建信息（ldflags 注入，未注入时回落 debug.ReadBuildInfo）
 internal/config/   三级配置加载（内置默认值 → YAML → 命令行），严格解析
 internal/store/    SQLite 打开、迁移与应用数据访问
-internal/web/      HTTP 处理器、中间件、内嵌前端
+internal/daemon/   后台运行支持（状态文件、探测/关停请求、分离进程启动、pid 存活判定）
+internal/web/      HTTP 处理器（含后台模式的 /api/shutdown）、中间件、内嵌前端
 sql/               编号迁移脚本（NNNN_name.sql，按 user_version 增量执行）
 web/src/           Svelte 5 SPA（router、views、components、lib）
 docs/              PRD、技术方案、构建指南
@@ -36,7 +37,10 @@ docs/              PRD、技术方案、构建指南
 
 - 时间戳统一为 UTC 秒级文本 `2006-01-02T15:04:05Z`，可直接按字符串排序。
 - 数据库结构变更只能新增 `sql/NNNN_*.sql` 迁移，禁止手改既有迁移。
-- 状态变更类 API（PUT/POST/DELETE）必须通过 CSRF 双提交校验；前端经 `web/src/lib/api.ts` 统一携带 `X-CSRF-Token`。
+- 状态变更类 API（PUT/POST/DELETE）必须通过 CSRF 双提交校验；前端经 `web/src/lib/api.ts` 统一携带 `X-CSRF-Token`。唯一例外是 `/api/shutdown`（凭证即关停令牌），该豁免不得扩大。
+- `/api/shutdown` 只在后台模式存在（`web.Control.Token` 为空时注册的 handler 一律 403 `shutdown_disabled`），凭状态文件里的 32 字节令牌；令牌不得进日志、响应、命令行或环境变量，仍受 `hostGuard` 约束。
+- 后台实例的日志与状态文件固定在 `filepath.Dir(DBPath)`（`note.log` / `note.json`），路径只能由 `internal/daemon` 的纯函数推导；`note info` 必须输出日志路径。状态文件 `0600` 且原子写（临时文件 + rename），日志追加写不轮转。
+- 存活判定不得用 `os.FindProcess` 判 Windows（对已退出进程仍返回成功），必须用 `internal/daemon` 的等待句柄实现。
 - 安全不变量（见 TECH_DESIGN 1.2）：密码与派生密钥不落盘、不进任何浏览器存储；日志不含正文/密码/Cipher；`{@html}` 只允许出现在 `web/src/components/Markdown.svelte`，且输入必须先过 `DOMPurify.sanitize`；解密与含正文响应 `Cache-Control: no-store`。
 - 加解密全在浏览器端 WebCrypto（PBKDF2 + AES-256-GCM），服务端零密码学代码；数据库只存密文 BLOB 与公盐，因此 CLI 直读库解密是允许的扩展路径。
 - 主密码**可修改但不可找回**：改密时旧口令是否正确只由浏览器试解已有密文的 GCM 认证标签判定，服务端不得新增任何口令校验/解密端点。迁移只走 `PUT /api/notes/{id}/cipher`，它有意不动 `title/content/category_id/rev/updated_at`（改一次口令不该让全部笔记在按更新时间倒序的列表里排到最前），也不换全局盐——不要「顺手」把它对齐成 `PUT /api/notes/{id}`。

@@ -8,6 +8,17 @@
 
 ### Added
 
+- `note web` 支持后台运行：`note web start` / `note web stop` / `note web status`（v1.6，实现过程与关键逻辑）：
+  - 新包 `internal/daemon`（纯库，无业务逻辑）：`state.go` 定义 `State`（pid/addr/urls/started_at/db/log/token/version）与路径纯函数 `StatePath(dbPath)=dir(DBPath)/note.json`、`LogPath(dbPath)=dir(DBPath)/note.log`，`Save` 走临时文件 + `rename` 原子写、权限 `0600`（Windows 权限语义不适用，断言按平台跳过），`Load` 区分「文件不存在」与「JSON 损坏」，`RemoveIfPid` 只在文件里的 pid 仍等于自己时删除（避免删掉新实例的状态文件），`NewToken` 用 `crypto/rand` 生成 32 字节 base64url 令牌。
+  - 后台化只能自我 re-exec（Go 无 fork）：`RunDetached` 重新执行自身并立即返回，Unix 用 `SysProcAttr{Setsid: true}` 脱离会话，Windows 用 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`（`0x8|0x200`）+ `HideWindow`；子进程靠环境变量 `NOTE_DAEMON_STATE` 认领后台身份。日志必须在**文件描述符层**接管（`cmd.Stdout`/`cmd.Stderr` 指向 `note.log`）——slog 默认 handler 在启动时就把 `os.Stderr` 绑定死了，运行期换写不出文件。
+  - 关停通道 A1：`internal/web` 新增 `Control{Token, Shutdown}` 与 `NewWithControl`，`POST /api/shutdown` 仅在 Token 非空时注册（空 → 403 `shutdown_disabled`，令牌不符 → 403 `shutdown_denied`，常量时间比较，成功 202 后异步调用 `Shutdown`）。令牌由**子进程**生成并写入状态文件，父进程不经手，因此不进命令行与环境变量。middleware 的 CSRF 豁免只针对这一条路径（凭证即令牌），不得扩大。
+  - `internal/cli`：`WebAction`（`WebForeground` 零值 / `WebStart` / `WebStop` / `WebStatus`）+ 未知子命令报错；`status.go` 的 `StatusData`/`FormatStatus` 三态渲染（运行中 / 未运行 / 进程存在但不响应），pid 行仅在有 pid 时出现，`formatUptime` 与 `fileSummary` 复用 `info.go` 的 CJK 对齐；`info.go` 数据段新增「日志」行（存在显示大小，不存在显示「未创建」）。
+  - `cmd/note/web_service.go`：`runWebStart` 幂等（已在运行且探测通过 → 打印地址退出 0）、就绪轮询 100 ms / 总超时 10 s、失败时回显 `note.log` 最后 20 行；`runWebStop` 仅在「状态文件里有 pid 且该 pid 活着」时才发关停请求，10 s 未退出则 SIGKILL / `TerminateProcess` 并说明「WAL 未完成 checkpoint，数据安全但下次启动会重放日志」，只有探测到响应而无状态文件时判为前台实例、提示回终端 Ctrl+C 并退出 1（不按 pid 猜着杀进程）；`runWebStatus` 把状态文件与 `GET /api/info` 探测合并判定，退出码 0 / 1 / 3，残留状态文件就地清理并标注。`main.go` 新增 `exitError`（错误已打印时不再补一条 `startup failed`）与 `opts.WebAction` 分派；菜单项改为后台启动（前台启动会被菜单退出连带杀掉）。
+  - 状态文件按目录唯一，因此同一目录换一个 `--db` 会共用它：新增 `sameDB` 归属校验，`start` 拒绝启动、`stop` 拒绝关停、`status` 只做「属于另一个数据库」提示而不冒领别人的 pid。
+  - TDD：`state_test` / `control_test` / `pid_test` / `probe_test` / `spawn_test` / `shutdown_api_test` / `parse_test`（web 动作）/ `status_test` 全部先 RED（undefined 或断言失败）后 GREEN。
+  - 验证：`just test`（Go 8 包 139 项 + 前端 12 文件 100 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；真实二进制冒烟 12 项：`start` 生成状态文件与日志、重复 `start` 幂等、`status` 三态与退出码 0/1/3、`info` 有日志行、`stop` 在 0.26 s 内优雅退出且日志出现 `shutting down reason="control endpoint"`（证明不是强杀）、`status` 随后退出 3、端口占用时回显日志尾部、前台实例拒绝 `stop`（仍在响应）、残留状态文件被清理、损坏状态文件报 parse 错误退出 1、同目录另一个库被拒绝。
+  - 实现中发现并修复的真实缺陷：Windows 上 `os.FindProcess` 对**已退出但进程对象尚未回收**的 pid 仍返回成功，导致 `stop` 白等 10 s 后误报「已强制结束」、`start` 误判「进程在但不响应」；`pid_windows.go` 改为 `OpenProcess(SYNCHRONIZE)` + `WaitForSingleObject(0)`（`ERROR_ACCESS_DENIED` 视为活着），并补 windows-only 回归用例。
+
 - 后端改为 CLI 子命令启动，引入 bubbletea 交互菜单，默认配置/数据位置迁移到用户目录（v1.5，实现过程与关键逻辑）：
   - 新包 `internal/cli`：`Parse` 手写全局层（裸 `note` → 菜单、`web` / `info` 子命令、全局 `-c`、`help` / `-h` 变体），子命令与参数本身交给标准库 flag；预扫描 `-h` 时跳过带值参数的值（`note web --config -h` 不是帮助请求而是非法配置路径）；参数错误打印错误加帮助并退出码 2。`menu.go` 用 bubbletea 实现菜单（↑↓/j/k 移动、Enter 选择、q/Esc 退出），模型不持有任何服务资源，退出后由 `cmd/note` 接手启动；`isatty` 检测 stdin 非终端（脚本/管道）时直接返回回退动作，主进程打印帮助退出而不挂起——真实控制台拉起菜单存活 3 秒验证 TUI 初始化不崩溃。`info.go` 的 `FormatInfo` 用 uniseg 计算 CJK 显示宽度对齐键值列，数据库不存在时开占位符不建文件。`usage.go` 动态带出本机默认配置/数据库路径。
   - `internal/config/paths.go` 新增 `DefaultConfigFile` / `DefaultDataDir` / `DefaultDBFile`：Windows `%AppData%\note\`、macOS `~/Library/Application Support/note/`、Linux 按 XDG 拆分（配置 `~/.config/note/note.yaml`、数据 `~/.local/share/note/notes.db`，`XDG_DATA_HOME` 缺省回退 home），与其他常见开源项目一致；仓库内 `config/note.yaml` 重置为原始默认值作示例，不再被自动加载。
@@ -19,8 +30,13 @@
   - 验证：`just test`（Go 7 包 108 项 + 前端 12 文件 100 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；真实二进制冒烟：`-h`/`help web` 帮助正常，`note foo` 退出码 2，`info -c` 输出对齐且库未建时零副作用，`web -c <临时配置> --port 8123` 覆盖配置里的 9090 端口、`/` 200、`/api/csrf` 200、`/api/info` 反映最终地址，管道环境裸 `note` 退化为帮助，真控制台菜单正常运行。
   - 文档同步：PRD v1.5（修订说明、8.9 配置与运行重写、NFR-S5/8.8 Host 校验/R8 措辞、AC-45 ~ AC-47、M6 里程碑、8.2 目录、11.1/11.2）；TECH_DESIGN v1.5（架构图、2.3 目录、3 技术选型加 bubbletea、4.1 命令表、4.2 配置重写、8.6 note info 同源说明、12.1 测试表、14.1 运行与迁移指南、15.6 M6、ADR-20）；AGENTS.md 部署形态。
 
+### Security
+
+- 新增只对本地可见的关停凭证：`/api/shutdown` 需要 32 字节随机令牌（`X-Shutdown-Token`，常量时间比较），令牌只存在于 `0600` 的 `note.json`，不进日志、响应、命令行或环境变量；该端点只在后台模式注册，仍受 `hostGuard` 约束，CSRF 豁免只覆盖这一条路径。`note web status` 的探测只读 `GET /api/info`（本就 `no-store` 且不含正文/密文/盐/令牌）。
+
 ### Changed
 
+- `note web`（不带子命令）语义不变：仍在前台运行、日志进终端、不创建日志文件；后台形态是新增的 `note web start`。交互菜单的「启动 Web 服务」改为后台启动，日志写入数据库同目录的 `note.log`。`note info` 增加「日志」一行。
 - 破坏性：裸 `note` 不再直接启动 Web 服务（改为交互菜单，`note web` 才启动）；默认配置文件从 `./config/note.yaml` 迁到用户配置目录、默认数据库从 `./data/notes.db` 迁到用户数据目录。旧数据继续使用：`note web -c ./config/note.yaml --db ./data/notes.db`，或把文件拷到新默认位置；不做隐式回退，避免双源配置难以排查。
 
 ### Added

@@ -1,12 +1,12 @@
 # 个人笔记应用 技术方案
 
-| 项目     | 内容                                                                                                                                                                                                 |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 文档版本 | v1.5                                                                                                                                                                                                 |
-| 日期     | 2026-10-28                                                                                                                                                                                           |
-| 状态     | 已实现（与本文件第 6、7.1、9 节一致；偏离来源见 PRD 2.4 与 2.5）                                                                                                                                     |
-| 关联文档 | [产品需求文档 v1.5](./PRD.md)、[信息页与改密设计](./superpowers/specs/2026-10-27-user-info-page-design.md)、[已实现设计说明](./superpowers/specs/2026-10-27-note-crud-category-encryption-design.md) |
-| 目标     | 将 PRD 落地为可实现的 Go + SQLite + Svelte 5 技术方案                                                                                                                                                |
+| 项目     | 内容                                                                                                                                                                                                                                                                          |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 文档版本 | v1.6                                                                                                                                                                                                                                                                          |
+| 日期     | 2026-10-28                                                                                                                                                                                                                                                                    |
+| 状态     | 已实现（与本文件第 6、7.1、9 节一致；偏离来源见 PRD 2.4 与 2.5）                                                                                                                                                                                                              |
+| 关联文档 | [产品需求文档 v1.6](./PRD.md)、[后台运行设计](./superpowers/specs/2026-10-28-background-web-design.md)、[信息页与改密设计](./superpowers/specs/2026-10-27-user-info-page-design.md)、[已实现设计说明](./superpowers/specs/2026-10-27-note-crud-category-encryption-design.md) |
+| 目标     | 将 PRD 落地为可实现的 Go + SQLite + Svelte 5 技术方案                                                                                                                                                                                                                         |
 
 ---
 
@@ -57,6 +57,8 @@
 │ net/http + ServeMux                              │
 │ CLI: note 菜单 / web / info（bubbletea）         │
 │ 配置/数据: 用户目录 note.yaml、notes.db          │
+│ 后台模式: note web start/stop/status            │
+│   日志 note.log、状态 note.json（同 db 目录）    │
 │                                                  │
 │ middleware: 恢复 / Host / 安全头 / 日志 / CSRF     │
 │                                                  │
@@ -85,6 +87,7 @@
 - PBKDF2 派生与 AES-GCM 加解密都发生在浏览器进程；Go 侧没有密码学计算，因此没有 KDF 串行化、内存峰值或超时特殊处理。
 - 数据库事务只覆盖短小的读写操作；加密状态转换在一次事务内完成（写密文、置 `content = NULL`、置 `is_encrypted`）。
 - 没有服务端会话：解锁态由浏览器页面内存中的密钥表示，服务端每个请求都是无状态的。
+- 后台模式（`note web start`）只是同一份服务代码换了个入口：父进程 re-exec 自身并立刻退出，子进程脱离终端继续跑，日志经 fd 重定向写入 `note.log`。`stop` 通过 `POST /api/shutdown` 把关停请求交回该进程自己的优雅关闭路径（见 4.1.1）。
 
 ### 2.3 目录结构
 
@@ -92,6 +95,7 @@
 note/
 ├── go.mod
 ├── cmd/note/main.go             # 子命令分发（note 菜单 / web / info）、runWeb、runInfo
+├── cmd/note/web_service.go      # web start / stop / status 三命令实现
 ├── config/
 │   └── note.yaml                 # 示例配置（原始默认值；运行时读用户配置目录，不自动加载）
 ├── sql/
@@ -102,11 +106,20 @@ note/
 │   └── 0004_note_app.sql         # categories、master_password、notes.category_id
 ├── internal/
 │   ├── build/info.go             # 版本/git hash/构建日期变量（ldflags 注入）+ vcs 回落
-│   ├── cli/                      # 命令行界面：解析、菜单、信息渲染、帮助
-│   │   ├── parse.go              # 子命令与全局 -c 解析、-h 预扫描（跳过带值参数）
+│   ├── cli/                      # 命令行界面：解析、菜单、信息/状态渲染、帮助
+│   │   ├── parse.go              # 子命令与全局 -c 解析、web 动作（start/stop/status）、-h 预扫描
 │   │   ├── menu.go               # bubbletea 交互菜单（模型可单测；非终端回退）
-│   │   ├── info.go               # note info 渲染（uniseg CJK 对齐、缺库占位）
+│   │   ├── info.go               # note info 渲染（uniseg CJK 对齐、缺库占位、日志行）
+│   │   ├── status.go             # note web status 三态渲染与 uptime/文件大小文案
 │   │   └── usage.go              # 总帮助与子命令帮助（动态带出本机默认路径）
+│   ├── daemon/                   # 后台运行支持（纯库，不含业务逻辑）
+│   │   ├── state.go              # note.json 结构、路径推导、原子写、令牌生成、按 pid 删除
+│   │   ├── control.go            # ControlAddr：通配地址探测时映射回环
+│   │   ├── probe.go              # GET /api/info 探测与 POST /api/shutdown 请求
+│   │   ├── spawn.go              # 分离进程启动 + 日志 fd 接管
+│   │   ├── spawn_unix.go         # Setsid（新会话）
+│   │   ├── spawn_windows.go      # DETACHED_PROCESS + 隐藏窗口
+│   │   └── pid_unix.go/pid_windows.go # 存活判定（Windows 用等待句柄）
 │   ├── config/
 │   │   ├── config.go             # 加载、合并、校验 note.yaml（-c/-p/--remote 等参数）
 │   │   ├── paths.go              # 默认配置/数据目录解析（用户目录，XDG 惯例）
@@ -118,8 +131,9 @@ note/
 │   │   ├── master.go             # 主密码单行（盐 + 助记问题）与问题单独修改
 │   │   └── activity.go           # 搜索记录与统计
 │   └── web/
-│       ├── server.go             # 路由、静态资源、SPA 回退
-│       ├── middleware.go         # 恢复、Host、安全头、日志、CSRF
+│       ├── server.go             # 路由、静态资源、SPA 回退、Control 注入
+│       ├── control.go            # 后台模式的 /api/shutdown（令牌校验 + 异步关停）
+│       ├── middleware.go         # 恢复、Host、安全头、日志、CSRF（豁免 /api/shutdown）
 │       ├── handlers_notes.go
 │       ├── handlers_note_cipher.go # 密文清单与单条替换（改密迁移用）
 │       ├── handlers_categories.go # 分类与主密码端点
@@ -201,13 +215,16 @@ note/
 
 v1.5 起入口是 CLI 子命令（`internal/cli.Parse` 分发）：
 
-| 调用                      | 行为                                                                                                    |
-| ------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `note`                    | bubbletea 交互菜单（启动 Web 服务 / 系统信息 / 退出）；stdin 非终端时退化为打印帮助，不启动服务也不挂起 |
-| `note web [参数]`         | 启动 Web 服务，唯一会启动前端页面的命令                                                                 |
-| `note info [参数]`        | 输出软件与运行信息（见 8.6 同源口径）后退出；数据库文件已存在时才打开，不产生新文件                     |
-| `note help [命令]` / `-h` | 帮助；`note web -h` / `note help web` 显示子命令参数                                                    |
-| 参数错误                  | 错误信息 + 帮助，退出码 2（与 flag 包惯例一致）                                                         |
+| 调用                      | 行为                                                                                                           |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `note`                    | bubbletea 交互菜单（启动 Web 服务（后台）/ 系统信息 / 退出）；stdin 非终端时退化为打印帮助，不启动服务也不挂起 |
+| `note web [参数]`         | 前台启动 Web 服务，唯一会启动前端页面的基线命令（日志进终端，不建日志文件）                                    |
+| `note web start [参数]`   | 后台启动；已在运行则打印地址后退出 0                                                                           |
+| `note web stop [参数]`    | 请求后台实例优雅停止；未运行则提示并退出 0                                                                     |
+| `note web status [参数]`  | 输出运行情况；运行中 0 / 进程在但不响应 1 / 未运行 3                                                           |
+| `note info [参数]`        | 输出软件与运行信息（见 8.6 同源口径）后退出；数据库文件已存在时才打开，不产生新文件                            |
+| `note help [命令]` / `-h` | 帮助；`note web -h` / `note help web` 显示子命令参数                                                           |
+| 参数错误                  | 错误信息 + 帮助，退出码 2（与 flag 包惯例一致）                                                                |
 
 启动顺序（`note web`）：
 
@@ -229,6 +246,25 @@ v1.5 起入口是 CLI 子命令（`internal/cli.Parse` 分发）：
 5. 关闭数据库连接。
 
 启动失败时输出明确错误并以非零码退出；不得在数据库损坏时静默重建文件。
+
+### 4.1.1 后台运行（v1.6）
+
+```text
+启动：`note web start`（父）── re-exec 自身（子，带 NOTE_DAEMON_STATE=<状态文件>）
+      └─ 子：Listen → 生成令牌 → 写 note.json → Serve
+停止：`note web stop`（父）── 读 note.json → POST /api/shutdown（X-Shutdown-Token）
+      └─ 子：202 → 关闭 stopCh → Shutdown(10s) → store.Close() → 删 note.json → 退出
+      └─ 父：若 10s 内未退出 → SIGKILL / TerminateProcess + WAL 提示 → 清 note.json
+探测：`note web status`（父）── 读 note.json（pid/日志/启动时间） + GET /api/info（确实在响应）
+```
+
+- 后台化只能靠自我 re-exec：Go 没有 `fork`。Unix 子进程 `SysProcAttr{Setsid: true}`，Windows 用 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` + `HideWindow`；子进程靠环境变量 `NOTE_DAEMON_STATE` 认领后台身份。
+- 日志在**文件描述符层**接管：`cmd.Stdout` / `cmd.Stderr` 指向 `note.log`。不能“运行期切日志”——slog 默认 handler 在启动时就绑定了当时的 `os.Stderr`。
+- 令牌由**子进程**用 `crypto/rand` 生成（32 字节，base64url）并写入状态文件，父进程不经手，因此不进命令行与环境变量。
+- 状态文件 `note.json` 与日志 `note.log` 固定在 `filepath.Dir(DBPath)`；状态文件 `0600` + 临时文件 rename 原子写；日志追加写、不轮转。
+- 状态文件按目录唯一，所以同一目录下换一个 `--db` 会被判为「已被另一个实例登记」，`start`/`stop` 都以退出码 1 拒绝（比对 `db` 字段，允许相对/绝对两种写法）。
+- `stop` 只有在取得「状态文件里有 pid」且「该 pid 确实活着」时才发关停请求；只有探测到响应而无状态文件时，判定为前台实例，提示回终端 Ctrl+C 并退出 1，不猜 pid 杀进程。
+- `status` 把状态文件与 `GET /api/info` 探测合并判定（双保险）：状态文件 pid 已死且探测失败 → 按残留清理并以 3 退出；pid 活着但探测失败 → 1；探测成功 → 0。状态文件里的通配地址（`0.0.0.0` / `::`）在探测时映射为回环地址（`daemon.ControlAddr`）。
 
 ### 4.2 配置
 
@@ -272,6 +308,7 @@ database:
 - 未启用 `allow_remote` 时，`addr` 必须是回环地址；否则拒绝启动。
 - 启动日志记录最终生效的监听地址、数据库路径与 `allow_remote`，不打印其他配置内容。
 - 监听成功后另向 stdout 打印可直接点击的访问地址（`http://host:port`，IPv6 一律加方括号），每地址一行；结构化 slog 字段与格式不变。地址由 `internal/config` 的 `StartupURLs(请求地址, listener 实际地址)` 推导：家族取请求 host（`0.0.0.0` 枚举本机非回环 IPv4，`::` 枚举 IPv6），端口取 listener 实际端口（兼容 `:0`）；枚举跳过回环与链路本地地址并去重排序，结果为空时回退回环地址。Windows 对 `0.0.0.0` 监听会建立双栈 socket 并把 `Addr()` 汇报成 `[::]`，家族因此不能取自 listener 地址。监听失败时错误信息回带尝试的地址。
+- 日志与状态文件位置（v1.6）：纯函数 `daemon.StatePath(dbPath) = dir(dbPath)/note.json`、`daemon.LogPath(dbPath) = dir(dbPath)/note.log`；不读环境变量、不引入新配置项。`note info` 与 `note web status` 都从同一个纯函数推导，不会不一致。
 - 数据目录不存在时自动创建，权限 `0700`。
 - 数据库文件创建后，在 POSIX 上尽力设置为 `0600`。
 
@@ -280,6 +317,7 @@ database:
 ```text
 GET    /api/csrf
 GET    /api/info
+POST   /api/shutdown              # 仅后台模式（Control.Token 非空）存在；无 CSRF，凭 X-Shutdown-Token
 GET    /api/settings
 PUT    /api/settings/name
 GET    /api/notes
@@ -309,7 +347,7 @@ GET    /*                     # 非 API GET → index.html
 2. Host 校验：只允许配置主机及回环别名，失败返回 400。
 3. 安全响应头：CSP、`nosniff`、`DENY`、`Referrer-Policy`、缓存策略。
 4. 访问日志：方法、路由模式/路径、状态码、耗时、响应字节数；不记录查询串与请求体。
-5. CSRF：仅对 `POST`/`PUT`/`DELETE` 校验 `X-CSRF-Token`、Cookie、Origin/Sec-Fetch-Site。
+5. CSRF：仅对 `POST`/`PUT`/`DELETE` 校验 `X-CSRF-Token`、Cookie、Origin/Sec-Fetch-Site；唯一例外是 `/api/shutdown`（凭证即令牌，豁免不得扩大）。
 6. 业务处理器。
 
 静态与回退规则：
@@ -393,11 +431,12 @@ GET    /*                     # 非 API GET → index.html
 
 ### 4.6 日志
 
-- 输出到 stdout，单行结构化文本或 JSON。
+- 输出到 stdout（后台模式重定向到 `note.log`），单行结构化文本或 JSON。
 - 访问日志字段：时间、级别、方法、路由模式、状态码、耗时、响应字节数。
-- 禁止记录：请求体、密码、正文、密文、助记问题、完整查询串、Cookie、Authorization。
+- 禁止记录：请求体、密码、正文、密文、助记问题、完整查询串、Cookie、Authorization、关停令牌。
 - 服务端没有加解密事件可记录；只有 API 状态码与错误类别。
 - 启动日志可记录数据库路径、监听地址、是否启用远程绑定；不记录密钥或密码。
+- 关停日志：`shutdown requested remote=<ip:port>`（仅后台模式，remote 非秘密）→ `shutting down reason="control endpoint"` 或 `reason=signal`。
 
 ### 4.7 并发、超时与限制
 
@@ -1219,19 +1258,20 @@ check:
 
 ### 11.1 威胁模型摘要
 
-| 威胁                       | 防护 | 说明                                                                                                                                                     |
-| -------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 数据库文件被复制           | 部分 | 加密笔记正文是密文；标题、分类名、时间、助记问题始终明文；口令正确性由 GCM tag 验证，没有可离线查询的哈希                                                |
-| 磁盘离线爆破               | 部分 | PBKDF2-HMAC-SHA256 仅 150000 次迭代且盐公开，弱口令可被离线爆破；相对 Argon2id 是已知降级（见 PRD 风险 R4）                                              |
-| 同机他人操作应用           | 否   | 无应用登录，依赖系统账户；页签已解锁时别人能看到明文                                                                                                     |
-| 键盘记录 / 截屏 / 内存抓取 | 否   | 本地明文工具防不住；派生密钥不可导出，但仍存在于页签内存                                                                                                 |
-| 跨站写请求                 | 是   | CSRF 双提交（HttpOnly Cookie + 头，常量时间比较）+ 不启用 CORS + Host 白名单                                                                             |
-| DNS Rebinding              | 是   | Host 白名单 + 默认只监听回环；非回环绑定需显式 `--allow-remote`                                                                                          |
-| 存储型 XSS                 | 是   | Markdown 必经 `DOMPurify.sanitize`，`{@html}` 只在一处，CSP `default-src 'self'`，外链补 `noopener noreferrer`                                           |
-| 口令遗忘                   | 无解 | 主密码不可找回、不可重置；唯一出路是确认删除该加密笔记。修改主密码（6.9）不改变这一条：它要求先给出旧口令，服务端始终没有验证口令的能力                  |
-| 迁移途中关页面             | 是   | 每条笔记的落定只由试解判定，已迁移的判为 `already_done` 可续跑；没迁完的条目如实列在迁移状态卡里，不会被写坏（实测：失败分支跑完后库里密文字节逐字不变） |
-| 信息页暴露运行信息         | 部分 | `/api/info` 只给标准库运行时与已加载配置（主机名、数据文件路径、监听地址、内存），同源、`no-store`，不含密文、盐、口令或令牌；默认只监听回环             |
-| SSD 物理残留 / 旧备份      | 否   | 应用只做逻辑删除与 WAL checkpoint，其余由用户自行保护                                                                                                    |
+| 威胁                       | 防护 | 说明                                                                                                                                                                  |
+| -------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 数据库文件被复制           | 部分 | 加密笔记正文是密文；标题、分类名、时间、助记问题始终明文；口令正确性由 GCM tag 验证，没有可离线查询的哈希                                                             |
+| 磁盘离线爆破               | 部分 | PBKDF2-HMAC-SHA256 仅 150000 次迭代且盐公开，弱口令可被离线爆破；相对 Argon2id 是已知降级（见 PRD 风险 R4）                                                           |
+| 同机他人操作应用           | 否   | 无应用登录，依赖系统账户；页签已解锁时别人能看到明文                                                                                                                  |
+| 键盘记录 / 截屏 / 内存抓取 | 否   | 本地明文工具防不住；派生密钥不可导出，但仍存在于页签内存                                                                                                              |
+| 跨站写请求                 | 是   | CSRF 双提交（HttpOnly Cookie + 头，常量时间比较）+ 不启用 CORS + Host 白名单                                                                                          |
+| DNS Rebinding              | 是   | Host 白名单 + 默认只监听回环；非回环绑定需显式 `--allow-remote`                                                                                                       |
+| 存储型 XSS                 | 是   | Markdown 必经 `DOMPurify.sanitize`，`{@html}` 只在一处，CSP `default-src 'self'`，外链补 `noopener noreferrer`                                                        |
+| 口令遗忘                   | 无解 | 主密码不可找回、不可重置；唯一出路是确认删除该加密笔记。修改主密码（6.9）不改变这一条：它要求先给出旧口令，服务端始终没有验证口令的能力                               |
+| 迁移途中关页面             | 是   | 每条笔记的落定只由试解判定，已迁移的判为 `already_done` 可续跑；没迁完的条目如实列在迁移状态卡里，不会被写坏（实测：失败分支跑完后库里密文字节逐字不变）              |
+| 信息页暴露运行信息         | 部分 | `/api/info` 只给标准库运行时与已加载配置（主机名、数据文件路径、监听地址、内存），同源、`no-store`，不含密文、盐、口令或令牌；默认只监听回环                          |
+| SSD 物理残留 / 旧备份      | 否   | 应用只做逻辑删除与 WAL checkpoint，其余由用户自行保护                                                                                                                 |
+| 本地进程冒充关停请求       | 是   | `/api/shutdown` 需 32 字节随机令牌（只存 `0600` 的 `note.json`，不进日志/响应/命令行/环境变量），常量时间比较；`/api/shutdown` 只在后台模式注册，仍受 Host 白名单约束 |
 
 ### 11.2 响应头
 
@@ -1256,10 +1296,12 @@ Referrer-Policy: no-referrer
 - 服务端不校验 `Origin`、`Sec-Fetch-Site` 或请求 `Content-Type`；跨源读写由「不启用 CORS」挡下，主机伪装由 Host 白名单（7.3）挡下。
 - Host 白名单默认只有 `127.0.0.1`、`localhost`、`::1`；`--allow-remote` 才把监听主机加进去。
 - 不启用 CORS，不返回 `Access-Control-Allow-*`，也没有 `OPTIONS` 预检通路。
+- 唯一不依赖 CSRF 的写路径是 `/api/shutdown`：它的凭证是 `X-Shutdown-Token`（关停令牌），豁免只覆盖这一条路径，不得扩大。
 
 ### 11.4 文件权限
 
 - 数据目录 `0700`，数据库文件 `0600`（POSIX）。
+- 后台状态文件 `note.json` `0600`（含关停令牌与 pid）；日志 `note.log` 用默认权限，内容与前台日志同口径（不含正文/密码/密文/令牌）。
 - 不把数据库放在同步盘或公开目录；文档提示用户。
 - 备份文件同样按敏感数据处理。
 
@@ -1267,7 +1309,7 @@ Referrer-Policy: no-referrer
 
 - access log 只记 `method`、`path`（不含 query）、`status`、`duration_ms`、`bytes`：查询词、正文、口令、密文、Cookie 都不进日志。
 - 外部错误响应统一为语义化 code + 面向用户的中文文案，不回传 SQL、文件路径、密钥或密文内容。
-- `slog.Error` 记录服务端内部错误（含驱动返回的 wrap 文本）到 stderr，与响应无关。
+- `slog.Error` 记录服务端内部错误（含驱动返回的 wrap 文本）到 stderr（后台模式即 `note.log`），与响应无关；关停令牌任何情况下都不进日志。
 - panic 由 `recoverPanics` 兜住，日志记类别、method、path，响应是 500 `internal` 通用文案。
 
 ### 11.6 限制
@@ -1292,6 +1334,14 @@ Referrer-Policy: no-referrer
 | `internal/cli/menu_test.go`                | 菜单模型：光标上下移动与越界保持、回车选中当前项、q/Esc 保持零值退出、视图含全部菜单项；非终端环境 `RunMenu` 返回回退动作                                                                                                                                                   |
 | `internal/cli/info_test.go`                | `FormatInfo`：分区与字段齐全、缺库占位、CJK 标签按显示宽度对齐（逐行解析值列）、`humanSize` 三档                                                                                                                                                                            |
 | `internal/cli/usage_test.go`               | 总帮助覆盖命令/全局参数/默认位置说明；`UsageFor` 各主题参数齐全，未知主题回退总帮助                                                                                                                                                                                         |
+| `internal/cli/parse_test.go`（web 动作）   | `web start`/`stop`/`status` 识别（动作后的 flag 原样透传）、`web --addr` 不受影响、未知 web 子命令报错并要求退出码 2                                                                                                                                                        |
+| `internal/cli/status_test.go`              | `FormatStatus` 三种形态（运行中/未运行/进程在但不响应）、pid 行仅在有 pid 时出现、状态文件四态（存在/不存在/残留已清理/属于另一个库）、uptime 与文件大小文案、CJK 对齐                                                                                                      |
+| `internal/daemon/state_test.go`            | `note.json` 往返、`0600`（Windows 跳过）、临时文件 + rename 原子覆盖、损坏 JSON 与非存在文件的错误区分、`StatePath`/`LogPath` 推导、`RemoveIfPid` 只在 pid 匹配时删除、令牌 32 字节且每次不同                                                                               |
+| `internal/daemon/control_test.go`          | 通配地址映射（`0.0.0.0`→`127.0.0.1`、`::`→`::1`）、空地址与不可解析地址原样返回                                                                                                                                                                                             |
+| `internal/daemon/pid_test.go`（+windows）  | 自身 pid 存活、不存在的 pid 判死、pid ≤ 0 判死；Windows 专有：已退出但对象未回收的 pid 必须判死（回归 `os.FindProcess` 假阳性）                                                                                                                                             |
+| `internal/daemon/probe_test.go`            | `Probe` 解析 `addr`/`started_at`/`build_label`、非 200 与超时返回错误；`RequestStop` 的路径/方法/令牌头、202 成功、403 映射为「关停令牌无效」                                                                                                                               |
+| `internal/daemon/spawn_test.go`            | 分离进程启动后父进程立即返回、子进程经日志 fd 写入 `note.log`、环境变量 `NOTE_DAEMON_STATE` 传递                                                                                                                                                                            |
+| `internal/web/shutdown_api_test.go`        | 正确令牌 → 202 且回调只调用一次；错误/缺失令牌 → 403；未启用（Token 为空）→ 403 `shutdown_disabled`；GET → 405 带 `Allow`；不带 CSRF Cookie 也能通过；非法 Host 仍被 `hostGuard` 拦下                                                                                       |
 | `internal/store/store_test.go`             | 空库自动建表并跑完 4 个迁移、重复打开幂等、`user_version` 高于程序时拒绝启动、非法文件拒绝启动、0004 对象存在、0003 扩展列默认值与 CHECK                                                                                                                                    |
 | `internal/store/category_test.go`          | 分类 CRUD 与笔记数、大小写不敏感重名、默认分类守卫（改名/删除）、非空分类删除返回条数、**未分类（`category_id IS NULL`）计入默认分类并可被筛出**                                                                                                                            |
 | `internal/store/master_test.go`            | 主密码只写一次、盐长度与空问题拒绝、`UpdateMasterQuestion` 只改问题列（空/超 100 码点拒绝、未配置时报 `master_password_missing`、盐与 `created_at` 不动）                                                                                                                   |
@@ -1306,7 +1356,8 @@ Referrer-Policy: no-referrer
 
 - 运行 `just test`（内含 `go test ./...`）与 `just check`（`go vet ./...`）。
 - LIKE 转义由 `TestListNotesSearchOrdersTitleHitsFirst` 等搜索用例间接覆盖；没有独立的 fuzz 目标。
-- 不依赖真实网络和外部数据库；每个用例用 `t.TempDir()` 建独立库。
+- 不依赖真实网络和外部数据库；每个用例用 `t.TempDir()` 建独立库（`internal/daemon` 的探测用例用 `httptest` 起本地服务）。
+- 后台运行的真实二进制冒烟不进 `go test`，过程与结果记录在 CHANGELOG（启动/幂等/停止/三态退出码/异常分支）。
 
 ### 12.2 前端测试
 
@@ -1395,11 +1446,15 @@ v1.4 的信息页与改密链路由 `.run/info-e2e.mjs` 覆盖（同样 Playwrig
 ### 14.1 运行
 
 ```bash
-note                       # 交互菜单（bubbletea）：启动 Web 服务 / 系统信息 / 退出
-note web                   # 直接启动 Web 服务（读用户配置目录，默认 127.0.0.1:8080）
+note                       # 交互菜单（bubbletea）：启动 Web 服务（后台）/ 系统信息 / 退出
+note web                   # 前台启动 Web 服务（读用户配置目录，默认 127.0.0.1:8080）
+note web start             # 后台启动；日志与状态文件在数据库同目录（note.log / note.json）
+note web status            # 运行情况；运行中 0 / 不响应 1 / 未运行 3
+note web stop              # 优雅停止后台实例
 note web -p 9090           # 指定端口；host 沿用配置文件或 --addr
+note web start -p 9090     # 后台启动并指定端口（--db/--addr/-p 写在 web 之后）
 note web --remote --addr 0.0.0.0:8080    # 监听局域网（须配 TLS 与认证）
-note info                  # 输出软件与运行信息
+note info                  # 输出软件与运行信息（含日志路径）
 note -c /path/note.yaml web             # 全局 -c 指定配置文件
 ```
 
@@ -1408,11 +1463,13 @@ note -c /path/note.yaml web             # 全局 -c 指定配置文件
 - 远程绑定必须显式 `note web --allow-remote`（或 `--remote`），且应置于 TLS + 认证反向代理之后；MVP 不提供这些能力。
 - 管道/脚本环境（stdin 非终端）运行裸 `note` 不会进入菜单，直接打印帮助并退出；子命令与参数错误退出码 2，服务错误退出码 1。
 - 从 v1.5 之前的默认位置迁移：旧配置在 `./config/note.yaml`、旧数据在 `./data/notes.db`，用 `note web -c ./config/note.yaml --db ./data/notes.db` 继续使用原文件，或把两个文件拷到 4.2 表中的用户目录位置。
+- 后台模式（v1.6）：`start` 成功后终端可以关。日志追加写 `note.log`，不轮转，需要时自行清理（删除运行中的日志文件会让写入继续落到旧 inode，建议先 `stop`）。`note.json` 只是运行期凭据（pid + 地址 + 令牌），可安全删除；残留文件会在下一次 `start` / `status` 被识别并清理。`start` 失败时打印 `note.log` 最后 20 行，端口占用这类启动期错误能直接看到原因。
+- 同一目录只有一个状态文件，因此同一个数据目录里不要用两个不同 `--db` 起两个后台实例；`start` / `stop` 会拒绝并提示。
 
 ### 14.2 备份
 
-1. 停止应用，或使用 SQLite 在线备份命令。
-2. 复制 `notes.db`、`notes.db-wal`、`notes.db-shm`。
+1. 停止应用（后台实例用 `note web stop`），或使用 SQLite 在线备份命令。
+2. 复制 `notes.db`、`notes.db-wal`、`notes.db-shm`（同目录的 `note.log` / `note.json` 不需要备份，`note.json` 含关停令牌，对外分享前建议排除）。
 3. 加密笔记仍为密文；明文笔记仍为明文，备份需同等保护。
 4. 旧备份可能包含加密前的明文，应用无法追溯清理。
 
@@ -1425,9 +1482,9 @@ note -c /path/note.yaml web             # 全局 -c 指定配置文件
 
 ### 14.4 日志与监控
 
-- 日志输出 stdout，由用户自行重定向或交给系统服务管理。
+- 前台模式日志输出 stdout，由用户自行重定向或交给系统服务管理；后台模式（`note web start`）写入数据库同目录的 `note.log`（追加、不轮转）。
 - 不提供远程遥测、指标上报或云服务。
-- 进程存活以端口可访问为准；MVP 不增加健康检查端点。
+- 进程存活以 `note web status`（状态文件 + `/api/info` 探测）为准；不是通用健康检查端点。
 
 ---
 
@@ -1480,6 +1537,15 @@ note -c /path/note.yaml web             # 全局 -c 指定配置文件
 - 依赖：新增 `charmbracelet/bubbletea`（纯 Go，无 CGO），直接引用其随包依赖 `mattn/go-isatty`（终端检测）与 `rivo/uniseg`（CJK 宽度）。
 - 验证：`just test`（Go 7 包 108 项 + 前端 100 项）、`just check`、真实二进制冒烟（真控制台菜单存活、`info -c` 输出对齐、`web --port` 覆盖生效并打印 URL、HTTP/CSRF/`/api/info` 全通、无终端裸 `note` 退化为帮助、`note foo` 退出码 2）。
 
+### 15.7 M7：后台运行（v1.6，已完成）
+
+- `internal/daemon`：`State`/`StatePath`/`LogPath`/`NewToken`/`Load`/`Save`/`RemoveIfPid`（状态文件 0600 + rename 原子写）、`ControlAddr`（通配→回环）、`ProcessAlive`（Unix `kill(pid,0)`，Windows `OpenProcess(SYNCHRONIZE)` + `WaitForSingleObject(0)`）、`Probe`/`RequestStop`（2s 超时、令牌头）、`RunDetached`（Unix `Setsid`，Windows 分离进程组 + 隐藏窗口，日志 fd 接管）。
+- `internal/web`：`Control{Token, Shutdown}` + `NewWithControl`；`/api/shutdown` 仅在 Token 非空时注册（POST + GET 两路注册，GET 返 405 + Allow），空令牌 403 `shutdown_disabled`、令牌不符 403 `shutdown_denied`、成功 202 后异步关停；CSRF 只豁免这一条路径。
+- `internal/cli`：`WebAction`（前台/start/stop/status）与未知子命令错误；`StatusData`/`FormatStatus` 三态渲染（运行中/未运行/进程在但不响应）；`info` 新增日志行。
+- `cmd/note`：`runWebStart`（幂等、就绪轮询 100ms/10s、失败时回显日志尾 20 行）、`runWebStop`（未运行时提示退出 0、前台实例拒绝退出 1、10s 后强杀并说明 WAL）、`runWebStatus`（退出码 0/1/3、残留状态文件清理）、`exitError`（错误已打印时不再重复输出）；菜单项改后台启动。
+- 验证：`just test`（Go 8 包 139 项含新增 windows-only 用例）、`just check`、真实二进制冒烟 12 项（start 幂等、stop 0.26s 优雅退出且日志有 `shutting down`、status 三态、端口占用回显日志尾、前台实例拒绝 stop、残留与损坏状态文件、同目录另一个库归属校验）。
+- 实现中发现并修复：Windows 上 `os.FindProcess` 对已退出但进程对象未被回收的 pid 仍返回成功，导致 `stop` 白等 10 秒后强杀、`start` 误判「进程在但不响应」；改为等待句柄判定并补 `pid_windows_test.go` 复现。
+
 ---
 
 ## 16. 决策记录（ADR）
@@ -1506,6 +1572,10 @@ note -c /path/note.yaml web             # 全局 -c 指定配置文件
 | ADR-18 | 版本注入用 `-ldflags -X`，未注入时回落 `debug.ReadBuildInfo()` 的 vcs 字段                                                                                     | `just build` 产物有真实 hash 与构建日期，`go run`/`go test` 也拿得到可用信息，信息页不会空白；不在仓库内构建时命令失败退化为空值，不阻断构建                   | 两个来源的 hash 长度与 dirty 语义需对齐（`shortRevision` 收成 7 位）；just 在 Windows 只保留末行输出，分支写法受限                                     |
 | ADR-19 | 引导页两步、初始主密码必填，半态由「已配置则只解锁」分支兜住                                                                                                   | 避免「想加密时才发现还没主密码」的断链；只按 `nameSet` 判断会让用户绕过必填                                                                                    | 启动多读一个端点；步骤 2 有两种形态，需要端到端脚本用双页签才能确定性地复现                                                                            |
 | ADR-20 | 后端 CLI 子命令化：bubbletea 只承担裸 `note` 的交互菜单，子命令/参数用标准库 flag（`cli.Parse` 手写全局层）；默认配置/数据位置迁到用户目录，旧位置不做隐式回退 | 服务生命周期留在 `cmd/note`，菜单模型可纯单测；stdin 非终端时菜单退化为帮助而非挂起；默认位置与其他开源项目一致，隐式回退会引入难以排查的双源配置              | 非终端环境验证不了菜单交互（winpty 在无尺寸控制台断言失败），真 TTY 行为依赖人工双击 exe 验证；迁移对老用户是破坏性变更，靠文档与 `-c/--db` 兼容旧文件 |
+| ADR-21 | 后台化用「自我 re-exec + 分离进程组」，不用 systemd/计划任务等外部守护                                                                                         | 单二进制零依赖是项目底线；前台与后台共用同一份服务代码，只是入口不同                                                                                           | Go 无 fork，只能重执行自身；子进程靠环境变量 `NOTE_DAEMON_STATE` 认领身份，日志由父进程 fd 接管                                                        |
+| ADR-22 | 关停走业务同端口的 `POST /api/shutdown`，令牌由子进程生成、只存 `note.json`                                                                                    | 不额外开控制端口或命名管道，Unix 与 Windows 行为一致；令牌随机且只对本地可读文件可见，CSRF 豁免局限在单一路径                                                  | 令牌是文件形式的本地凭据；中间件为这一条路径开豁免，边界必须写进硬性约定                                                                               |
+| ADR-23 | 日志与状态文件固定放在 `dir(DBPath)`，不新增配置项                                                                                                             | 与数据库同生命周期、同权限目录，备份/迁移只需处理一个目录；`note info` 与 `web status` 共用一个纯函数推导路径                                                  | 同一目录只能有一个后台实例（按 `db` 字段校验归属）；日志不轮转，长期运行需用户自行清理                                                                 |
+| ADR-24 | `status` 用「状态文件 + `/api/info` 探测」双保险，不只看 pid                                                                                                   | 前台实例、残留状态文件、端口被占三种情况都能说清楚；Windows 上 `os.FindProcess` 对已退出进程仍成功，pid 存活必须用等待句柄判断                                 | 多一个探测请求与 2s 超时；状态判定分在 `daemon.Probe` 与 `cli.FormatStatus` 两处                                                                       |
 
 ---
 
