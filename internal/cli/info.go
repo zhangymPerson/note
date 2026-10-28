@@ -20,22 +20,25 @@ type DBStatus struct {
 
 // InfoData 是 FormatInfo 的全部输入，由 cmd/note 采集（构建信息、运行时、配置与数据库快照）。
 type InfoData struct {
-	Label       string // build.Describe().Label()
-	Version     string
-	GitHash     string
-	GitDirty    bool
-	BuildDate   string
-	GoVersion   string
-	GOOS        string
-	GOARCH      string
-	Hostname    string
-	CPUCount    int
-	ConfigPath  string
-	ConfigFound bool
-	Addr        string
-	AllowRemote bool
-	DBPath      string
-	DB          DBStatus
+	Label        string // build.Describe().Label()
+	Version      string
+	GitHash      string
+	GitDirty     bool
+	BuildDate    string
+	GoVersion    string
+	GOOS         string
+	GOARCH       string
+	Hostname     string
+	CPUCount     int
+	ConfigPath   string
+	ConfigFound  bool
+	Addr         string
+	AllowRemote  bool
+	DBPath       string
+	LogPath      string
+	LogExists    bool
+	LogSizeBytes int64
+	DB           DBStatus
 }
 
 // FormatInfo 把运行信息渲染成对齐的键值文本（uniseg 计算 CJK 宽度）。
@@ -63,6 +66,7 @@ func FormatInfo(d InfoData) string {
 		}},
 		{"数据", [][2]string{
 			{"数据库", dbSummary(d)},
+			{"日志", fileSummary(d.LogPath, d.LogExists, d.LogSizeBytes)},
 			{"笔记", notesSummary(d.DB)},
 			{"分类", categoriesSummary(d.DB)},
 		}},
