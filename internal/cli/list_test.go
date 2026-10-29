@@ -219,6 +219,7 @@ func newTestListModel(items ...ListItem) listModel {
 	model.picker.list.FilterInput.Cursor.SetMode(cursor.CursorStatic)
 	return model
 }
+
 // feedList 喂一条消息并把它返回的命令跑到底：bubbles 的过滤结果要等
 // FilterMatchesMsg 回来才落地，可见项与选中项都受它影响。
 func feedList(t *testing.T, m listModel, msg tea.Msg) listModel {
