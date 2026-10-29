@@ -60,3 +60,35 @@ func TestUsageForAddDescribesThreeSteps(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageListsListAndShowCommands(t *testing.T) {
+	out := Usage()
+	for _, want := range []string{"  list ", "  show ", "note list", "note show"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("总帮助缺少 %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestUsageForListDescribesFilterAndPlainOutput(t *testing.T) {
+	text := UsageFor("list")
+	for _, want := range []string{
+		"note list", "--trash", "--plain", "--limit",
+		"输入即筛选", "note show", "退出码", "updated_at",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("listUsage 缺少 %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestUsageForShowDescribesStylesAndEncryptedExit(t *testing.T) {
+	text := UsageFor("show")
+	for _, want := range []string{
+		"note show", "--style", "--width", "--raw", "notty", "加密", "4",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("showUsage 缺少 %q:\n%s", want, text)
+		}
+	}
+}

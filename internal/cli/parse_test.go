@@ -198,6 +198,121 @@ func TestParseAddRejectsExtraArgs(t *testing.T) {
 	}
 }
 
+func TestParseListFlags(t *testing.T) {
+	cmd, opts, err := Parse([]string{"list", "--trash", "--plain", "--limit", "5", "--db", "x.db"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cmd != CommandList {
+		t.Fatalf("cmd = %v, want CommandList", cmd)
+	}
+	if opts.List != (ListOptions{Trash: true, Plain: true, Limit: 5}) {
+		t.Fatalf("ListOptions = %+v", opts.List)
+	}
+	// 配置参数要留给 config.Load，自己消费的开关不能留在 Args 里
+	if !slices.Equal(opts.Args, []string{"--db", "x.db"}) {
+		t.Fatalf("Args = %v", opts.Args)
+	}
+}
+
+func TestParseListDefaults(t *testing.T) {
+	cmd, opts, err := Parse([]string{"list"})
+	if err != nil || cmd != CommandList {
+		t.Fatalf("cmd=%v err=%v", cmd, err)
+	}
+	if opts.List != (ListOptions{}) {
+		t.Fatalf("默认 ListOptions 应当是全零，得到 %+v", opts.List)
+	}
+	if len(opts.Args) != 0 {
+		t.Fatalf("Args 应当为空，得到 %v", opts.Args)
+	}
+}
+
+func TestParseShowFlags(t *testing.T) {
+	cmd, opts, err := Parse([]string{"show", "9f2c1a3b", "--style", "dark", "--width", "100", "--raw", "-c", "x.yaml"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cmd != CommandShow {
+		t.Fatalf("cmd = %v, want CommandShow", cmd)
+	}
+	want := ShowOptions{ID: "9f2c1a3b", Style: "dark", Width: 100, Raw: true}
+	if opts.Show != want {
+		t.Fatalf("ShowOptions = %+v, want %+v", opts.Show, want)
+	}
+	if !slices.Equal(opts.Args, []string{"-c", "x.yaml"}) {
+		t.Fatalf("Args = %v", opts.Args)
+	}
+}
+
+func TestParseShowDefaults(t *testing.T) {
+	cmd, opts, err := Parse([]string{"show", "abc"})
+	if err != nil || cmd != CommandShow {
+		t.Fatalf("cmd=%v err=%v", cmd, err)
+	}
+	if opts.Show != (ShowOptions{ID: "abc"}) {
+		t.Fatalf("ShowOptions = %+v", opts.Show)
+	}
+}
+
+func TestParseListAndShowHelp(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"list", "-h"}, "list"},
+		{[]string{"list", "--help"}, "list"},
+		{[]string{"show", "-h"}, "show"},
+		{[]string{"show", "--help"}, "show"},
+	}
+	for _, tc := range cases {
+		cmd, opts, err := Parse(tc.args)
+		if err != nil || cmd != CommandHelp {
+			t.Fatalf("%v: cmd=%v err=%v", tc.args, cmd, err)
+		}
+		if !slices.Equal(opts.Args, []string{tc.want}) {
+			t.Fatalf("%v: 帮助主题 = %v, want [%s]", tc.args, opts.Args, tc.want)
+		}
+	}
+}
+
+func TestParseListAndShowRejectBadArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"list 未知参数", []string{"list", "--nope"}},
+		{"list limit 非数字", []string{"list", "--limit", "abc"}},
+		{"list limit 负数", []string{"list", "--limit", "-1"}},
+		{"list limit 缺值", []string{"list", "--limit"}},
+		{"list 多给了位置参数", []string{"list", "abc"}},
+		{"show 缺 id", []string{"show"}},
+		{"show 多个 id", []string{"show", "a", "b"}},
+		{"show 未知参数", []string{"show", "a", "--nope"}},
+		{"show style 非法", []string{"show", "a", "--style", "nope"}},
+		{"show width 太小", []string{"show", "a", "--width", "5"}},
+		{"show width 太大", []string{"show", "a", "--width", "1001"}},
+		{"show width 非数字", []string{"show", "a", "--width", "abc"}},
+		{"show width 缺值", []string{"show", "a", "--width"}},
+		{"show 只给了配置参数", []string{"show", "--db", "x.db"}},
+	}
+	for _, tc := range cases {
+		if _, _, err := Parse(tc.args); err == nil {
+			t.Fatalf("%s：期望报错，实际通过", tc.name)
+		}
+	}
+}
+
+func TestParseShowMissingIDPointsAtList(t *testing.T) {
+	_, _, err := Parse([]string{"show"})
+	if err == nil {
+		t.Fatal("show 缺 id 应当报错")
+	}
+	if !strings.Contains(err.Error(), "note list") {
+		t.Fatalf("错误信息应当告诉用户先用 note list 找 id，得到 %v", err)
+	}
+}
+
 func TestParseAddAcceptsConfigFlags(t *testing.T) {
 	cmd, opts, err := Parse([]string{"add", "--db", "x.db"})
 	if err != nil || cmd != CommandAdd {
