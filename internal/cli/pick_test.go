@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -30,7 +31,11 @@ func stubItems(titles ...string) []list.Item {
 }
 
 func newTestPicker(titles ...string) picker {
-	return newPicker(stubItems(titles...), 80, 24, list.NewDefaultDelegate(), nil)
+	p := newPicker(stubItems(titles...), 80, 24, list.NewDefaultDelegate(), nil)
+	// 光标闪烁在真实运行时是后台定时器（530ms 一跳）；测试里把模式改成静态，
+	// 否则每敲一个键都要白等一个 tick。
+	p.list.FilterInput.Cursor.SetMode(cursor.CursorStatic)
+	return p
 }
 
 // keyMsg 造按键消息；单独的空格在 bubbletea 里是 KeySpace 而不是 KeyRunes。
@@ -203,6 +208,7 @@ func TestPickerTabIsSwallowed(t *testing.T) {
 func TestPickerPinnedItemSurvivesFiltering(t *testing.T) {
 	items := stubItems("未分类", "工作", "+ 新建分类…")
 	p := newPicker(items, 80, 24, list.NewDefaultDelegate(), pinnedLastFilter(2))
+	p.list.FilterInput.Cursor.SetMode(cursor.CursorStatic)
 
 	p = applyCmd(t, p, keyMsg("工"))
 	visible := p.list.VisibleItems()
@@ -218,6 +224,7 @@ func TestPickerPinnedItemSurvivesFiltering(t *testing.T) {
 
 	// 谁都匹配不上时，占位项仍然可见（否则用户没法在零结果时就地新建分类）
 	p2 := newPicker(items, 80, 24, list.NewDefaultDelegate(), pinnedLastFilter(2))
+	p2.list.FilterInput.Cursor.SetMode(cursor.CursorStatic)
 	p2 = applyCmd(t, p2, keyMsg("zzz"))
 	visible = p2.list.VisibleItems()
 	if len(visible) != 1 || visible[0].(stubItem).title != "+ 新建分类…" {
@@ -228,6 +235,7 @@ func TestPickerPinnedItemSurvivesFiltering(t *testing.T) {
 	// 去掉占位项后的切片上给下标的，不映射就会指错项）
 	mid := stubItems("甲", "+ 新建分类…", "丙")
 	p3 := newPicker(mid, 80, 24, list.NewDefaultDelegate(), pinnedLastFilter(1))
+	p3.list.FilterInput.Cursor.SetMode(cursor.CursorStatic)
 	p3 = applyCmd(t, p3, keyMsg("丙"))
 	visible = p3.list.VisibleItems()
 	if len(visible) != 2 {
