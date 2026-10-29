@@ -226,7 +226,7 @@ git commit -m "feat(store): 增加不分页的笔记全量查询，供 CLI 列�
   - `type pickItem interface { list.Item; Title() string; Description() string }`（`list.Item` 要求 `FilterValue() string`）
   - `type picker struct { list list.Model }`
   - `func newPicker(items []list.Item, width, height int, delegate list.ItemDelegate, filter list.FilterFunc) picker`
-  - `func (p picker) update(msg tea.Msg) (picker, bool, tea.Cmd)`（第二个返回值 `handled=false` 表示这条消息要交回外层模型，目前只有「未过滤时的 `Esc`」与「`Enter` 确认」两种）
+  - `func (p picker) update(msg tea.Msg) (picker, bool, tea.Cmd)`（第二个返回值 `handled=false` 表示这条消息要交回外层模型：`Enter` 确认、未过滤时的 `Esc`、`ctrl+c` 三种）
   - `func (p picker) selected() list.Item`
   - `func (p picker) view() string`
   - `func pinnedLastFilter(pinnedIndex int) list.FilterFunc`
