@@ -96,9 +96,10 @@ func Parse(args []string) (Command, Options, error) {
 				opts.Args = []string{"add"}
 				return CommandHelp, opts, nil
 			}
-			if len(rest) > 0 {
-				return CommandMenu, Options{}, fmt.Errorf("note add 不接受参数（用 note add --help 查看用法）")
+			if err := validateAddArgs(rest); err != nil {
+				return CommandMenu, Options{}, err
 			}
+			opts.Args = rest
 			return CommandAdd, opts, nil
 		case arg == "web" || arg == "info":
 			rest := args[i+1:]
@@ -126,6 +127,28 @@ func Parse(args []string) (Command, Options, error) {
 		}
 	}
 	return CommandMenu, opts, nil
+}
+
+// addConfigFlags 是 note add 允许透传给配置加载的参数（只影响读哪个库/配置，不改变交互形态）。
+var addConfigFlags = map[string]bool{
+	"-c":       true,
+	"--config": true,
+	"--db":     true,
+}
+
+// validateAddArgs 校验 note add 的参数：只允许「带一个值的配置参数」，
+// 交互形态本身不带任何开关，多余参数直接报错而不是被静默忽略。
+func validateAddArgs(args []string) error {
+	for i := 0; i < len(args); i++ {
+		if !addConfigFlags[args[i]] {
+			return fmt.Errorf("note add 只接受 -c/--config 与 --db 参数（用 note add --help 查看用法）")
+		}
+		if i+1 >= len(args) {
+			return fmt.Errorf("%s 需要一个值", args[i])
+		}
+		i++ // 跳过值
+	}
+	return nil
 }
 
 // containsHelpFlag 判断参数列表里是否出现独立的 -h/--help。

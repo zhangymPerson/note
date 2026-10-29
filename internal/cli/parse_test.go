@@ -197,3 +197,19 @@ func TestParseAddRejectsExtraArgs(t *testing.T) {
 		t.Fatal("note add 不接受多余参数，应报错")
 	}
 }
+
+func TestParseAddAcceptsConfigFlags(t *testing.T) {
+	cmd, opts, err := Parse([]string{"add", "--db", "x.db"})
+	if err != nil || cmd != CommandAdd {
+		t.Fatalf("note add --db 应被接受，得到 cmd=%v err=%v", cmd, err)
+	}
+	if !slices.Equal(opts.Args, []string{"--db", "x.db"}) {
+		t.Fatalf("args = %v", opts.Args)
+	}
+	if _, _, err := Parse([]string{"add", "--db"}); err == nil {
+		t.Fatal("--db 缺值应报错")
+	}
+	if _, _, err := Parse([]string{"add", "--addr", "0.0.0.0:1"}); err == nil {
+		t.Fatal("note add 只接受 -c/--config/--db，--addr 应被拒绝")
+	}
+}
