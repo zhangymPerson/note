@@ -8,6 +8,25 @@
 
 ### Added
 
+- `note add`：终端里的三步交互向导，新建一条明文笔记（实现过程与关键逻辑）：
+  - **模型与分层**：`internal/cli/add.go` 是单进程 `tea.Program`，用 `step` 字段在三步之间切换、切步不清屏（`gum sequence` 同思路，避免"每步退出再起一个程序"造成错误提示无处回显）。向导只通过 `AddDeps` 的三个函数（`Categories` / `CreateCategory` / `CreateNote`）接触外部，`internal/cli` 因而**不 import `internal/store`**——交互逻辑可以用假实现直接喂 `tea.KeyMsg` 测，不必起 TTY；`cmd/note/add.go` 用 store 实现这三个函数，`store.DefaultCategoryID` 为「未分类」的判断提供单一来源（落库仍是 `category_id = NULL`，与 Web 端一致）。
+  - **分类步**：列表来自 `store.ListCategories`（含各分类篇数），输入任意字符即按名字做不区分大小写的子串过滤，`↑/↓`（以及 `ctrl+k`/`ctrl+j`，给 `j`/`k` 让位给过滤）移动；列表末尾常驻「+ 新建分类…」且不受过滤影响，选中后进「新建分类」子流程：1–30 码点校验（与 Web 端 `maxCategoryNameRunes` 同口径）、重名与其它错误原地回显且不退出该步、成功后新分类进入列表并被选中，`Esc` 只回上一步而非放弃整个向导。
+  - **标题步**：`textinput`，`CharLimit` 200，`Enter` 时 trim 后为空则原地回显「标题不能为空」。
+  - **正文步**：照 `gum write` 用 `bubbles/textarea`——`Enter` 换行、`Ctrl+D` 完成、`Ctrl+E` 用 `$EDITOR`/`$VISUAL` 打开（临时文件 + `tea.ExecProcess`，未设置变量时只回显提示）、`Esc` 放弃；实时显示码点数，超过 2000 码点时 `Ctrl+D` 被拒并提示，可继续删改（与 `store.maxContentRunes` 同一 `utf8.RuneCountInString` 口径）。
+  - **结果与退出码**：成功打印标题、分类、ID 与 `http://<addr>/notes/<id>` 链接（地址取自配置，需 `note web` 在跑）；用户放弃（`Esc`/`Ctrl+C`）打印「已放弃，未新建笔记」并以 130 退出；stdin 不是终端时立刻报错退出 1，**不**读管道当正文；`note add` 的其它参数与多余参数退出 2。
+  - **依赖**：新增 `github.com/charmbracelet/bubbles`（`textarea`/`textinput`，纯 Go、CGO 仍关闭；`go mod tidy` 解析到 v1.0.0 并与 `bubbletea v1.3.10` 编译通过）。
+  - **测试**：`internal/cli` 侧 23 项新用例覆盖过滤、30/200/2000 码点边界、空标题、重名与非重名回显、`Esc` 不落库、保存失败停在正文步、非终端拒跑；`govet` 与 `go test ./...`（9 包 181 项）全绿。
+
+### Changed
+
+- **裸 `note` 从交互菜单改为打印帮助**（等价 `note help`，退出 0），`internal/cli/menu.go` 与 `menu_test.go` 删除。这是破坏性变更：原先靠菜单「启动 Web 服务（后台）」的用户改用 `note web start`，菜单里的「系统信息」改用 `note info`。理由是只有三个选项的菜单把"到底有哪些命令"藏了起来，而帮助文本能直接列全。
+- `note help` / `-h` 的命令表新增 `add` 一行；`usage.go` 新增 `addUsage()` 主题帮助（`note add -h` 与 `note help add` 输出同一份，三步与键位照抄设计文档）。
+- `README.md` 的快速开始与前端开发命令改为 `note web`（原来写的是裸 `./note`，本就与「裸 `note` 进菜单」对不上），并补一句 `note add` 的入口说明。
+
+### Removed
+
+- `internal/cli/menu.go`（bubbletea 交互菜单）与 `internal/cli/menu_test.go`：功能由 `note add` 取代，`isTerminal` 移到 `add.go` 供向导使用。
+
 - 新建笔记预填一份可编辑的 markdown 骨架（`note-example.md`，实现过程与关键逻辑）：
   - **骨架放在文件系统里**：`internal/template` 新包负责 `note-example.md` 的一切——`Path(configPath)` 是纯函数（`dir(note.yaml)/note-example.md`），`Default()` 返回 `go:embed` 进二进制的 `default.md`，`Ensure()` 只在文件缺失时写入默认骨架（**已存在绝不覆盖**），`Load()` 在文件缺失/不可读时回退内置默认并标记 `fromDefault`，`Save()` 走同目录临时文件 + `rename` 原子替换（`0644`：内容不含正文与密码，配置目录本身 `0700`）。
   - **初始化时机**：`cmd/note` 的 `serve(cfg)`（前台与后台子进程共用）在开库前调用 `Ensure`，创建成功打一行 info；配置目录只读时只 `slog.Warn`，服务照常启动——模板缺失不该让服务起不来。

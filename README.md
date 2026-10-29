@@ -76,8 +76,8 @@ Go net/http
 ```bash
 just install   # npm ci
 just build     # 构建前端 + 单二进制
-./note         # Linux/macOS
-./note.exe     # Windows
+./note web     # Linux/macOS，启动 Web 服务
+./note.exe web # Windows
 ```
 
 不使用 `just` 时：
@@ -85,10 +85,12 @@ just build     # 构建前端 + 单二进制
 ```bash
 npm --prefix web ci
 npm --prefix web run build
-go run ./cmd/note
+go run ./cmd/note web
 ```
 
-打开 <http://127.0.0.1:8080>。首次启动会自动创建 `data/notes.db`。
+打开 <http://127.0.0.1:8080>。首次启动会在用户数据目录创建 `notes.db`。
+
+写笔记也可以不开浏览器：`./note add` 走三步向导（选分类 → 标题 → 正文，正文支持换行，`Ctrl+D` 完成）。
 
 ### 前端开发
 
@@ -96,7 +98,7 @@ Go 需要已存在一次构建好的 `internal/web/dist` 才能编译。之后�
 
 ```bash
 # 终端 1：后端
-go run ./cmd/note
+go run ./cmd/note web
 
 # 终端 2：Vite 开发服务器，/api 代理到 127.0.0.1:8080
 cd web
