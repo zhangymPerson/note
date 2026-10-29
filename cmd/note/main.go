@@ -20,6 +20,7 @@ import (
 	"note/internal/config"
 	"note/internal/daemon"
 	"note/internal/store"
+	"note/internal/template"
 	"note/internal/web"
 )
 
@@ -134,6 +135,15 @@ func runWeb(globalConfigPath string, args []string) error {
 // 只在状态文件仍属于自己时才删除它。
 func serve(cfg config.Config) error {
 	slog.Info("starting note", "addr", cfg.Addr, "db", cfg.DBPath, "allow_remote", cfg.AllowRemote)
+
+	// 模板骨架与 note.yaml 同目录：只在缺失时补一份，绝不覆盖用户改过的内容。
+	// 配置目录只读时只告警——模板缺失不该让服务起不来。
+	templatePath := template.Path(cfg.ConfigPath)
+	if created, err := template.Ensure(templatePath); err != nil {
+		slog.Warn("prepare note template", "path", templatePath, "error", err)
+	} else if created {
+		slog.Info("created note template", "path", templatePath)
+	}
 
 	statePath := os.Getenv(daemon.EnvStatePath)
 	var control web.Control
