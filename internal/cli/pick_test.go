@@ -6,6 +6,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 // stubItem 是 picker 用例的最小 item：picker 只要求 list.Item 的三件套。
@@ -220,6 +223,22 @@ func TestPickerPinnedItemSurvivesFiltering(t *testing.T) {
 	if len(visible) != 1 || visible[0].(stubItem).title != "+ 新建分类…" {
 		t.Fatalf("零命中时应当只剩占位项，得到 %+v", visible)
 	}
+
+	// 占位项不在末尾时，命中项的下标必须映射回原始下标（DefaultFilter 是在
+	// 去掉占位项后的切片上给下标的，不映射就会指错项）
+	mid := stubItems("甲", "+ 新建分类…", "丙")
+	p3 := newPicker(mid, 80, 24, list.NewDefaultDelegate(), pinnedLastFilter(1))
+	p3 = applyCmd(t, p3, keyMsg("丙"))
+	visible = p3.list.VisibleItems()
+	if len(visible) != 2 {
+		t.Fatalf("应当只剩命中项与占位项，得到 %d 项", len(visible))
+	}
+	if got := visible[0].(stubItem).title; got != "丙" {
+		t.Fatalf("命中项应当是「丙」（原始下标 2），得到 %q", got)
+	}
+	if got := visible[1].(stubItem).title; got != "+ 新建分类…" {
+		t.Fatalf("占位项必须留在最后一行，得到 %q", got)
+	}
 }
 
 func TestPickerQuitKeysAreDisabled(t *testing.T) {
@@ -241,19 +260,36 @@ func TestPickerQuitKeysAreDisabled(t *testing.T) {
 		t.Fatalf("q 应当进过滤态，得到 %v", got)
 	}
 
-	// ctrl+c 不产生 list 自己的退出（由外层模型决定怎么退）
+	// ctrl+c 必须交回外层模型：picker 吃掉它的话外层永远收不到，退出就没了
 	next := newTestPicker("一", "二")
-	if _, _, cmd := next.update(keyMsg("ctrl+c")); cmd != nil {
-		t.Fatal("ctrl+c 不该由 picker 产生命令（外层模型自己处理退出）")
+	_, handled, cmd := next.update(keyMsg("ctrl+c"))
+	if handled {
+		t.Fatal("ctrl+c 应当交回外层模型（退出由它决定）")
+	}
+	if cmd != nil {
+		t.Fatal("ctrl+c 不该由 picker 产生命令")
 	}
 }
 
 func TestHighlightMatchesMarksOnlyHitRunes(t *testing.T) {
-	got := highlightMatches("工作笔记", []int{0, 3})
-	if !strings.Contains(got, "工") || !strings.Contains(got, "记") {
-		t.Fatalf("命中字符不能丢：%q", got)
-	}
+	// lipgloss 在非终端环境里默认不输出颜色，不强制 profile 的话这条用例
+	// 删掉染色逻辑也照样绿（即它根本没钉住高亮）。
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previous)
+
 	if plain := highlightMatches("工作笔记", nil); plain != "工作笔记" {
 		t.Fatalf("没有命中时应当原样返回，得到 %q", plain)
+	}
+
+	got := highlightMatches("工作笔记", []int{0, 3})
+	if got == "工作笔记" {
+		t.Fatal("命中字符应当被染色")
+	}
+	if stripped := ansi.Strip(got); stripped != "工作笔记" {
+		t.Fatalf("染色不该改变文字内容，得到 %q", stripped)
+	}
+	if n := strings.Count(got, "38;2;"); n != 2 {
+		t.Fatalf("应当恰好染两个命中字符（工、记），得到 %d 个颜色序列：%q", n, got)
 	}
 }

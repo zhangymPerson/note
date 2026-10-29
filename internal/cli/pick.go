@@ -73,6 +73,9 @@ func (p picker) update(msg tea.Msg) (picker, bool, tea.Cmd) {
 			if p.list.FilterState() != list.Filtering {
 				return p, false, nil
 			}
+		case "ctrl+c":
+			// 退出是外层模型的职责：picker 把它吃掉的话外层永远收不到。
+			return p, false, nil
 		case "/":
 			if p.list.FilterState() != list.Filtering {
 				// 交回 list 自己的 / ：它进过滤态时不会把斜杠写进过滤串
@@ -100,8 +103,7 @@ func (p picker) update(msg tea.Msg) (picker, bool, tea.Cmd) {
 }
 
 // forward 把消息交给内层 list。
-func (p picker) forward(msg tea.Msg) (picker, bool, tea.Cmd) {
-	var cmd tea.Cmd
+func (p picker) forward(msg tea.Msg) (picker, bool, tea.Cmd) {	var cmd tea.Cmd
 	p.list, cmd = p.list.Update(msg)
 	return p, true, cmd
 }
