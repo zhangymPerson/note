@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -582,4 +583,153 @@ func TestUpdateNoteCipherRejectsPlaintextAndMissing(t *testing.T) {
 	if _, err := st.UpdateNoteCipher(ctx, plain.ID, base64.StdEncoding.EncodeToString([]byte("short")), testKDFParams); !errors.Is(err, ErrInvalidNote) {
 		t.Errorf("too short cipher: err = %v, want ErrInvalidNote", err)
 	}
+}
+
+func TestListNotesAllReturnsEveryNote(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 60; i++ { // 远超 ListNotes 的每页 20 条
+		body := fmt.Sprintf("正文 %d", i)
+		if _, err := st.CreateNote(ctx, NoteInput{Title: fmt.Sprintf("笔记 %02d", i), Content: &body}); err != nil {
+			t.Fatalf("create note %d: %v", i, err)
+		}
+	}
+
+	all, err := st.ListNotesAll(ctx, false)
+	if err != nil {
+		t.Fatalf("ListNotesAll: %v", err)
+	}
+	if len(all) != 60 {
+		t.Fatalf("ListNotesAll 必须不分页，得到 %d 条", len(all))
+	}
+}
+
+func TestListNotesAllOrdersByUpdatedAtDesc(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	ids := make([]string, 0, 3)
+	for i := 0; i < 3; i++ {
+		body := "body"
+		note, err := st.CreateNote(ctx, NoteInput{Title: fmt.Sprintf("笔记 %d", i), Content: &body})
+		if err != nil {
+			t.Fatalf("create note %d: %v", i, err)
+		}
+		ids = append(ids, note.ID)
+	}
+	// 时间戳是秒级，同一秒内创建的笔记顺序不定，直接改库把三条的 updated_at 拉开
+	for i, id := range ids {
+		stamp := fmt.Sprintf("2026-10-2%dT00:00:00Z", i+1)
+		if _, err := st.db.ExecContext(ctx, `UPDATE notes SET updated_at = ? WHERE id = ?`, stamp, id); err != nil {
+			t.Fatalf("set updated_at: %v", err)
+		}
+	}
+
+	all, err := st.ListNotesAll(ctx, false)
+	if err != nil {
+		t.Fatalf("ListNotesAll: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("want 3 notes, got %d", len(all))
+	}
+	for i, want := range []string{ids[2], ids[1], ids[0]} {
+		if all[i].ID != want {
+			t.Fatalf("第 %d 条应当是 %s，得到 %s（应当按 updated_at 倒序）", i, want, all[i].ID)
+		}
+	}
+}
+
+func TestListNotesAllTrashOnlyWhenDeleted(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	body := "body"
+	kept, err := st.CreateNote(ctx, NoteInput{Title: "留下的", Content: &body})
+	if err != nil {
+		t.Fatalf("create kept note: %v", err)
+	}
+	trashed, err := st.CreateNote(ctx, NoteInput{Title: "删掉的", Content: &body})
+	if err != nil {
+		t.Fatalf("create trashed note: %v", err)
+	}
+	if _, err := st.SoftDeleteNote(ctx, trashed.ID); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+
+	active, err := st.ListNotesAll(ctx, false)
+	if err != nil {
+		t.Fatalf("ListNotesAll(active): %v", err)
+	}
+	if len(active) != 1 || active[0].ID != kept.ID {
+		t.Fatalf("活动列表应当只剩留下的那条，得到 %+v", active)
+	}
+
+	inTrash, err := st.ListNotesAll(ctx, true)
+	if err != nil {
+		t.Fatalf("ListNotesAll(trash): %v", err)
+	}
+	if len(inTrash) != 1 || inTrash[0].ID != trashed.ID {
+		t.Fatalf("回收站列表应当只剩删掉的那条，得到 %+v", inTrash)
+	}
+}
+
+func TestListNotesAllEncryptedHasNoSummary(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+	configureMaster(t, st)
+
+	enc, err := st.CreateNote(ctx, NoteInput{
+		Title:     "加密的",
+		CipherB64: base64.StdEncoding.EncodeToString(testCipher()),
+		KDFParams: testKDFParams,
+	})
+	if err != nil {
+		t.Fatalf("create encrypted note: %v", err)
+	}
+
+	all, err := st.ListNotesAll(ctx, false)
+	if err != nil {
+		t.Fatalf("ListNotesAll: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("want 1 note, got %d", len(all))
+	}
+	if !all[0].Encrypted {
+		t.Fatalf("加密笔记应当标着 Encrypted：%+v", all[0])
+	}
+	if all[0].ID != enc.ID {
+		t.Fatalf("id 不符：%s != %s", all[0].ID, enc.ID)
+	}
+	if all[0].Content != nil {
+		t.Fatalf("加密笔记没有明文摘要，Content 必须为 nil：%q", *all[0].Content)
+	}
+}
+
+func TestListNotesAllDoesNotRecordActivity(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	body := "body"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "会议", Content: &body}); err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	before := countActivities(t, st)
+	if _, err := st.ListNotesAll(ctx, false); err != nil {
+		t.Fatalf("ListNotesAll: %v", err)
+	}
+	if after := countActivities(t, st); after != before {
+		t.Fatalf("ListNotesAll 不该写活动表：%d -> %d", before, after)
+	}
+}
+
+// countActivities 数一遍活动表；note list 的全量读取必须不往里写东西。
+func countActivities(t *testing.T, st *Store) int {
+	t.Helper()
+	var count int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM activities`).Scan(&count); err != nil {
+		t.Fatalf("count activities: %v", err)
+	}
+	return count
 }

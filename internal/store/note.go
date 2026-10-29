@@ -431,56 +431,31 @@ func (s *Store) ListNotes(ctx context.Context, filter NoteFilter) (NotePage, err
 	}
 	result := NotePage{Items: []NoteListItem{}, Page: page, PerPage: notesPerPage}
 
-	where := []string{"1 = 1"}
-	if filter.Deleted {
-		where = append(where, "n.deleted_at IS NOT NULL")
-	} else {
-		where = append(where, "n.deleted_at IS NULL")
-	}
-	var args []any
-	var like string
-	titleRank := ""
-	// 回收站按移入时间倒序；活动列表按更新时间倒序
-	orderBy := "n.updated_at DESC, n.id DESC"
-	if filter.Deleted {
-		orderBy = "n.deleted_at DESC, n.id DESC"
-	}
-
-	if trimmed := strings.TrimSpace(filter.Q); trimmed != "" {
-		like = "%" + escapeLike(trimmed) + "%"
-		args = append(args, like, like)
-		where = append(where, `(n.title LIKE ? ESCAPE '\' OR (n.is_encrypted = 0 AND n.content LIKE ? ESCAPE '\'))`)
-		if err := s.RecordSearch(ctx, trimmed); err != nil {
+	q := buildNoteQuery(filter)
+	if q.search != "" {
+		if err := s.RecordSearch(ctx, q.search); err != nil {
 			return result, err
 		}
 	}
-	if filter.CategoryID > 0 {
-		args = append(args, filter.CategoryID)
-		if filter.CategoryID == defaultCategoryID {
-			// 未分类的笔记存的是 category_id IS NULL，点默认分类时要把它们一起带出来
-			where = append(where, `(n.category_id = ? OR n.category_id IS NULL)`)
-		} else {
-			where = append(where, `n.category_id = ?`)
-		}
-	}
-	clause := strings.Join(where, " AND ")
 
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM notes n WHERE `+clause, args...,
+		`SELECT COUNT(*) FROM notes n WHERE `+q.clause, q.args...,
 	).Scan(&result.Total); err != nil {
 		return result, fmt.Errorf("count notes: %w", err)
 	}
 
+	args := q.args
+	titleRank := ""
 	// 标题命中排前：ORDER BY 的占位符必须排在 WHERE 之后、LIMIT 之前
-	if like != "" && !filter.Deleted {
-		titleRank = `CASE WHEN n.title LIKE ? ESCAPE '\' THEN 0 ELSE 1 END, `
-		args = append(args, like)
+	if q.like != "" && !filter.Deleted {
+		titleRank = titleRankSQL
+		args = append(args, q.like)
 	}
 	args = append(args, notesPerPage, (page-1)*notesPerPage)
 
 	rows, err := s.db.QueryContext(ctx,
-		listSelectSQL+` WHERE `+clause+`
-         ORDER BY `+titleRank+orderBy+`
+		listSelectSQL+` WHERE `+q.clause+`
+         ORDER BY `+titleRank+q.orderBy+`
          LIMIT ? OFFSET ?`,
 		args...)
 	if err != nil {
@@ -488,6 +463,68 @@ func (s *Store) ListNotes(ctx context.Context, filter NoteFilter) (NotePage, err
 	}
 	defer rows.Close()
 
+	items, err := scanNoteItems(rows)
+	if err != nil {
+		return result, err
+	}
+	result.Items = items
+	return result, nil
+}
+
+// noteQuery 是列表查询共用的 WHERE / ORDER BY 组装结果。
+// ListNotes 与 ListNotesAll 必须走同一条组装路径，否则两条路径的过滤口径
+//（未分类 = category_id IS NULL、回收站只看 deleted_at）会各自漂移。
+type noteQuery struct {
+	clause  string
+	orderBy string
+	// search 是去掉首尾空白的查询词；非空表示本次带关键词，由调用方决定要不要记搜索活动。
+	search string
+	// like 是查询词对应的 LIKE 模式；非空时调用方要在 WHERE 参数之后追加标题命中排序的占位符参数。
+	like string
+	args []any
+}
+
+// titleRankSQL 让标题命中的笔记排在正文命中之前；它自带一个占位符，
+// 位置必须在 WHERE 参数之后、LIMIT 之前。
+const titleRankSQL = `CASE WHEN n.title LIKE ? ESCAPE '\' THEN 0 ELSE 1 END, `
+
+func buildNoteQuery(filter NoteFilter) noteQuery {
+	where := []string{"1 = 1"}
+	if filter.Deleted {
+		where = append(where, "n.deleted_at IS NOT NULL")
+	} else {
+		where = append(where, "n.deleted_at IS NULL")
+	}
+	// 回收站按移入时间倒序；活动列表按更新时间倒序
+	orderBy := "n.updated_at DESC, n.id DESC"
+	if filter.Deleted {
+		orderBy = "n.deleted_at DESC, n.id DESC"
+	}
+
+	q := noteQuery{orderBy: orderBy}
+	if trimmed := strings.TrimSpace(filter.Q); trimmed != "" {
+		q.search = trimmed
+		q.like = "%" + escapeLike(trimmed) + "%"
+		q.args = append(q.args, q.like, q.like)
+		where = append(where, `(n.title LIKE ? ESCAPE '\' OR (n.is_encrypted = 0 AND n.content LIKE ? ESCAPE '\'))`)
+	}
+	if filter.CategoryID > 0 {
+		q.args = append(q.args, filter.CategoryID)
+		if filter.CategoryID == defaultCategoryID {
+			// 未分类的笔记存的是 category_id IS NULL，点默认分类时要把它们一起带出来
+			where = append(where, `(n.category_id = ? OR n.category_id IS NULL)`)
+		} else {
+			where = append(where, `n.category_id = ?`)
+		}
+	}
+	q.clause = strings.Join(where, " AND ")
+	return q
+}
+
+// scanNoteItems 把列表查询的行读成 NoteListItem；加密笔记没有明文摘要列，
+// 明文只回前 140 码点用于预览。
+func scanNoteItems(rows *sql.Rows) ([]NoteListItem, error) {
+	items := []NoteListItem{}
 	for rows.Next() {
 		var (
 			item       NoteListItem
@@ -501,7 +538,7 @@ func (s *Store) ListNotes(ctx context.Context, filter NoteFilter) (NotePage, err
 			&item.ID, &item.Title, &content, &encrypted,
 			&categoryID, &categoryNm, &deletedAt, &item.UpdatedAt,
 		); err != nil {
-			return result, fmt.Errorf("scan note list item: %w", err)
+			return nil, fmt.Errorf("scan note list item: %w", err)
 		}
 
 		item.Encrypted = encrypted == 1
@@ -514,17 +551,34 @@ func (s *Store) ListNotes(ctx context.Context, filter NoteFilter) (NotePage, err
 			value := deletedAt.String
 			item.DeletedAt = &value
 		}
-		// 加密笔记没有明文摘要列；明文只回前 140 码点用于预览
 		if content != nil && !item.Encrypted {
 			summary := truncateRunes(*content, summaryRunes)
 			item.Content = &summary
 		}
-		result.Items = append(result.Items, item)
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return result, fmt.Errorf("iterate notes: %w", err)
+		return nil, fmt.Errorf("iterate notes: %w", err)
 	}
-	return result, nil
+	return items, nil
+}
+
+// ListNotesAll 返回全部（deleted 为真时只返回回收站）笔记列表项：不分页、不记搜索活动。
+// note list 需要一次性读进内存做本地模糊筛选：逐键查库会经 RecordSearch 污染搜索历史，
+// 而每页 20 条的 LIMIT 会让「筛选」退化成「只筛第一页」。
+func (s *Store) ListNotesAll(ctx context.Context, deleted bool) ([]NoteListItem, error) {
+	q := buildNoteQuery(NoteFilter{Deleted: deleted})
+
+	rows, err := s.db.QueryContext(ctx,
+		listSelectSQL+` WHERE `+q.clause+`
+         ORDER BY `+q.orderBy,
+		q.args...)
+	if err != nil {
+		return nil, fmt.Errorf("list all notes: %w", err)
+	}
+	defer rows.Close()
+
+	return scanNoteItems(rows)
 }
 
 const listSelectSQL = `SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.deleted_at, n.updated_at
