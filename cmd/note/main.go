@@ -74,6 +74,12 @@ func run(args []string) error {
 	case cli.CommandAdd:
 		return runAdd(opts.ConfigPath, opts.Args)
 
+	case cli.CommandList:
+		return runList(opts.ConfigPath, opts.Args, opts.List)
+
+	case cli.CommandShow:
+		return runShow(opts.ConfigPath, opts.Args, opts.Show)
+
 	case cli.CommandWeb:
 		switch opts.WebAction {
 		case cli.WebStart:
