@@ -4,11 +4,13 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/rivo/uniseg"
 )
 
@@ -83,12 +85,58 @@ func TestListRowSummaryCollapsesWhitespace(t *testing.T) {
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("被截断时应当补省略号：%q", got)
 	}
+
+	// 宽度预算非正时不显示，绝不能把未截断的长串放出去
+	if got := listRowSummary(strings.Repeat("中", 30), 0); got != "" {
+		t.Fatalf("宽度预算为 0 时摘要应当为空，得到 %q", got)
+	}
+}
+
+func TestListDelegateRendersTwoLinesWithinWidth(t *testing.T) {
+	model := newTestListModel(
+		plainItem("a", strings.Repeat("很长的标题", 12), "工作", "2026-10-29T00:00:00Z"),
+		plainItem("b", "短标题", "", "2026-10-29T00:00:00Z"),
+	)
+	model.picker.list.SetSize(40, 10)
+
+	var b strings.Builder
+	listDelegate{}.Render(&b, model.picker.list, 0, model.picker.list.Items()[0])
+	out := b.String()
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("一项恒为两行高，得到 %d 行：%q", len(lines), out)
+	}
+	for i, line := range lines {
+		if width := lipgloss.Width(line); width > 40 {
+			t.Fatalf("第 %d 行显示宽度 %d 超过列表宽度 40：%q", i, width, line)
+		}
+	}
+}
+
+func TestLocalStampFallsBackToRawValue(t *testing.T) {
+	raw := "2026-10-29T14:03:05Z"
+	got := localStamp(raw)
+	if got == raw {
+		t.Fatalf("解析成功时应当按本机时区显示到分钟，得到原串 %q", got)
+	}
+	if _, err := time.Parse("2006-01-02 15:04", got); err != nil {
+		t.Fatalf("格式应当是 YYYY-MM-DD HH:MM，得到 %q", got)
+	}
+
+	if got := localStamp("not a time"); got != "not a time" {
+		t.Fatalf("解析失败时应当原样返回，得到 %q", got)
+	}
 }
 
 func TestListItemFilterTargetUsesTitleAndCategory(t *testing.T) {
 	item := plainItem("a", "会议纪要", "工作", "2026-10-29T00:00:00Z")
+	item.Summary = "预算讨论与排期"
 	if got := item.FilterTarget(); got != "会议纪要 工作" {
 		t.Fatalf("FilterTarget = %q", got)
+	}
+	if strings.Contains(item.FilterTarget(), "预算") {
+		t.Fatalf("摘要不该进 fuzzy 目标：%q", item.FilterTarget())
 	}
 	item.CategoryName = ""
 	if got := item.FilterTarget(); got != "会议纪要 未分类" {
@@ -183,6 +231,9 @@ func TestListModelEscWithoutSelectionQuits(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("Esc 应当让模型发出退出命令")
+	}
+	if msg := cmd(); msg != (tea.QuitMsg{}) {
+		t.Fatalf("Esc 应当发出 tea.Quit，得到 %T", msg)
 	}
 }
 

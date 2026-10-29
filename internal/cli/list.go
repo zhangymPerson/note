@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -219,6 +220,11 @@ func (d listDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	if !ok {
 		return
 	}
+	width := m.Width()
+	if width <= 0 {
+		// 还没拿到窗口尺寸时不画：画出一行超宽内容会把分页与视口算乱
+		return
+	}
 
 	selected := index == m.Index()
 	title := entry.item.Title
@@ -236,12 +242,16 @@ func (d listDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	line := styleCursor.Render(mark) + title
 
 	meta := entry.item.meta()
-	if gap := m.Width() - lipgloss.Width(line) - lipgloss.Width(meta); gap > 0 {
+	if gap := width - lipgloss.Width(line) - lipgloss.Width(meta); gap > 0 {
 		line += strings.Repeat(" ", gap)
 	}
 	line += styleMuted.Render(meta)
 
-	summary := listRowSummary(entry.item.Summary, m.Width()-4)
+	// 标题可能比终端还宽：不夹住的话它会折行，这一项就变成 3 行以上，
+	// 而 delegate 声明的 Height 仍是 2，分页与视口随之错位。
+	line = ansi.Truncate(line, width, "…")
+
+	summary := listRowSummary(entry.item.Summary, width-4)
 	fmt.Fprintf(w, "%s\n   %s\n", line, styleMuted.Render(summary))
 }
 
@@ -269,11 +279,13 @@ func localStamp(value string) string {
 }
 
 // listRowSummary 把库里的原始正文摘要压成单行并按显示宽度截断。
-// 不折叠空白的话，带换行的摘要会把「每项两行高」撑坏，分页与视口都跟着错。
+// 不折叠空白的话，带换行的摘要会把「每项两行高」撑坏，分页与视口都跟着错；
+// 宽度预算非正（终端窄到放不下游标与缩进）时干脆不显示，
+// 绝不能返回未截断的长串。
 func listRowSummary(content string, width int) string {
 	flat := strings.Join(strings.Fields(content), " ")
 	if width <= 0 {
-		return flat
+		return ""
 	}
 	return truncateDisplay(flat, width)
 }
