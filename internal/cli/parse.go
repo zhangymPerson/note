@@ -17,6 +17,8 @@ const (
 	CommandWeb
 	// CommandInfo 输出软件与运行信息。
 	CommandInfo
+	// CommandAdd 走交互向导新建一条明文笔记。
+	CommandAdd
 	// CommandHelp 显示帮助。
 	CommandHelp
 )
@@ -67,7 +69,8 @@ var valueFlags = map[string]bool{
 //
 // 形态：
 //
-//	note                    → CommandMenu
+//	note                    → CommandMenu（不带子命令：打印帮助）
+//	note add                → CommandAdd（交互向导）
 //	note -c <路径> web …    → CommandWeb（全局 -c 记入 Options.ConfigPath）
 //	note web -p 9000 …      → CommandWeb（参数留在 Options.Args）
 //	note info / note help / note -h … → 其余命令
@@ -87,6 +90,16 @@ func Parse(args []string) (Command, Options, error) {
 		case arg == "help":
 			opts.Args = args[i+1:]
 			return CommandHelp, opts, nil
+		case arg == "add":
+			rest := args[i+1:]
+			if containsHelpFlag(rest) {
+				opts.Args = []string{"add"}
+				return CommandHelp, opts, nil
+			}
+			if len(rest) > 0 {
+				return CommandMenu, Options{}, fmt.Errorf("note add 不接受参数（用 note add --help 查看用法）")
+			}
+			return CommandAdd, opts, nil
 		case arg == "web" || arg == "info":
 			rest := args[i+1:]
 			if arg == "web" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
@@ -109,7 +122,7 @@ func Parse(args []string) (Command, Options, error) {
 		case strings.HasPrefix(arg, "-"):
 			return CommandMenu, Options{}, fmt.Errorf("无法识别的参数 %s（启动 Web 服务请用 note web）", arg)
 		default:
-			return CommandMenu, Options{}, fmt.Errorf("无法识别的命令 %s（可用命令: web, info, help）", arg)
+			return CommandMenu, Options{}, fmt.Errorf("无法识别的命令 %s（可用命令: add, web, info, help）", arg)
 		}
 	}
 	return CommandMenu, opts, nil

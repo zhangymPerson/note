@@ -45,3 +45,18 @@ func TestUsageForTopics(t *testing.T) {
 		t.Fatal("未知主题应回退为总帮助")
 	}
 }
+
+func TestUsageListsAddCommand(t *testing.T) {
+	if !strings.Contains(Usage(), "add") {
+		t.Fatal("总帮助的命令表里缺少 add")
+	}
+}
+
+func TestUsageForAddDescribesThreeSteps(t *testing.T) {
+	text := UsageFor("add")
+	for _, want := range []string{"分类", "标题", "正文", "Ctrl+D"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("addUsage 缺少 %q", want)
+		}
+	}
+}

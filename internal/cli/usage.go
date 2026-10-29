@@ -15,11 +15,12 @@ func Usage() string {
 	b.WriteString("命令:\n")
 	b.WriteString("  web      启动 Web 服务（start/stop/status 管理后台实例，不带动作则前台运行）\n")
 	b.WriteString("  info     输出软件与运行信息\n")
+	b.WriteString("  add      新建一条笔记（交互向导：选分类 → 标题 → 正文）\n")
 	b.WriteString("  help     显示帮助；help <命令> 显示该命令的参数\n\n")
 	b.WriteString("全局参数:\n")
 	b.WriteString("  -c, --config <路径>    配置文件路径\n")
 	b.WriteString("  -h, --help             显示帮助\n\n")
-	b.WriteString("不带命令运行 note 进入交互菜单。\n")
+	b.WriteString("不带命令运行 note 等价于 note help（打印本帮助）。\n")
 	b.WriteString("配置优先级: 命令行参数 > 配置文件 > 内置默认值。\n\n")
 	b.WriteString("示例:\n")
 	b.WriteString("  note web                    前台启动 Web 服务（Ctrl+C 退出）\n")
@@ -53,6 +54,8 @@ func UsageFor(topic string) string {
 		return webUsage()
 	case "info":
 		return infoUsage()
+	case "add":
+		return addUsage()
 	default:
 		return Usage()
 	}
@@ -91,5 +94,26 @@ func infoUsage() string {
 	b.WriteString("参数:\n")
 	b.WriteString("  -c, --config <路径>    配置文件路径\n")
 	b.WriteString("  -h, --help             显示本帮助\n")
+	return b.String()
+}
+
+// addUsage 是 note add 的主题帮助；键位与向导实现（add.go）必须保持一致。
+func addUsage() string {
+	var b strings.Builder
+	b.WriteString("用法: note add [全局参数]\n\n")
+	b.WriteString("在交互式终端里依次完成三步，保存为一条明文笔记：\n")
+	b.WriteString("  1. 选择分类（输入即过滤；列表末尾可当场新建分类）\n")
+	b.WriteString("  2. 输入标题（1-200 字符）\n")
+	b.WriteString("  3. 输入正文（0-2000 码点，支持换行）\n\n")
+	b.WriteString("键位:\n")
+	b.WriteString("  分类步    ↑/↓ 选择 · 输入过滤 · Enter 确认 · Esc 放弃\n")
+	b.WriteString("  标题步    Enter 下一步 · Esc 放弃\n")
+	b.WriteString("  正文步    Enter 换行 · Ctrl+D 完成 · Ctrl+E 用 $EDITOR 编辑 · Esc 放弃\n\n")
+	b.WriteString("全局参数:\n")
+	b.WriteString("  -c, --config <路径>    配置文件路径\n")
+	b.WriteString("  --db <路径>            SQLite 数据库路径\n")
+	b.WriteString("  -h, --help             显示本帮助\n\n")
+	b.WriteString("note add 不接受其它参数；脚本化创建笔记请用 POST /api/notes。\n")
+	b.WriteString("stdin 不是终端时报错退出，不会挂起等待输入。\n")
 	return b.String()
 }

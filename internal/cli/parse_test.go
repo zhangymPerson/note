@@ -171,3 +171,29 @@ func TestParseWebStatusHelp(t *testing.T) {
 		t.Fatalf("cmd=%v opts=%+v err=%v", cmd, opts, err)
 	}
 }
+
+func TestParseAddCommand(t *testing.T) {
+	cmd, opts, err := Parse([]string{"add"})
+	if err != nil || cmd != CommandAdd {
+		t.Fatalf("Parse(add) = %v, %v; want CommandAdd", cmd, err)
+	}
+	if len(opts.Args) != 0 {
+		t.Fatalf("add 不带参数，Args 应为空，得到 %v", opts.Args)
+	}
+}
+
+func TestParseAddHelpFlag(t *testing.T) {
+	cmd, opts, err := Parse([]string{"add", "-h"})
+	if err != nil || cmd != CommandHelp {
+		t.Fatalf("Parse(add -h) = %v, %v; want CommandHelp", cmd, err)
+	}
+	if len(opts.Args) != 1 || opts.Args[0] != "add" {
+		t.Fatalf("帮助主题应为 [add]，得到 %v", opts.Args)
+	}
+}
+
+func TestParseAddRejectsExtraArgs(t *testing.T) {
+	if _, _, err := Parse([]string{"add", "foo"}); err == nil {
+		t.Fatal("note add 不接受多余参数，应报错")
+	}
+}
