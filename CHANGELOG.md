@@ -74,6 +74,17 @@
 
 ### Changed
 
+- 移动端与浏览器兼容适配：断点收敛为 1024px / 640px 两档，360–430px 触控视口可独立走完主流程（实现过程与关键逻辑）：
+  - **断点**：`app.css` 原本零散着 480 / 560 / 720 三处媒体查询，改成两档并统一挪到文件末尾（同优先级下后写的规则才生效；把媒体查询留在基础规则之前，`min-height`、`opacity` 这些会被后面更靠后的基础声明覆盖掉）。`≤1024px` 时编辑页与列表页收成单列、分类树用 `order: -1` 提到列表上方、预览区 `max-height: 50vh` + `overflow-y: auto` 自带滚动；`≤640px` 时进入触控布局。
+  - **顶栏**：用 `order` 把品牌/用户名/主题留在第一行、导航整行下移到第二行并横向滚动（隐藏滚动条），四个链接各自 `min-height: 44px`。只改视觉顺序，不动 DOM 顺序，读屏与 Tab 顺序保持「品牌 → 概览 → 全部笔记 → 新建 → 回收站 → 用户」。
+  - **触控尺寸**：`.button`、`.cat-act`、`.cat-row` 在 ≤640px 时不低于 44px；输入框字号统一 `1rem`（iOS 对 <16px 的输入框会在聚焦时自动放大页面，等于把布局顶破）。
+  - **卡片式列表**：`.note-row` 在 ≤640px 换行，正文按钮与删除按钮各占一行，回收站的恢复/彻底删除并排铺满；首页搜索框与按钮各占一行；解锁表单按钮独占一行；信息页 `.info-rows` 改成「标签一行、值一行」，长路径不再被右对齐挤成锯齿。
+  - **热力图**：53 周语义不变，只把格子从 11px 缩到 10px，其余交给容器横向滚动（`overscroll-behavior-x: contain` + `-webkit-overflow-scrolling: touch`），窄屏显示「左右滑动可查看全年」提示；容器补 `tabindex="0"`（可滚动区域需要键盘焦点，WAI 对 scrollable region 的建议，已显式忽略 `a11y_no_noninteractive_tabindex`）与更完整的 `aria-label`。
+  - **视口与安全区**：`body`/`.shell`/`.boot`/`.onboarding` 用 `min-height: 100dvh`（前一行保留 `100vh` 回落）；`main` 底部与 `.toasts` 用 `env(safe-area-inset-*)`，`index.html` 的 viewport 补 `viewport-fit=cover` 才能生效。
+  - **长文本**：`body` 与 `.note-title`/`.detail-head h1` 补 `overflow-wrap: anywhere`，长中文标题、长查询词、长路径与报错文案就地换行。
+  - 断点外的行为不变：`(hover: none)` 或 ≤1024px 时分类操作按钮常显（不可依赖 hover 才能点到），焦点样式统一走 `:focus-visible`。
+  - 验证：`just test`（Go 8 包 152 项 + 前端 15 文件 132 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；`.run/responsive-verify.mjs` 用真实二进制 + Edge headless 跑 116 项全 PASS——四个视口 × 七个页面无横向溢出与出屏元素、窄屏按钮 ≥44px 与输入框 ≥16px、热力图可滚动且不压缩、编辑页单列 + 预览自带滚动、列表页分类树在列表上方、三套主题在 390 视口不破版、720×450（≈200% 缩放）无溢出、390×844 触控全流程（搜索 → 详情 → 编辑预览 → 保存 → 删除 → 恢复 → 分类增删改 → 加密笔记解锁与删除）。`.run/trash-verify.mjs` 51 项回归照旧全 PASS。
+
 - 删除语义从「立即永久删除」改为「先移入回收站」：`DELETE /api/notes/{id}` 只打 `deleted_at`，彻底清除走 `?purge=1`；数据库 schema 升到 `user_version = 6`（旧库启动自动加列并建两个部分索引，存量笔记全部视为未删除）。加密笔记的删除改为**必须先解锁**——这与旧 PRD FR-1.4「加密笔记删除不要求密码」相反，门禁落在前端交互层（服务端仍零密码学）。页面数量增至 10 个主视图（新增回收站 `/trash`）。
 
 - 首页「使用统计」不再显示单一的「总查询次数」，改为「累计事件 + 活跃天数 + 事件构成（六行）」，热力图与活跃天数改为按全部事件（查询 / 查看 / 新建 / 编辑 / 删除 / 分类维护）统计；`/api/stats` 新增 `total_events` 与 `events_by_kind`，`total_searches` 与 `top_queries` 保留但仅指查询。数据库 schema 升到 `user_version = 5`（旧库首次启动自动重建成 `activities` 表，历史查询记录不丢）。

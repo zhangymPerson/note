@@ -17,7 +17,15 @@
   }
 </script>
 
-<div class="heatmap" role="img" aria-label="近一年每天操作次数的热力图，颜色越深表示当天操作越多">
+<!-- 窄屏装不下 53 周，容器自身横向滚动。可滚动区域需要键盘焦点才能左右翻页
+     （WAI 对 scrollable region 的建议），因此给非交互容器加 tabindex 并显式忽略该规则。 -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div
+  class="heatmap"
+  role="img"
+  tabindex="0"
+  aria-label="近一年每天操作次数的热力图，颜色越深表示当天操作越多，窄屏可左右滚动查看"
+>
   <div class="heat-field">
     {#each weekdayLabels as label, row}
       <span class="heat-weekday" style="grid-row: {row + 2}">{label}</span>
@@ -38,6 +46,8 @@
       {/each}
     {/each}
   </div>
+
+  <p class="heat-hint">左右滑动可查看全年</p>
 
   <div class="heat-legend">
     <span class="muted-text">少</span>
