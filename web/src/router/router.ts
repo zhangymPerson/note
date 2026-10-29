@@ -9,6 +9,7 @@ export type RouteName =
   | "forgot"
   | "master"
   | "info"
+  | "template"
   | "trash"
   | "notFound";
 
@@ -34,6 +35,7 @@ const patterns: RoutePattern[] = [
   // 分类管理页已并入列表页；旧地址与旧书签仍落到列表，地址由页面自行纠正
   { name: "list", pattern: /^\/categories$/, keys: [] },
   { name: "info", pattern: /^\/info$/, keys: [] },
+  { name: "template", pattern: /^\/template$/, keys: [] },
   { name: "trash", pattern: /^\/trash$/, keys: [] },
 ];
 

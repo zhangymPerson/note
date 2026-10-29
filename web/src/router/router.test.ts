@@ -70,6 +70,14 @@ describe("matchRoute", () => {
     });
   });
 
+  it("matches the note template route", () => {
+    expect(matchRoute("/template")).toEqual({ name: "template", params: {} });
+    expect(matchRoute("/template?next=%2Fnotes%2Fnew")).toEqual({
+      name: "template",
+      params: {},
+    });
+  });
+
   it("matches the info route", () => {
     expect(matchRoute("/info")).toEqual({ name: "info", params: {} });
     expect(matchRoute("/info?x=1")).toEqual({ name: "info", params: {} });

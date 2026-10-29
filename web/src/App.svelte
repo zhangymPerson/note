@@ -7,6 +7,7 @@
   import NoteEditorView from './views/NoteEditorView.svelte'
   import MasterPasswordView from './views/MasterPasswordView.svelte'
   import InfoView from './views/InfoView.svelte'
+  import TemplateView from './views/TemplateView.svelte'
   import ForgotPasswordView from './views/ForgotPasswordView.svelte'
   import TrashView from './views/TrashView.svelte'
   import NotFoundView from './views/NotFoundView.svelte'
@@ -23,6 +24,7 @@
     forgot: '忘记密码',
     master: '主密码',
     info: '用户与信息',
+    template: '新建笔记模板',
     trash: '回收站',
     notFound: '页面不存在',
   }
@@ -66,6 +68,8 @@
       <MasterPasswordView />
     {:else if $route.name === 'info'}
       <InfoView />
+    {:else if $route.name === 'template'}
+      <TemplateView />
     {:else if $route.name === 'trash'}
       <TrashView />
     {:else}
