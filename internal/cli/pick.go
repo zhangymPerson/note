@@ -103,7 +103,8 @@ func (p picker) update(msg tea.Msg) (picker, bool, tea.Cmd) {
 }
 
 // forward 把消息交给内层 list。
-func (p picker) forward(msg tea.Msg) (picker, bool, tea.Cmd) {	var cmd tea.Cmd
+func (p picker) forward(msg tea.Msg) (picker, bool, tea.Cmd) {
+	var cmd tea.Cmd
 	p.list, cmd = p.list.Update(msg)
 	return p, true, cmd
 }
