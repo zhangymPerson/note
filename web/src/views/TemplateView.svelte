@@ -1,6 +1,7 @@
 <script lang="ts">
   import Markdown from '../components/Markdown.svelte'
   import { ApiRequestError } from '../lib/api'
+  import { safeNextPath } from '../lib/nav'
   import { countCodePoints } from '../lib/notes'
   import {
     getTemplate,
@@ -11,7 +12,8 @@
   import { navigate } from '../router/router'
 
   // 返回目标来自 /template?next=…（新建笔记页交棒过来时带上）；直接打开就回新建页。
-  const next = new URLSearchParams(location.search).get('next') || '/notes/new'
+  const next =
+    safeNextPath(new URLSearchParams(location.search).get('next')) || '/notes/new'
 
   let content = $state('')
   // original 是磁盘上（或内置默认）的内容，用来判断「有没有改过」。

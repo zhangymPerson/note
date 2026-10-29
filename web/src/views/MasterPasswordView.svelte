@@ -2,6 +2,7 @@
   import { generateSaltB64 } from '../lib/crypto'
   import { getMasterPassword, setMasterPassword } from '../lib/notes'
   import { unlockKey } from '../lib/session-key'
+  import { safeNextPath } from '../lib/nav'
   import { navigate } from '../router/router'
 
   let password = $state('')
@@ -25,9 +26,7 @@
 
   // ?next= 是编辑器在跳转前留下的回跳路径，只接受站内以 / 开头的绝对路径。
   function nextPath(): string {
-    const raw = new URLSearchParams(location.search).get('next') ?? ''
-    if (raw === '' || !raw.startsWith('/') || raw.startsWith('//')) return ''
-    return raw
+    return safeNextPath(new URLSearchParams(location.search).get('next'))
   }
 
   async function load(): Promise<void> {

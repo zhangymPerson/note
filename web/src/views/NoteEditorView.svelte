@@ -349,11 +349,13 @@
       <div class="field">
         <div class="field-label-row">
           <label for="note-content">正文</label>
-          {#if !isEdit}
-            <button class="linklike" type="button" onclick={editTemplate}>编辑模板</button>
-          {/if}
-          <span class="counter {tooLong ? 'counter-over' : ''}" aria-live="polite">
-            {contentLength} / {MAX_CONTENT_CODEPOINTS}
+          <span class="field-label-actions">
+            {#if !isEdit}
+              <button class="linklike" type="button" onclick={editTemplate}>编辑模板</button>
+            {/if}
+            <span class="counter {tooLong ? 'counter-over' : ''}" aria-live="polite">
+              {contentLength} / {MAX_CONTENT_CODEPOINTS}
+            </span>
           </span>
         </div>
         <textarea

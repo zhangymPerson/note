@@ -720,6 +720,12 @@ input {
   gap: 6px;
 }
 
+.field-label-actions {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
 .field-label-row {
   display: flex;
   align-items: baseline;
