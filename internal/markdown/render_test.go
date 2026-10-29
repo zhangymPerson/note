@@ -43,3 +43,31 @@ func TestRenderTrimsTrailingNewlines(t *testing.T) {
 		t.Fatalf("Render 返回的文本不该带结尾换行（由调用方决定怎么打印）：%q", out)
 	}
 }
+
+func TestRenderWidthZeroSkipsWordWrap(t *testing.T) {
+	long := strings.Repeat("很长的一句话 ", 20) + "\n"
+	narrow, err := Render(long, Options{Style: "notty", Width: 40})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	unwrapped, err := Render(long, Options{Style: "notty", Width: 0})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if unwrapped == narrow {
+		t.Fatal("Width 为 0 时不该折行（应当沿用 glamour 默认宽度）")
+	}
+	if !strings.Contains(unwrapped, "很长的一句话 很长的一句话") {
+		t.Fatalf("Width 为 0 时正文被折行或吞掉了：%q", unwrapped)
+	}
+}
+
+func TestRenderErrorMessageIsChinese(t *testing.T) {
+	_, err := Render("hi\n", Options{Style: "nope"})
+	if err == nil {
+		t.Fatal("未知风格应当报错")
+	}
+	if !strings.Contains(err.Error(), "渲染") {
+		t.Fatalf("错误信息是给用户看的，必须是中文：%v", err)
+	}
+}

@@ -34,11 +34,11 @@ func Render(src string, opts Options) (string, error) {
 
 	renderer, err := glamour.NewTermRenderer(options...)
 	if err != nil {
-		return "", fmt.Errorf("render markdown: %w", err)
+		return "", fmt.Errorf("创建 Markdown 渲染器失败：%w", err)
 	}
 	out, err := renderer.Render(src)
 	if err != nil {
-		return "", fmt.Errorf("render markdown: %w", err)
+		return "", fmt.Errorf("渲染 Markdown 失败：%w", err)
 	}
 	return strings.TrimRight(out, "\n"), nil
 }
