@@ -383,3 +383,49 @@ func TestBuildAddNoteDropsDefaultCategoryID(t *testing.T) {
 		t.Fatalf("标题/正文透传错误: %+v", got)
 	}
 }
+
+func TestMatchRangeFindsCaseInsensitiveSubstring(t *testing.T) {
+	start, end, ok := matchRange("读书笔记", "笔")
+	if !ok || start != 6 || end != 9 {
+		t.Fatalf("应在「笔」处命中（字节 6..9），得到 %d,%d,%v", start, end, ok)
+	}
+	if _, _, ok := matchRange("工作", "work"); ok {
+		t.Fatal("不匹配时不该命中")
+	}
+	if _, _, ok := matchRange("工作", "  "); ok {
+		t.Fatal("空查询不该命中整行")
+	}
+}
+
+func TestCategoryStepRoutesTypingToFilterInput(t *testing.T) {
+	m := newTestAddModel(&fakeBackend{})
+	if !m.filterInput.Focused() {
+		t.Fatal("分类步的过滤框应处于聚焦状态（游标才会闪烁）")
+	}
+
+	m = typeText(m, "读")
+	if m.filter != "读" {
+		t.Fatalf("过滤框应收到输入，filter=%q", m.filter)
+	}
+	if len(m.filtered) != 1 || m.filtered[0].Name != "读书笔记" {
+		t.Fatalf("应过滤到读书笔记，得到 %+v", m.filtered)
+	}
+
+	m = press(m, "backspace")
+	if m.filter != "" || len(m.filtered) != 3 {
+		t.Fatalf("退格应清空过滤并复原列表，filter=%q len=%d", m.filter, len(m.filtered))
+	}
+}
+
+func TestCategoryStepKeepsJAndKForNavigationWhenFilterEmpty(t *testing.T) {
+	m := newTestAddModel(&fakeBackend{})
+	m = typeText(m, "j")
+	if m.cursor != 1 || m.filter != "" {
+		t.Fatalf("过滤为空时 j 应向下移动，cursor=%d filter=%q", m.cursor, m.filter)
+	}
+	m = typeText(m, "工")
+	m = typeText(m, "j")
+	if m.filter != "工j" {
+		t.Fatalf("过滤非空时 j 应进入过滤串，filter=%q", m.filter)
+	}
+}

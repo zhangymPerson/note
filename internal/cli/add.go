@@ -71,11 +71,12 @@ type addModel struct {
 	deps AddDeps
 	step addStep
 
-	all      []Category
-	filtered []Category
-	filter   string
-	cursor   int // 0..len(filtered)；等于 len(filtered) 表示末尾的「+ 新建分类…」行
-	chosen   *Category
+	all         []Category
+	filtered    []Category
+	filter      string // 与 filterInput.Value() 同步，供过滤与高亮使用
+	filterInput textinput.Model
+	cursor      int // 0..len(filtered)；等于 len(filtered) 表示末尾的「+ 新建分类…」行
+	chosen      *Category
 
 	create    textinput.Model
 	createErr string
@@ -95,21 +96,30 @@ type addModel struct {
 
 // newAddModel 造一个只含默认值、尚未加载分类的模型。
 func newAddModel(deps AddDeps) addModel {
+	filter := textinput.New()
+	filter.Placeholder = "过滤分类…"
+	filter.Prompt = "> "
+	filter.PromptStyle = stylePrompt
+	filter.Focus()
+
 	create := textinput.New()
 	create.Placeholder = "分类名"
 	create.CharLimit = maxAddCategoryRunes
-	create.Prompt = "  > "
+	create.Prompt = "> "
+	create.PromptStyle = stylePrompt
 
 	title := textinput.New()
 	title.Placeholder = "标题"
 	title.CharLimit = maxAddTitleRunes
-	title.Prompt = "  > "
+	title.Prompt = "> "
+	title.PromptStyle = stylePrompt
 
 	body := textarea.New()
 	body.Placeholder = "正文（支持换行）"
 	body.ShowLineNumbers = false
+	body.Prompt = "" // 默认的 "┃ " 竖线在写正文时只是噪声
 
-	m := addModel{deps: deps, step: stepCategory, create: create, title: title, body: body, width: 80, height: 24}
+	m := addModel{deps: deps, step: stepCategory, filterInput: filter, create: create, title: title, body: body, width: 80, height: 24}
 	m.layout()
 	return m
 }
@@ -123,6 +133,7 @@ func (m *addModel) layout() {
 	if width > 80 {
 		width = 80
 	}
+	m.filterInput.Width = width
 	m.create.Width = width
 	m.title.Width = width
 	m.body.SetWidth(width)
@@ -134,7 +145,8 @@ func (m *addModel) layout() {
 	m.body.SetHeight(height)
 }
 
-func (m addModel) Init() tea.Cmd { return nil }
+// Init 让分类步的过滤框一开始就闪烁游标；后续步进各自返回对应控件的 Blink。
+func (m addModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -193,11 +205,12 @@ func (m *addModel) applyFilter() {
 	}
 }
 
-// startNewCategory 进入「新建分类」子流程。
+// startNewCategory 进入「新建分类」子流程，焦点从过滤框交给分类名输入框。
 func (m addModel) startNewCategory() addModel {
 	m.step = stepNewCategory
 	m.createErr = ""
 	m.create.SetValue("")
+	m.filterInput.Blur()
 	m.create.Focus()
 	return m
 }
@@ -207,39 +220,50 @@ func (m addModel) updateCategoryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.saved = false
 		return m, tea.Quit
-	case "up", "ctrl+k":
+	case "up", "ctrl+k", "ctrl+p":
 		if m.cursor > 0 {
 			m.cursor--
 		}
 		return m, nil
-	case "down", "ctrl+j":
+	case "down", "ctrl+j", "ctrl+n":
 		if m.cursor < len(m.filtered) {
 			m.cursor++
 		}
 		return m, nil
-	case "backspace":
-		if runes := []rune(m.filter); len(runes) > 0 {
-			m.filter = string(runes[:len(runes)-1])
-			m.cursor = 0
-			m.applyFilter()
+	case "j", "k":
+		// 过滤为空时 j/k 当上下移动（gum filter 的习惯）；已经在过滤就照常输入。
+		if m.filter == "" {
+			if msg.String() == "j" {
+				if m.cursor < len(m.filtered) {
+					m.cursor++
+				}
+			} else if m.cursor > 0 {
+				m.cursor--
+			}
+			return m, nil
 		}
-		return m, nil
 	case "enter":
 		if m.cursor >= len(m.filtered) {
 			return m.startNewCategory(), textinput.Blink
 		}
 		chosen := m.filtered[m.cursor]
 		m.chosen = &chosen
+		m.filterInput.Blur()
 		m.step = stepTitle
 		m.title.Focus()
 		return m, textinput.Blink
 	}
-	if msg.Type == tea.KeyRunes {
-		m.filter += string(msg.Runes)
+
+	// 其余按键（可见字符与退格都算）进过滤框，列表随之重算。
+	previous := m.filter
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	m.filter = m.filterInput.Value()
+	if m.filter != previous {
 		m.cursor = 0
-		m.applyFilter()
 	}
-	return m, nil
+	m.applyFilter()
+	return m, cmd
 }
 
 func (m addModel) updateNewCategoryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -247,8 +271,9 @@ func (m addModel) updateNewCategoryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.createErr = ""
 		m.create.Blur()
+		m.filterInput.Focus()
 		m.step = stepCategory
-		return m, nil
+		return m, textinput.Blink
 	case "enter":
 		name := strings.TrimSpace(m.create.Value())
 		if err := validateCategoryName(name); err != nil {
@@ -430,74 +455,97 @@ func (m addModel) View() string {
 
 func (m addModel) viewCategory() string {
 	var b strings.Builder
-	b.WriteString("note add · 选择分类（1/3）")
-	if m.filter != "" {
-		b.WriteString("    过滤：" + m.filter + "▌")
-	}
+	b.WriteString(header("选择分类", "1/3"))
+	b.WriteString("\n\n")
+	b.WriteString(m.filterInput.View())
 	b.WriteString("\n\n")
 	for i, c := range m.filtered {
-		b.WriteString(cursorMark(i == m.cursor))
-		fmt.Fprintf(&b, "%s  ·  %d 篇\n", c.Name, c.Count)
+		b.WriteString(styleCursor.Render(cursorMark(i == m.cursor)))
+		name := highlight(c.Name, m.filter)
+		if i == m.cursor {
+			name = styleSelected.Render(name)
+		}
+		b.WriteString(name + styleMuted.Render(fmt.Sprintf("  %d 篇", c.Count)) + "\n")
 	}
-	b.WriteString(cursorMark(m.cursor == len(m.filtered)))
-	b.WriteString("+ 新建分类…\n\n")
-	b.WriteString("输入即过滤 · ↑/↓ 选择 · Enter 确认 · Esc 放弃\n")
+	if m.cursor == len(m.filtered) {
+		b.WriteString(styleCursor.Render(cursorMark(true)) + styleSelected.Render("+ 新建分类…") + "\n")
+	} else {
+		b.WriteString(styleCursor.Render(cursorMark(false)) + styleMuted.Render("+ 新建分类…") + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(help([][2]string{{"输入", "过滤"}, {"↑/↓", "选择"}, {"Enter", "确认"}, {"Esc", "放弃"}}) + "\n")
 	return b.String()
 }
 
 func (m addModel) viewNewCategory() string {
 	var b strings.Builder
-	b.WriteString("note add · 新建分类\n\n")
+	b.WriteString(header("新建分类", ""))
+	b.WriteString("\n\n")
 	b.WriteString(m.create.View() + "\n")
-	fmt.Fprintf(&b, "    %d/%d\n", utf8.RuneCountInString(strings.TrimSpace(m.create.Value())), maxAddCategoryRunes)
+	b.WriteString(counter(utf8.RuneCountInString(strings.TrimSpace(m.create.Value())), maxAddCategoryRunes, false) + "\n")
 	if m.createErr != "" {
-		b.WriteString("  ! " + m.createErr + "\n")
+		b.WriteString(styleWarn.Render("! "+m.createErr) + "\n")
 	}
-	b.WriteString("\nEnter 创建 · Esc 返回分类列表\n")
+	b.WriteString("\n" + help([][2]string{{"Enter", "创建"}, {"Esc", "返回分类列表"}}) + "\n")
 	return b.String()
 }
 
 func (m addModel) viewTitle() string {
 	var b strings.Builder
-	b.WriteString("note add · 标题（2/3）")
+	b.WriteString(header("标题", "2/3"))
 	if m.chosen != nil {
-		b.WriteString("    分类：" + m.chosen.Name)
+		b.WriteString(styleMuted.Render(" · 分类 " + m.chosen.Name))
 	}
 	b.WriteString("\n\n")
 	b.WriteString(m.title.View() + "\n")
-	fmt.Fprintf(&b, "    %d/%d\n", utf8.RuneCountInString(strings.TrimSpace(m.title.Value())), maxAddTitleRunes)
+	b.WriteString(counter(utf8.RuneCountInString(strings.TrimSpace(m.title.Value())), maxAddTitleRunes, false) + "\n")
 	if m.titleErr != "" {
-		b.WriteString("  ! " + m.titleErr + "\n")
+		b.WriteString(styleWarn.Render("! "+m.titleErr) + "\n")
 	}
-	b.WriteString("\nEnter 下一步 · Esc 放弃\n")
+	b.WriteString("\n" + help([][2]string{{"Enter", "下一步"}, {"Esc", "放弃"}}) + "\n")
 	return b.String()
 }
 
 func (m addModel) viewContent() string {
 	var b strings.Builder
-	b.WriteString("note add · 正文（3/3）")
+	b.WriteString(header("正文", "3/3"))
 	if m.chosen != nil {
-		b.WriteString("    分类：" + m.chosen.Name)
+		b.WriteString(styleMuted.Render(" · 分类 " + m.chosen.Name))
 	}
 	if title := strings.TrimSpace(m.title.Value()); title != "" {
-		b.WriteString(" · 标题：" + title)
+		b.WriteString(styleMuted.Render(" · 标题 " + title))
 	}
 	b.WriteString("\n\n")
 	b.WriteString(m.body.View() + "\n")
-	fmt.Fprintf(&b, "    %d/%d 码点\n", utf8.RuneCountInString(m.body.Value()), maxAddContentRunes)
-	if m.status != "" {
-		b.WriteString("  ! " + m.status + "\n")
+	used := utf8.RuneCountInString(m.body.Value())
+	if used > maxAddContentRunes {
+		b.WriteString(counter(used, maxAddContentRunes, true) + "\n")
+		b.WriteString(styleWarn.Render(fmt.Sprintf("! 超出 %d 个码点，先删掉一些再用 Ctrl+D 保存", used-maxAddContentRunes)) + "\n")
+	} else {
+		b.WriteString(counter(used, maxAddContentRunes, false) + "\n")
 	}
-	b.WriteString("\nEnter 换行 · Ctrl+D 完成 · Ctrl+E 用 $EDITOR 编辑 · Esc 放弃\n")
+	if m.status != "" {
+		b.WriteString(styleWarn.Render("! "+m.status) + "\n")
+	}
+	b.WriteString("\n" + help([][2]string{{"Enter", "换行"}, {"Ctrl+D", "完成"}, {"Ctrl+E", "用 $EDITOR 编辑"}, {"Esc", "放弃"}}) + "\n")
 	return b.String()
 }
 
-// cursorMark 返回列表行前缀：选中行用 "  > "，其余对齐缩进。
+// cursorMark 返回列表行前缀：选中行是洋红的 "> "，其余按宽度缩进。
 func cursorMark(selected bool) string {
 	if selected {
-		return "  > "
+		return "> "
 	}
-	return "    "
+	return "  "
+}
+
+// counter 渲染 "N/上限" 计数：未超限压暗，超限变红并带感叹号。
+func counter(used, limit int, over bool) string {
+	text := fmt.Sprintf("%d/%d", used, limit)
+	if over {
+		return "  " + styleWarn.Render("! "+text)
+	}
+	return "  " + styleMuted.Render(text)
 }
 
 // filterCategories 按名字做不区分大小写的子串过滤，保持输入顺序。
