@@ -216,3 +216,170 @@ func TestEmptyFilterResultFallsOnNewCategoryRow(t *testing.T) {
 		t.Fatalf("过滤到空时回车应进入新建分类步，当前 step=%v", m.step)
 	}
 }
+
+func TestTitleStepRequiresNonEmpty(t *testing.T) {
+	m := newTestAddModel(&fakeBackend{})
+	m = pickCategory(t, m, "工作")
+
+	m = typeText(m, "   ")
+	m = press(m, "enter")
+	if m.step != stepTitle {
+		t.Fatalf("空标题应停在标题步，当前 %v", m.step)
+	}
+	if m.titleErr == "" {
+		t.Fatal("空标题应给出回显")
+	}
+
+	m = typeText(m, "会议纪要")
+	m = press(m, "enter")
+	if m.step != stepContent {
+		t.Fatalf("合法标题应进入正文步，当前 %v", m.step)
+	}
+	if m.titleErr != "" {
+		t.Fatalf("合法标题不该带回显，得到 %q", m.titleErr)
+	}
+}
+
+func TestContentSavesWithSelectedCategory(t *testing.T) {
+	backend := &fakeBackend{}
+	m := newTestAddModel(backend)
+	m = pickCategory(t, m, "工作")
+	m = typeText(m, "会议纪要")
+	m = press(m, "enter")
+	m = typeText(m, "第一行")
+	m = press(m, "enter")
+	m = typeText(m, "第二行")
+	m = press(m, "ctrl+d")
+
+	if !m.saved {
+		t.Fatalf("Ctrl+D 应保存成功，status=%q", m.status)
+	}
+	if len(backend.createdNotes) != 1 {
+		t.Fatalf("CreateNote 应被调用一次，得到 %d 次", len(backend.createdNotes))
+	}
+	got := backend.createdNotes[0]
+	if got.Title != "会议纪要" {
+		t.Fatalf("标题 = %q", got.Title)
+	}
+	if got.Content != "第一行\n第二行" {
+		t.Fatalf("正文应保留换行，得到 %q", got.Content)
+	}
+	if got.CategoryID == nil || *got.CategoryID != 2 {
+		t.Fatalf("应写入所选分类 2，得到 %v", got.CategoryID)
+	}
+	if m.ref.ID == "" {
+		t.Fatal("成功回执应带上笔记 id")
+	}
+}
+
+func TestContentSavesDefaultAsNilCategory(t *testing.T) {
+	backend := &fakeBackend{}
+	m := newTestAddModel(backend)
+	m = pickCategory(t, m, "未分类")
+	m = typeText(m, "随手记")
+	m = press(m, "enter")
+	m = typeText(m, "正文")
+	m = press(m, "ctrl+d")
+
+	if len(backend.createdNotes) != 1 {
+		t.Fatalf("CreateNote 应被调用一次，得到 %d 次", len(backend.createdNotes))
+	}
+	if backend.createdNotes[0].CategoryID != nil {
+		t.Fatalf("未分类应写 nil，得到 %v", *backend.createdNotes[0].CategoryID)
+	}
+}
+
+func TestContentRuneLimitBlocksSave(t *testing.T) {
+	backend := &fakeBackend{}
+	m := newTestAddModel(backend)
+	m = pickCategory(t, m, "未分类")
+	m = typeText(m, "边界")
+	m = press(m, "enter")
+
+	m.body.SetValue(strings.Repeat("字", maxAddContentRunes)) // 恰好 2000 码点
+	m = press(m, "ctrl+d")
+	if len(backend.createdNotes) != 1 {
+		t.Fatalf("2000 码点应能保存，status=%q", m.status)
+	}
+
+	m2 := newTestAddModel(backend)
+	m2 = pickCategory(t, m2, "未分类")
+	m2 = typeText(m2, "超限")
+	m2 = press(m2, "enter")
+	m2.body.SetValue(strings.Repeat("😀", maxAddContentRunes+1)) // emoji 也是 1 码点
+	m2 = press(m2, "ctrl+d")
+	if len(backend.createdNotes) != 1 {
+		t.Fatal("2001 码点不该落库")
+	}
+	if m2.status == "" {
+		t.Fatal("超限应给出回显")
+	}
+	if m2.step != stepContent {
+		t.Fatalf("超限应停在正文步，当前 %v", m2.step)
+	}
+}
+
+func TestContentSaveFailureKeepsEditing(t *testing.T) {
+	backend := &fakeBackend{createNoteErr: errors.New("database is locked")}
+	m := newTestAddModel(backend)
+	m = pickCategory(t, m, "未分类")
+	m = typeText(m, "标题")
+	m = press(m, "enter")
+	m = typeText(m, "正文")
+	m = press(m, "ctrl+d")
+
+	if m.saved {
+		t.Fatal("保存失败不该标记为已保存")
+	}
+	if m.step != stepContent {
+		t.Fatalf("保存失败应停在正文步，当前 %v", m.step)
+	}
+	if !strings.Contains(m.status, "database is locked") {
+		t.Fatalf("应回显错误原因，得到 %q", m.status)
+	}
+}
+
+func TestEscAbandonsWithoutSaving(t *testing.T) {
+	backend := &fakeBackend{}
+	m := newTestAddModel(backend)
+	m = pickCategory(t, m, "工作")
+	m = press(m, "esc")
+
+	if m.saved {
+		t.Fatal("Esc 不该保存")
+	}
+	if len(backend.createdNotes) != 0 {
+		t.Fatalf("Esc 后不该调用 CreateNote，得到 %d 次", len(backend.createdNotes))
+	}
+}
+
+func TestRunAddRefusesNonTerminalStdin(t *testing.T) {
+	_, saved, err := runAddWizard(context.Background(), (&fakeBackend{}).deps(), false)
+	if !errors.Is(err, ErrNotTerminal) {
+		t.Fatalf("非终端应返回 ErrNotTerminal，得到 %v", err)
+	}
+	if saved {
+		t.Fatal("非终端不该保存")
+	}
+}
+
+func TestBuildAddNoteDropsDefaultCategoryID(t *testing.T) {
+	def := Category{ID: 1, Name: "未分类", IsDefault: true}
+	m := newTestAddModel(&fakeBackend{})
+	m.chosen = &def
+	m.title.SetValue("标题")
+	m.body.SetValue("正文")
+	if got := buildAddNote(m); got.CategoryID != nil {
+		t.Fatalf("未分类应得到 nil，得到 %v", *got.CategoryID)
+	}
+
+	work := Category{ID: 2, Name: "工作"}
+	m.chosen = &work
+	got := buildAddNote(m)
+	if got.CategoryID == nil || *got.CategoryID != 2 {
+		t.Fatalf("应指向分类 2，得到 %v", got.CategoryID)
+	}
+	if got.Title != "标题" || got.Content != "正文" {
+		t.Fatalf("标题/正文透传错误: %+v", got)
+	}
+}

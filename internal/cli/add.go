@@ -2,7 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"unicode/utf8"
 
@@ -10,6 +13,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// ErrNotTerminal 表示 stdin 不是终端：向导无法运行，调用方应报错而不是挂起。
+var ErrNotTerminal = errors.New("note add 需要在交互式终端里运行")
 
 // 校验口径与 internal/store 保持一致，一律按码点计数。
 const (
@@ -150,6 +156,16 @@ func (m addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			return m.updateContentStep(msg)
 		}
+	case editorFinishedMsg:
+		if msg.err != nil {
+			m.status = "外接编辑器出错: " + msg.err.Error()
+		} else {
+			m.body.SetValue(strings.TrimRight(msg.content, "\n"))
+		}
+		if msg.path != "" {
+			os.Remove(msg.path)
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -254,6 +270,11 @@ func (m addModel) updateTitleStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.saved = false
 		return m, tea.Quit
 	case "enter":
+		if strings.TrimSpace(m.title.Value()) == "" {
+			m.titleErr = "标题不能为空"
+			return m, nil
+		}
+		m.titleErr = ""
 		m.title.Blur()
 		m.step = stepContent
 		m.body.Focus()
@@ -265,13 +286,116 @@ func (m addModel) updateTitleStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m addModel) updateContentStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "esc" {
+	switch msg.String() {
+	case "esc":
 		m.saved = false
 		return m, tea.Quit
+	case "ctrl+d":
+		if utf8.RuneCountInString(m.body.Value()) > maxAddContentRunes {
+			m.status = fmt.Sprintf("正文最多 %d 码点", maxAddContentRunes)
+			return m, nil
+		}
+		ref, err := m.deps.CreateNote(context.Background(), buildAddNote(m))
+		if err != nil {
+			m.status = "新建笔记失败: " + err.Error()
+			return m, nil
+		}
+		m.ref, m.saved, m.status = ref, true, ""
+		return m, tea.Quit
+	case "ctrl+e":
+		return m.openExternalEditor()
 	}
+	m.status = ""
 	var cmd tea.Cmd
 	m.body, cmd = m.body.Update(msg)
 	return m, cmd
+}
+
+// editorFinishedMsg 是外接编辑器退出后的回执。
+type editorFinishedMsg struct {
+	path    string
+	content string
+	err     error
+}
+
+// openExternalEditor 把正文交给 $EDITOR/$VISUAL 编辑；未设置时只回显，不中断向导。
+func (m addModel) openExternalEditor() (tea.Model, tea.Cmd) {
+	editor := strings.TrimSpace(os.Getenv("EDITOR"))
+	if editor == "" {
+		editor = strings.TrimSpace(os.Getenv("VISUAL"))
+	}
+	if editor == "" {
+		m.status = "未设置 $EDITOR，无法外接编辑"
+		return m, nil
+	}
+
+	file, err := os.CreateTemp("", "note-add-*.md")
+	if err != nil {
+		m.status = "新建临时文件失败: " + err.Error()
+		return m, nil
+	}
+	path := file.Name()
+	if _, err := file.WriteString(m.body.Value()); err != nil {
+		file.Close()
+		os.Remove(path)
+		m.status = "写入临时文件失败: " + err.Error()
+		return m, nil
+	}
+	file.Close()
+
+	fields := strings.Fields(editor)
+	args := append(append([]string{}, fields[1:]...), path)
+	cmd := exec.Command(fields[0], args...)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		content, readErr := os.ReadFile(path)
+		if err == nil {
+			err = readErr
+		}
+		return editorFinishedMsg{path: path, content: string(content), err: err}
+	})
+}
+
+// buildAddNote 把模型状态翻译成落库入参：未分类映射成 nil（与 Web 端一致）。
+func buildAddNote(m addModel) AddNote {
+	note := AddNote{
+		Title:   strings.TrimSpace(m.title.Value()),
+		Content: m.body.Value(),
+	}
+	if m.chosen != nil && !m.chosen.IsDefault {
+		id := m.chosen.ID
+		note.CategoryID = &id
+	}
+	return note
+}
+
+// RunAdd 加载分类后跑完整向导；saved=false 表示用户放弃（Esc/Ctrl+C）。
+func RunAdd(ctx context.Context, deps AddDeps) (NoteRef, bool, error) {
+	return runAddWizard(ctx, deps, isTerminal(os.Stdin))
+}
+
+// runAddWizard 是 RunAdd 的可测内核：interactive=false 时立刻返回 ErrNotTerminal。
+func runAddWizard(ctx context.Context, deps AddDeps, interactive bool) (NoteRef, bool, error) {
+	if !interactive {
+		return NoteRef{}, false, ErrNotTerminal
+	}
+	cats, err := deps.Categories(ctx)
+	if err != nil {
+		return NoteRef{}, false, err
+	}
+
+	m := newAddModel(deps)
+	m.all, m.filtered = cats, cats
+
+	program := tea.NewProgram(m, tea.WithAltScreen())
+	final, err := program.Run()
+	if err != nil {
+		return NoteRef{}, false, err
+	}
+	model, ok := final.(addModel)
+	if !ok {
+		return NoteRef{}, false, nil
+	}
+	return model.ref, model.saved, nil
 }
 
 func (m addModel) View() string {
