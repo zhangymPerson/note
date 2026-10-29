@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -427,5 +429,25 @@ func TestCategoryStepKeepsJAndKForNavigationWhenFilterEmpty(t *testing.T) {
 	m = typeText(m, "j")
 	if m.filter != "工j" {
 		t.Fatalf("过滤非空时 j 应进入过滤串，filter=%q", m.filter)
+	}
+}
+
+func TestBlinkMessagesReachFocusedInputOnEveryStep(t *testing.T) {
+	m := newTestAddModel(&fakeBackend{})
+
+	// bubbles 的闪烁是"初始消息 → 每拍复排下一拍"的链：只转按键、丢掉闪烁消息，
+	// 游标就只会亮着不动。这里逐步骤验证链没断。
+	if _, cmd := m.Update(textinput.Blink()); cmd == nil {
+		t.Fatal("分类步应把闪烁消息转给过滤框并继续排下一拍")
+	}
+
+	title := pickCategory(t, m, "工作")
+	if _, cmd := title.Update(textinput.Blink()); cmd == nil {
+		t.Fatal("标题步应把闪烁消息转给标题输入框")
+	}
+
+	body := press(typeText(title, "会议纪要"), "enter")
+	if _, cmd := body.Update(textarea.Blink()); cmd == nil {
+		t.Fatal("正文步应把闪烁消息转给 textarea")
 	}
 }

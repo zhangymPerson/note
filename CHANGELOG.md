@@ -14,10 +14,10 @@
   - **标题步**：`textinput`，`CharLimit` 200，`Enter` 时 trim 后为空则原地回显「标题不能为空」。
   - **正文步**：照 `gum write` 用 `bubbles/textarea`——`Enter` 换行、`Ctrl+D` 完成、`Ctrl+E` 用 `$EDITOR`/`$VISUAL` 打开（临时文件 + `tea.ExecProcess`，未设置变量时只回显提示）、`Esc` 放弃；实时显示码点数，超过 2000 码点时 `Ctrl+D` 被拒并提示，可继续删改（与 `store.maxContentRunes` 同一 `utf8.RuneCountInString` 口径）。
   - **结果与退出码**：成功打印标题、分类、ID 与 `http://<addr>/notes/<id>` 链接（地址取自配置，需 `note web` 在跑）；用户放弃（`Esc`/`Ctrl+C`）打印「已放弃，未新建笔记」并以 130 退出；stdin 不是终端时立刻报错退出 1，**不**读管道当正文；`note add` 的其它参数与多余参数退出 2。
-  - **视觉（gum 同款观感）**：分类步的过滤不再是手绘字符串，而是真正聚焦的 `textinput`——带洋红 `> ` 提示符和**闪烁游标**（`Init` 返回 `textinput.Blink`，非按键消息转发给当前聚焦控件，否则游标只闪一下就停）；命中过滤词的子串用强调色加粗高亮（`matchRange` 纯函数，按字节区间处理中文）；选中行 `> ` 洋红 + 名字加粗；篇数、计数器、底部帮助、步骤号统一用灰色 `AdaptiveColor` 压暗，错误回显用红色；标题/正文档同样换成洋红提示符，正文的 `textarea` 去掉默认的 `┃ ` 前缀。配色随终端亮/暗主题切换（`lipgloss.AdaptiveColor`），非终端环境自动退化为无色纯文本。
+  - **视觉（gum 同款观感）**：分类步的过滤不再是手绘字符串，而是真正聚焦的 `textinput`——带洋红 `> ` 提示符和**闪烁游标**（`Init` 返回 `textinput.Blink`，非按键消息转发给当前聚焦控件，否则游标只闪一下就停——冒烟用例 `TestBlinkMessagesReachFocusedInputOnEveryStep` 逐步验证这条链没断）；命中过滤词的子串用强调色加粗高亮（`matchRange` 纯函数，按字节区间处理中文）；选中行 `> ` 洋红 + 名字加粗；篇数、计数器、底部帮助、步骤号统一用灰色 `AdaptiveColor` 压暗，错误回显用红色；标题/正文档同样换成洋红提示符，正文的 `textarea` 去掉默认的 `┃ ` 前缀。配色随终端亮/暗主题切换（`lipgloss.AdaptiveColor`），非终端环境自动退化为无色纯文本。
   - **分类步的按键约定**：过滤框始终聚焦，所以 `j`/`k` 在过滤为空时当上下移动（`gum filter` 的习惯），已输入过滤词后则如实进入过滤串；`↑/↓` 与 `ctrl+k/j`（以及 `ctrl+p/n`）始终用于移动。
   - **依赖**：新增 `github.com/charmbracelet/bubbles`（`textarea`/`textinput`）与 `github.com/charmbracelet/lipgloss`（配色；纯 Go、CGO 仍关闭；`go mod tidy` 解析到 bubbles v1.0.0 / lipgloss v1.1.0，并与 `bubbletea v1.3.10` 编译通过）。
-  - **测试**：`internal/cli` 侧 27 项新用例覆盖过滤与匹配高亮区间、过滤框接管输入、30/200/2000 码点边界、空标题、重名与非重名回显、`Esc` 不落库、保存失败停在正文步、非终端拒跑、`-c/--db` 放行与缺值报错；`go vet` 与 `go test ./...`（9 包、顶层 173 个用例、含子测试 180 项，0 失败）全绿。
+  - **测试**：`internal/cli` 侧 27 项新用例覆盖过滤与匹配高亮区间、过滤框接管输入、30/200/2000 码点边界、空标题、重名与非重名回显、`Esc` 不落库、保存失败停在正文步、非终端拒跑、`-c/--db` 放行与缺值报错；`go vet` 与 `go test ./...`（9 包、顶层 174 个用例、含子测试 181 项，0 失败）全绿。
   - **已验证 / 未验证的边界**：真二进制验证了裸 `note` 打印帮助退出 0、`note add -h` 与 `note help add` 输出一致、`note add foo` 退出 2、管道与 `/dev/null` 喂 stdin 立刻报错退出 1 且不挂起、`--db` 指向新路径会自动建库迁移。**交互三步（含 `Ctrl+E` 外接编辑器）没做自动化**：`go test` 的 stdin 不是终端、`winpty` 在本机无 TTY 环境同样拒绝（`stdin is not a tty`），与 ADR-20 记录的限制相同，仍需真终端人工验收。
 
 ### Changed

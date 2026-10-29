@@ -184,6 +184,8 @@ func (m addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// 其它消息（光标闪烁等）交给当前聚焦的输入组件，否则光标只闪一下就不再动。
 	var cmd tea.Cmd
 	switch m.step {
+	case stepCategory:
+		m.filterInput, cmd = m.filterInput.Update(msg)
 	case stepNewCategory:
 		m.create, cmd = m.create.Update(msg)
 	case stepTitle:
@@ -531,12 +533,13 @@ func (m addModel) viewContent() string {
 	return b.String()
 }
 
-// cursorMark 返回列表行前缀：选中行是洋红的 "> "，其余按宽度缩进。
+// cursorMark 返回列表行前缀。整体比过滤框的 "> " 再缩一列，
+// 免得输入框的提示符和选中行标记挤在同一列上、看不出哪个在动。
 func cursorMark(selected bool) string {
 	if selected {
-		return "> "
+		return " > "
 	}
-	return "  "
+	return "   "
 }
 
 // counter 渲染 "N/上限" 计数：未超限压暗，超限变红并带感叹号。
