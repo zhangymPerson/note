@@ -58,8 +58,8 @@ func rebindPickerKeys(model *list.Model) {
 // pickerFilterStartKey 是「进过滤态」那条按键：借用 list 自己的 / 处理。
 var pickerFilterStartKey = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}
 
-// update 处理一条消息；handled 为 false 表示这条消息要交回外层模型
-// （只有「Enter 确认」与「未过滤时的 Esc」两种）。
+// update 处理一条消息；handled 为 false 表示这条消息要交回外层模型：
+// Enter 确认、未过滤时的 Esc、以及 ctrl+c。
 func (p picker) update(msg tea.Msg) (picker, bool, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
@@ -102,7 +102,6 @@ func (p picker) update(msg tea.Msg) (picker, bool, tea.Cmd) {
 	return p.forward(msg)
 }
 
-// forward 把消息交给内层 list。
 func (p picker) forward(msg tea.Msg) (picker, bool, tea.Cmd) {
 	var cmd tea.Cmd
 	p.list, cmd = p.list.Update(msg)
