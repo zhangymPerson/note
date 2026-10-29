@@ -473,7 +473,7 @@ func (s *Store) ListNotes(ctx context.Context, filter NoteFilter) (NotePage, err
 
 // noteQuery 是列表查询共用的 WHERE / ORDER BY 组装结果。
 // ListNotes 与 ListNotesAll 必须走同一条组装路径，否则两条路径的过滤口径
-//（未分类 = category_id IS NULL、回收站只看 deleted_at）会各自漂移。
+// （未分类 = category_id IS NULL、回收站只看 deleted_at）会各自漂移。
 type noteQuery struct {
 	clause  string
 	orderBy string
