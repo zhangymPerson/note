@@ -8,6 +8,16 @@
 
 ### Added
 
+- 新建笔记预填一份可编辑的 markdown 骨架（`note-example.md`，实现过程与关键逻辑）：
+  - **骨架放在文件系统里**：`internal/template` 新包负责 `note-example.md` 的一切——`Path(configPath)` 是纯函数（`dir(note.yaml)/note-example.md`），`Default()` 返回 `go:embed` 进二进制的 `default.md`，`Ensure()` 只在文件缺失时写入默认骨架（**已存在绝不覆盖**），`Load()` 在文件缺失/不可读时回退内置默认并标记 `fromDefault`，`Save()` 走同目录临时文件 + `rename` 原子替换（`0644`：内容不含正文与密码，配置目录本身 `0700`）。
+  - **初始化时机**：`cmd/note` 的 `serve(cfg)`（前台与后台子进程共用）在开库前调用 `Ensure`，创建成功打一行 info；配置目录只读时只 `slog.Warn`，服务照常启动——模板缺失不该让服务起不来。
+  - **API**：新增 `GET /api/template` 与 `PUT /api/template`，响应统一为 `{content, path, source, default_content}`（`source` 为 `file` 或 `default`，`default_content` 给页面「恢复默认」按钮使用，前端不再另存一份默认值）；`application` 增加 `templatePath` 字段，由 `template.Path(cfg.ConfigPath)` 推导。PUT 走既有 `csrfProtect` 双提交校验、未扩大 `/api/shutdown` 的豁免；长度上限复用正文的 `maxContentRunes`（2000 码点），超限 400 `validation_failed` + `fields.content`——模板会原样变成笔记正文，允许更长等于制造「新建完就存不下」。写盘失败返回 500 且文案不含路径细节。
+  - **前端入口**：新增 `lib/template.ts`（`getTemplate` / `saveTemplate` / `MAX_TEMPLATE_CODEPOINTS`，PUT 由 `lib/api.ts` 自动带 `X-CSRF-Token`）与 `views/TemplateView.svelte`（路由 `/template`：textarea + 复用 `Markdown.svelte` 的预览，300ms 防抖，显示模板文件真实路径，保存/恢复默认/返回）。「恢复默认」只把内置骨架填进 textarea、**不落盘**，误点一下不该覆盖用户改过的文件。
+  - **新建笔记预填**：`NoteEditorView` 在新建且没有可恢复草稿时拉一次模板填进正文，`dirty` 保持 `false`（骨架不是用户输入，不该让 `beforeunload` 弹窗）；拉取失败静默降级为空正文。正文标签行新增「编辑模板」按钮（仅新建时显示），点击先用 `editorDraft` 存草稿再跳 `/template?next=/notes/new`，返回时恢复——复用「跳去设置主密码」那套交棒机制。另加 `restoredDraft` 守卫：用户把正文清空后去改模板再回来，空草稿优先于骨架，不会被重新灌一遍。
+  - 不做的事：不碰数据库（无迁移）、不加模板变量、不改加密流程、不加 CLI 子命令；模板内容只在文本插值与 `Markdown.svelte` 里出现，`{@html}` 仍只有那一处。
+  - TDD：`internal/template/template_test.go` 6 例（路径纯函数、默认骨架含 markdown 标记、`Ensure` 只写一次且不覆盖自定义内容、`Load` 缺失回退/存在直读、`Save` 原子替换无临时文件残留；权限断言按 `internal/daemon/state_test.go` 先例在 Windows 上跳过）、`internal/web/template_api_test.go` 5 例（缺失回退 `source=default`、PUT 后 GET 读回与落盘位置、超 2000 码点 400 且不写文件、空模板写成 0 字节、无令牌 PUT 403 而 GET 不需要 CSRF）、前端 `lib/template.test.ts` 4 例（GET、PUT 带令牌与 body、400 的 `fields.content` 透传、上限与正文一致）、`router.test.ts` 新增 `/template` 与带查询串两条断言。
+  - 验证：`just test`（Go 7 包 156 项 + 前端 16 文件 137 项）与 `just check`（`go vet` + `svelte-check` 0 error 0 warning）通过；真实二进制 + Edge headless 用 `.run/template-verify.mjs` 跑 11 项全 PASS（启动补出文件、模板页载入默认骨架、预览渲染、路径行、`<script>` 与 `javascript:` 均被净化、恢复默认只回填不落盘且给出「还要点保存」提示、保存后文件内容更新），`.run/template-editor-verify.mjs` 跑 6 项全 PASS（新建笔记正文预填模板而标题留空、编辑模板跳转带 `next=`、返回后标题与正文草稿都在、保存后详情页显示手写正文）。
+
 - 删除改为可恢复的软删除 + 回收站（P0，实现过程与关键逻辑）：
   - **迁移** `sql/0006_note_soft_delete.sql`：`ALTER TABLE notes ADD COLUMN deleted_at TEXT`（UTC 秒级文本，`NULL` = 未删除，存量行升级后全是 `NULL`），并建两个部分索引 `idx_notes_active`（`updated_at DESC WHERE deleted_at IS NULL`）与 `idx_notes_deleted_at`（`deleted_at DESC WHERE deleted_at IS NOT NULL`），让默认列表与回收站列表各走一条窄索引；`user_version` 升到 6。不碰既有迁移与 `notes` 的 CHECK——软删除行仍保留 `content` 或 `cipher`，校验照旧成立。
   - **store 层**：`DeleteNote` 拆成 `SoftDeleteNote`（写 `deleted_at`）、`RestoreNote`（清 `deleted_at`）、`PurgeNote`（真 `DELETE`，事务提交后 `PRAGMA wal_checkpoint(TRUNCATE)`，必须在事务外才能生效）。三者的写入点都在事务内顺带记一条活动事件（`note_delete` / `note_restore` / `note_purge`），失败路径因为回滚不留事件；`RestoreNote`/`PurgeNote` 用 `classifyMissingNote` 区分「不存在」（404 `not_found`）与「存在但不在回收站」（409 `not_in_trash`）。

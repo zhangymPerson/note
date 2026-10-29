@@ -132,6 +132,9 @@ note/
 │   │   ├── category.go           # 分类 CRUD、默认分类与占用守卫
 │   │   ├── master.go             # 主密码单行（盐 + 助记问题）与问题单独修改
 │   │   └── activity.go           # 搜索记录与统计
+│   ├── template/
+│   │   ├── template.go           # note-example.md 路径推导、默认值内嵌、原子读/写
+│   │   └── default.md            # 内置默认 markdown 骨架
 │   └── web/
 │       ├── server.go             # 路由、静态资源、SPA 回退、Control 注入
 │       ├── control.go            # 后台模式的 /api/shutdown（令牌校验 + 异步关停）
@@ -141,6 +144,7 @@ note/
 │       ├── handlers_categories.go # 分类与主密码端点
 │       ├── handlers_info.go      # GET /api/info
 │       ├── handlers_settings.go
+│       ├── handlers_template.go  # GET/PUT /api/template（新建笔记骨架）
 │       ├── handlers_stats.go
 │       ├── handlers_csrf.go
 │       ├── errors.go
@@ -157,10 +161,11 @@ note/
 │   │   │   ├── onboarding.ts     # 两步引导判据 decideStep(nameSet, masterConfigured)
 │   │   │   ├── session-key.ts    # 页面内存密钥、unlockKey/lockSession
 │   │   │   ├── draft.ts          # 编辑器内存草稿
+│   │   │   ├── template.ts       # 新建笔记骨架客户端（/api/template）
 │   │   │   ├── markdown.ts       # marked + DOMPurify 净化
 │   │   │   ├── stats.ts / theme.ts / toast.ts / settings.ts
 │   │   ├── components/           # Layout、Markdown、CategoryTree、ActivityHeatmap、ThemeSwitch
-│   │   ├── views/                # 列表、详情、编辑器、回收站、主密码、信息、忘记密码、概览、引导、404
+│   │   ├── views/                # 列表、详情、编辑器、模板、回收站、主密码、信息、忘记密码、概览、引导、404
 │   │   ├── router/               # 约 60 行 History 路由
 │   │   ├── app.css               # 全局样式与三主题变量
 │   │   ├── App.svelte
@@ -311,6 +316,7 @@ database:
 - 启动日志记录最终生效的监听地址、数据库路径与 `allow_remote`，不打印其他配置内容。
 - 监听成功后另向 stdout 打印可直接点击的访问地址（`http://host:port`，IPv6 一律加方括号），每地址一行；结构化 slog 字段与格式不变。地址由 `internal/config` 的 `StartupURLs(请求地址, listener 实际地址)` 推导：家族取请求 host（`0.0.0.0` 枚举本机非回环 IPv4，`::` 枚举 IPv6），端口取 listener 实际端口（兼容 `:0`）；枚举跳过回环与链路本地地址并去重排序，结果为空时回退回环地址。Windows 对 `0.0.0.0` 监听会建立双栈 socket 并把 `Addr()` 汇报成 `[::]`，家族因此不能取自 listener 地址。监听失败时错误信息回带尝试的地址。
 - 日志与状态文件位置（v1.6）：纯函数 `daemon.StatePath(dbPath) = dir(dbPath)/note.json`、`daemon.LogPath(dbPath) = dir(dbPath)/note.log`；不读环境变量、不引入新配置项。`note info` 与 `note web status` 都从同一个纯函数推导，不会不一致。
+- 新建笔记骨架位置（v1.7）：纯函数 `template.Path(configPath) = dir(configPath)/note-example.md`，与 `note.yaml` 同目录，不读环境变量、不引入新配置项；`note web` 启动时（前台与后台子进程共用 `serve`）只在文件缺失时写入 `go:embed` 的内置默认骨架，**已存在的文件绝不覆盖**，配置目录不可写只记 `slog.Warn`、不影响启动；写入走临时文件 + rename，权限 `0644`（内容不含正文与密码，配置目录本身是 `0700`）。`GET/PUT /api/template` 返回的 `path` 与 `/api/info` 的 `db_path` 属同一尺度的路径信息公开。
 - 数据目录不存在时自动创建，权限 `0700`。
 - 数据库文件创建后，在 POSIX 上尽力设置为 `0600`。
 
@@ -322,6 +328,8 @@ GET    /api/info
 POST   /api/shutdown              # 仅后台模式（Control.Token 非空）存在；无 CSRF，凭 X-Shutdown-Token
 GET    /api/settings
 PUT    /api/settings/name
+GET    /api/template              # 新建笔记的 markdown 骨架（文件缺失回退内置默认）
+PUT    /api/template              # 覆盖骨架文件（需 CSRF，≤2000 码点）
 GET    /api/notes
 POST   /api/notes
 GET    /api/notes/encrypted       # 密文清单（改密迁移用），静态段优先于 {id}
@@ -385,6 +393,7 @@ GET    /*                     # 非 API GET → index.html
 | `DELETE /api/categories/{id}`                  | 删除空分类                                                                       | `id=1` 返回 409；仍有笔记返回 409 + `fields.note_count`                                                                                        |
 | `GET /api/stats`                               | 概览页统计与热力图数据                                                           | 无                                                                                                                                             |
 | `GET /api/settings` / `PUT /api/settings/name` | 应用命名                                                                         | 名称长度与字符合法                                                                                                                             |
+| `GET /api/template` / `PUT /api/template`      | 新建笔记骨架：读写 `<配置目录>/note-example.md`（见 4.2）                        | `content` ≤ 2000 码点；写请求需 CSRF；文件不可读时 GET 回退内置默认并标 `source=default`                                                       |
 
 通用校验：
 
@@ -899,27 +908,29 @@ web/src/lib/session-key.ts
 
 ### 8.3 端点
 
-| 方法   | 路径                            | 请求                                  | 成功响应                                                                                    |
-| ------ | ------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------- |
-| GET    | `/api/csrf`                     | 无                                    | 200 `{"token":"…"}` + Set-Cookie                                                            |
-| GET    | `/api/settings`                 | 无                                    | 200 设置                                                                                    |
-| PUT    | `/api/settings/name`            | `{"name":"…"}`                        | 200 设置                                                                                    |
-| GET    | `/api/notes?q=&category=&page=` | 查询参数                              | 200 分页                                                                                    |
-| POST   | `/api/notes`                    | 笔记载荷                              | 201 全量笔记                                                                                |
-| GET    | `/api/notes/{id}`               | 无                                    | 200 全量笔记                                                                                |
-| PUT    | `/api/notes/{id}`               | 笔记载荷                              | 200 全量笔记                                                                                |
-| DELETE | `/api/notes/{id}`               | 无                                    | 204                                                                                         |
-| GET    | `/api/notes/encrypted`          | 无                                    | 200 `{"notes":[{"id","cipher_b64","kdf_params"}]}`，空清单为 `[]`；静态段优先于 `{id}` 通配 |
-| PUT    | `/api/notes/{id}/cipher`        | `{"cipher_b64":"…","kdf_params":"…"}` | 200 全量笔记；只换密文，`title/content/category_id/rev/updated_at` 逐字不变                 |
-| GET    | `/api/categories`               | 无                                    | 200 分类数组                                                                                |
-| POST   | `/api/categories`               | `{"name":"…"}`                        | 201 分类                                                                                    |
-| PUT    | `/api/categories/{id}`          | `{"name":"…"}`                        | 200 分类数组                                                                                |
-| DELETE | `/api/categories/{id}`          | 无                                    | 204                                                                                         |
-| GET    | `/api/master-password`          | 无                                    | 200 主密码配置                                                                              |
-| POST   | `/api/master-password`          | `{"salt_b64":"…","question":"…"}`     | 201 `{"configured":true,"question":"…"}`；仅首次配置                                        |
-| PUT    | `/api/master-password/question` | `{"question":"…"}`                    | 200 主密码配置（盐不变）                                                                    |
-| GET    | `/api/info`                     | 无                                    | 200 运行信息与构建版本（见 8.6）                                                            |
-| GET    | `/api/stats?days=`              | 查询参数（默认 370 天）               | 200 统计（见 8.2；事件口径覆盖查询与笔记/分类读写）                                         |
+| 方法   | 路径                            | 请求                                  | 成功响应                                                                                                              |
+| ------ | ------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/csrf`                     | 无                                    | 200 `{"token":"…"}` + Set-Cookie                                                                                      |
+| GET    | `/api/settings`                 | 无                                    | 200 设置                                                                                                              |
+| PUT    | `/api/settings/name`            | `{"name":"…"}`                        | 200 设置                                                                                                              |
+| GET    | `/api/template`                 | 无                                    | 200 `{"content","path","source","default_content"}`；`source` 为 `file` 或 `default`（文件缺失/不可读时回退内置默认） |
+| PUT    | `/api/template`                 | `{"content":"…"}`                     | 200 同上（`source` 恒为 `file`）；超过 2000 码点 400 `validation_failed`                                              |
+| GET    | `/api/notes?q=&category=&page=` | 查询参数                              | 200 分页                                                                                                              |
+| POST   | `/api/notes`                    | 笔记载荷                              | 201 全量笔记                                                                                                          |
+| GET    | `/api/notes/{id}`               | 无                                    | 200 全量笔记                                                                                                          |
+| PUT    | `/api/notes/{id}`               | 笔记载荷                              | 200 全量笔记                                                                                                          |
+| DELETE | `/api/notes/{id}`               | 无                                    | 204                                                                                                                   |
+| GET    | `/api/notes/encrypted`          | 无                                    | 200 `{"notes":[{"id","cipher_b64","kdf_params"}]}`，空清单为 `[]`；静态段优先于 `{id}` 通配                           |
+| PUT    | `/api/notes/{id}/cipher`        | `{"cipher_b64":"…","kdf_params":"…"}` | 200 全量笔记；只换密文，`title/content/category_id/rev/updated_at` 逐字不变                                           |
+| GET    | `/api/categories`               | 无                                    | 200 分类数组                                                                                                          |
+| POST   | `/api/categories`               | `{"name":"…"}`                        | 201 分类                                                                                                              |
+| PUT    | `/api/categories/{id}`          | `{"name":"…"}`                        | 200 分类数组                                                                                                          |
+| DELETE | `/api/categories/{id}`          | 无                                    | 204                                                                                                                   |
+| GET    | `/api/master-password`          | 无                                    | 200 主密码配置                                                                                                        |
+| POST   | `/api/master-password`          | `{"salt_b64":"…","question":"…"}`     | 201 `{"configured":true,"question":"…"}`；仅首次配置                                                                  |
+| PUT    | `/api/master-password/question` | `{"question":"…"}`                    | 200 主密码配置（盐不变）                                                                                              |
+| GET    | `/api/info`                     | 无                                    | 200 运行信息与构建版本（见 8.6）                                                                                      |
+| GET    | `/api/stats?days=`              | 查询参数（默认 370 天）               | 200 统计（见 8.2；事件口径覆盖查询与笔记/分类读写）                                                                   |
 
 没有 `/encrypt`、`/decrypt`、`/unlock`、`/lock` 这类端点：加解密在浏览器里完成，锁定是前端清内存密钥的本地动作。也没有口令校验端点——改密时的旧口令由浏览器试解已有密文来判定（6.9）。
 

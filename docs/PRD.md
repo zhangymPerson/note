@@ -315,33 +315,36 @@
 
 **API 路由（Go 提供 JSON）**
 
-| 方法   | 路径                                       | 动作                                                                                                                                          |
-| ------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/notes?q=&page=&category=&deleted=`   | 列表与搜索；加密笔记仅标题命中；`deleted=1` 改为按 `deleted_at` 倒序返回回收站                                                                |
-| POST   | `/api/notes`                               | 创建笔记（明文字段或浏览器加密后的密文字段）                                                                                                  |
-| GET    | `/api/notes/{id}`                          | 详情；加密笔记返回元数据 + base64 密文，永不含 `content`                                                                                      |
-| PUT    | `/api/notes/{id}`                          | 更新笔记；加密笔记只接受新密文                                                                                                                |
-| DELETE | `/api/notes/{id}`                          | 软删除（移入回收站）并记录 `note_delete`；加 `?purge=1` 则彻底删除，仅对回收站里的笔记生效，否则 409 `not_in_trash`                           |
-| POST   | `/api/notes/{id}/restore`                  | 恢复回收站里的笔记（清空 `deleted_at`，不改 `updated_at`/`rev`，记录 `note_restore`）；不在回收站返回 409 `not_in_trash`                      |
-| GET    | `/api/notes/encrypted`                     | 全部加密笔记的密文清单 `{notes:[{id, cipher_b64, kdf_params}]}`，不含标题与正文；空清单序列化为 `[]`。静态段优先于 `/api/notes/{id}` 通配     |
-| PUT    | `/api/notes/{id}/cipher`                   | `{cipher_b64, kdf_params}`；只替换密文与参数，`title/content/category_id/rev/updated_at` 逐字不变。非加密笔记 409 `not_encrypted`，不存在 404 |
-| GET    | `/api/master-password`                     | `{configured, salt_b64, question}`；盐是公开 KDF 参数                                                                                         |
-| POST   | `/api/master-password`                     | `{salt_b64, question}`；仅首次配置，已存在返回 409                                                                                            |
-| PUT    | `/api/master-password/question`            | 只改助记问题（trim 后非空、≤100 码点），不换盐；未配置主密码返回 409 `master_password_missing`                                                |
-| GET    | `/api/info`                                | 运行信息与构建版本（见 5.7）；全部为标准库运行时与配置值，不含正文、密码、密钥或令牌                                                          |
-| GET    | `/api/categories`                          | 分类列表 + 每类笔记数                                                                                                                         |
-| POST   | `/api/categories`                          | 新增分类                                                                                                                                      |
-| PUT    | `/api/categories/{id}`                     | 改名；`id=1` 返回 409                                                                                                                         |
-| DELETE | `/api/categories/{id}`                     | 删除；默认分类或有笔记时返回 409                                                                                                              |
-| GET    | `/api/stats`                               | 概览页统计：累计事件与事件构成（查询、查看笔记、增删改笔记、分类维护都算事件，按天计数），Top 查询词仍只统计查询                              |
-| GET    | `/api/settings` / PUT `/api/settings/name` | 应用命名设置                                                                                                                                  |
-| GET    | `/api/csrf`                                | 获取 CSRF Token 并写入 Cookie                                                                                                                 |
-| GET    | `/assets/*`                                | 前端构建产物                                                                                                                                  |
-| GET    | `/*`                                       | 非 API 的 GET 回退到 `index.html`                                                                                                             |
+| 方法   | 路径                                       | 动作                                                                                                                                                                     |
+| ------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/api/notes?q=&page=&category=&deleted=`   | 列表与搜索；加密笔记仅标题命中；`deleted=1` 改为按 `deleted_at` 倒序返回回收站                                                                                           |
+| POST   | `/api/notes`                               | 创建笔记（明文字段或浏览器加密后的密文字段）                                                                                                                             |
+| GET    | `/api/notes/{id}`                          | 详情；加密笔记返回元数据 + base64 密文，永不含 `content`                                                                                                                 |
+| PUT    | `/api/notes/{id}`                          | 更新笔记；加密笔记只接受新密文                                                                                                                                           |
+| DELETE | `/api/notes/{id}`                          | 软删除（移入回收站）并记录 `note_delete`；加 `?purge=1` 则彻底删除，仅对回收站里的笔记生效，否则 409 `not_in_trash`                                                      |
+| POST   | `/api/notes/{id}/restore`                  | 恢复回收站里的笔记（清空 `deleted_at`，不改 `updated_at`/`rev`，记录 `note_restore`）；不在回收站返回 409 `not_in_trash`                                                 |
+| GET    | `/api/notes/encrypted`                     | 全部加密笔记的密文清单 `{notes:[{id, cipher_b64, kdf_params}]}`，不含标题与正文；空清单序列化为 `[]`。静态段优先于 `/api/notes/{id}` 通配                                |
+| PUT    | `/api/notes/{id}/cipher`                   | `{cipher_b64, kdf_params}`；只替换密文与参数，`title/content/category_id/rev/updated_at` 逐字不变。非加密笔记 409 `not_encrypted`，不存在 404                            |
+| GET    | `/api/master-password`                     | `{configured, salt_b64, question}`；盐是公开 KDF 参数                                                                                                                    |
+| POST   | `/api/master-password`                     | `{salt_b64, question}`；仅首次配置，已存在返回 409                                                                                                                       |
+| PUT    | `/api/master-password/question`            | 只改助记问题（trim 后非空、≤100 码点），不换盐；未配置主密码返回 409 `master_password_missing`                                                                           |
+| GET    | `/api/info`                                | 运行信息与构建版本（见 5.7）；全部为标准库运行时与配置值，不含正文、密码、密钥或令牌                                                                                     |
+| GET    | `/api/categories`                          | 分类列表 + 每类笔记数                                                                                                                                                    |
+| POST   | `/api/categories`                          | 新增分类                                                                                                                                                                 |
+| PUT    | `/api/categories/{id}`                     | 改名；`id=1` 返回 409                                                                                                                                                    |
+| DELETE | `/api/categories/{id}`                     | 删除；默认分类或有笔记时返回 409                                                                                                                                         |
+| GET    | `/api/stats`                               | 概览页统计：累计事件与事件构成（查询、查看笔记、增删改笔记、分类维护都算事件，按天计数），Top 查询词仍只统计查询                                                         |
+| GET    | `/api/settings` / PUT `/api/settings/name` | 应用命名设置                                                                                                                                                             |
+| GET    | `/api/template`                            | 新建笔记的 markdown 骨架：返回 `{content, path, source, default_content}`；`source` 为 `file` 或 `default`（文件缺失/不可读时回退内置默认），`path` 是骨架文件的真实位置 |
+| PUT    | `/api/template`                            | 覆盖骨架文件（`<note.yaml 所在目录>/note-example.md`）；`content` 不超过 2000 码点（与正文上限一致），写请求需 CSRF 双提交令牌                                           |
+| GET    | `/api/csrf`                                | 获取 CSRF Token 并写入 Cookie                                                                                                                                            |
+| GET    | `/assets/*`                                | 前端构建产物                                                                                                                                                             |
+| GET    | `/*`                                       | 非 API 的 GET 回退到 `index.html`                                                                                                                                        |
 
 - 写操作使用 JSON 请求体，由前端 `fetch` 发起；不使用页面表单直发，也不做服务端重定向。
 - 成功后的页面跳转由前端路由完成，避免整页刷新。
 - API 不启用 CORS，仅允许同源访问；开发环境通过 Vite 代理保持同源。
+- 新建笔记的骨架文件（`note-example.md`）与 `note.yaml` 同目录：`note web` 启动时缺失才写入内置默认内容，**绝不覆盖**已存在的文件；文件不可读或配置目录不可写时服务照常启动，页面回退到内置默认骨架。骨架上限与正文一致（2000 码点），因为它会原样成为新笔记的正文。
 - 服务端没有任何解密端点：加解密只在浏览器（或未来的 CLI）发生，`cipher` 对服务端是不透明字节。
 
 ### 5.5 分类管理
