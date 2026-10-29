@@ -168,7 +168,18 @@ func (m addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	return m, nil
+
+	// 其它消息（光标闪烁等）交给当前聚焦的输入组件，否则光标只闪一下就不再动。
+	var cmd tea.Cmd
+	switch m.step {
+	case stepNewCategory:
+		m.create, cmd = m.create.Update(msg)
+	case stepTitle:
+		m.title, cmd = m.title.Update(msg)
+	case stepContent:
+		m.body, cmd = m.body.Update(msg)
+	}
+	return m, cmd
 }
 
 // applyFilter 重算过滤结果并把光标夹回合法范围。
