@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-isatty"
 )
 
@@ -71,12 +75,9 @@ type addModel struct {
 	deps AddDeps
 	step addStep
 
-	all         []Category
-	filtered    []Category
-	filter      string // 与 filterInput.Value() 同步，供过滤与高亮使用
-	filterInput textinput.Model
-	cursor      int // 0..len(filtered)；等于 len(filtered) 表示末尾的「+ 新建分类…」行
-	chosen      *Category
+	all    []Category
+	picker picker // 分类步的选择器：fuzzy 筛选、光标与高亮都归它
+	chosen *Category
 
 	create    textinput.Model
 	createErr string
@@ -96,12 +97,6 @@ type addModel struct {
 
 // newAddModel 造一个只含默认值、尚未加载分类的模型。
 func newAddModel(deps AddDeps) addModel {
-	filter := textinput.New()
-	filter.Placeholder = "过滤分类…"
-	filter.Prompt = "> "
-	filter.PromptStyle = stylePrompt
-	filter.Focus()
-
 	create := textinput.New()
 	create.Placeholder = "分类名"
 	create.CharLimit = maxAddCategoryRunes
@@ -119,7 +114,16 @@ func newAddModel(deps AddDeps) addModel {
 	body.ShowLineNumbers = false
 	body.Prompt = "" // 默认的 "┃ " 竖线在写正文时只是噪声
 
-	m := addModel{deps: deps, step: stepCategory, filterInput: filter, create: create, title: title, body: body, width: 80, height: 24}
+	m := addModel{
+		deps:   deps,
+		step:   stepCategory,
+		picker: newCategoryPicker(nil, 80, 10),
+		create: create,
+		title:  title,
+		body:   body,
+		width:  80,
+		height: 24,
+	}
 	m.layout()
 	return m
 }
@@ -133,9 +137,9 @@ func (m *addModel) layout() {
 	if width > 80 {
 		width = 80
 	}
-	m.filterInput.Width = width
 	m.create.Width = width
 	m.title.Width = width
+	m.picker.list.SetSize(width, m.categoryHeight())
 	// 正文外面套一层细边框：左右各 1 列边框 + 1 列内边距 = 4 列，内容宽度要让出这 4 列。
 	inner := width - 4
 	if inner < 10 {
@@ -148,6 +152,15 @@ func (m *addModel) layout() {
 		height = 5
 	}
 	m.body.SetHeight(height)
+}
+
+// categoryHeight 是分类列表可用的行数：给顶部标题行、空行、底部键位提示与「+ 新建分类…」留位。
+func (m addModel) categoryHeight() int {
+	height := m.height - 6
+	if height < 3 {
+		height = 3
+	}
+	return height
 }
 
 // Init 让分类步的过滤框一开始就闪烁游标；后续步进各自返回对应控件的 Blink。
@@ -190,7 +203,9 @@ func (m addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.step {
 	case stepCategory:
-		m.filterInput, cmd = m.filterInput.Update(msg)
+		var handled bool
+		m.picker, handled, cmd = m.picker.update(msg)
+		_ = handled
 	case stepNewCategory:
 		m.create, cmd = m.create.Update(msg)
 	case stepTitle:
@@ -201,76 +216,44 @@ func (m addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// applyFilter 重算过滤结果并把光标夹回合法范围。
-func (m *addModel) applyFilter() {
-	m.filtered = filterCategories(m.all, m.filter)
-	if m.cursor > len(m.filtered) {
-		m.cursor = len(m.filtered)
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-}
-
 // startNewCategory 进入「新建分类」子流程，焦点从过滤框交给分类名输入框。
 func (m addModel) startNewCategory() addModel {
 	m.step = stepNewCategory
 	m.createErr = ""
 	m.create.SetValue("")
-	m.filterInput.Blur()
+	m.picker.list.FilterInput.Blur()
 	m.create.Focus()
 	return m
 }
 
+// updateCategoryStep 把按键交给选择器；选择器说「我不管」的只有 Enter（确认）与未过滤时的 Esc（放弃）。
 func (m addModel) updateCategoryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	next, handled, cmd := m.picker.update(msg)
+	m.picker = next
+	if handled {
+		return m, cmd
+	}
+
 	switch msg.String() {
-	case "esc":
-		m.saved = false
-		return m, tea.Quit
-	case "up", "ctrl+k", "ctrl+p":
-		if m.cursor > 0 {
-			m.cursor--
-		}
-		return m, nil
-	case "down", "ctrl+j", "ctrl+n":
-		if m.cursor < len(m.filtered) {
-			m.cursor++
-		}
-		return m, nil
-	case "j", "k":
-		// 过滤为空时 j/k 当上下移动（gum filter 的习惯）；已经在过滤就照常输入。
-		if m.filter == "" {
-			if msg.String() == "j" {
-				if m.cursor < len(m.filtered) {
-					m.cursor++
-				}
-			} else if m.cursor > 0 {
-				m.cursor--
-			}
+	case "enter":
+		entry, ok := m.picker.selected().(categoryEntry)
+		if !ok {
 			return m, nil
 		}
-	case "enter":
-		if m.cursor >= len(m.filtered) {
+		if entry.placeholder {
 			return m.startNewCategory(), textinput.Blink
 		}
-		chosen := m.filtered[m.cursor]
+		chosen := entry.category
 		m.chosen = &chosen
-		m.filterInput.Blur()
+		m.picker.list.FilterInput.Blur()
 		m.step = stepTitle
 		m.title.Focus()
 		return m, textinput.Blink
+	case "esc":
+		m.saved = false
+		return m, tea.Quit
 	}
-
-	// 其余按键（可见字符与退格都算）进过滤框，列表随之重算。
-	previous := m.filter
-	var cmd tea.Cmd
-	m.filterInput, cmd = m.filterInput.Update(msg)
-	m.filter = m.filterInput.Value()
-	if m.filter != previous {
-		m.cursor = 0
-	}
-	m.applyFilter()
-	return m, cmd
+	return m, nil
 }
 
 func (m addModel) updateNewCategoryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -278,7 +261,6 @@ func (m addModel) updateNewCategoryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.createErr = ""
 		m.create.Blur()
-		m.filterInput.Focus()
 		m.step = stepCategory
 		return m, textinput.Blink
 	case "enter":
@@ -295,10 +277,10 @@ func (m addModel) updateNewCategoryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.createErr = ""
 		m.create.Blur()
 		m.all = append(m.all, created)
-		m.filter = ""
-		m.cursor = 0
-		m.applyFilter()
-		m.cursor = indexOfCategory(m.filtered, created.ID)
+		// 重建选择器（过滤函数里钉住的是占位项下标，项数变了就得重来），
+		// 过滤串顺带清空，再把光标落到新分类上，省得用户再找一次。
+		m.picker = newCategoryPicker(m.all, m.width-4, m.categoryHeight())
+		m.picker.list.Select(indexOfCategory(m.all, created.ID))
 		m.chosen = &created
 		m.step = stepCategory
 		return m, nil
@@ -433,7 +415,8 @@ func runAddWizard(ctx context.Context, deps AddDeps, interactive bool) (NoteRef,
 	}
 
 	m := newAddModel(deps)
-	m.all, m.filtered = cats, cats
+	m.all = cats
+	m.picker = newCategoryPicker(cats, m.width-4, m.categoryHeight())
 
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := program.Run()
@@ -464,21 +447,7 @@ func (m addModel) viewCategory() string {
 	var b strings.Builder
 	b.WriteString(header("选择分类", "1/3"))
 	b.WriteString("\n\n")
-	b.WriteString(m.filterInput.View())
-	b.WriteString("\n\n")
-	for i, c := range m.filtered {
-		b.WriteString(styleCursor.Render(cursorMark(i == m.cursor)))
-		name := highlight(c.Name, m.filter)
-		if i == m.cursor {
-			name = styleSelected.Render(name)
-		}
-		b.WriteString(name + styleMuted.Render(fmt.Sprintf("  %d 篇", c.Count)) + "\n")
-	}
-	if m.cursor == len(m.filtered) {
-		b.WriteString(styleCursor.Render(cursorMark(true)) + styleSelected.Render("+ 新建分类…") + "\n")
-	} else {
-		b.WriteString(styleCursor.Render(cursorMark(false)) + styleMuted.Render("+ 新建分类…") + "\n")
-	}
+	b.WriteString(m.picker.view())
 	b.WriteString("\n")
 	b.WriteString(help([][2]string{{"输入", "过滤"}, {"↑/↓", "选择"}, {"Enter", "确认"}, {"Esc", "放弃"}}) + "\n")
 	return b.String()
@@ -541,15 +510,6 @@ func (m addModel) viewContent() string {
 	return b.String()
 }
 
-// cursorMark 返回列表行前缀。整体比过滤框的 "> " 再缩一列，
-// 免得输入框的提示符和选中行标记挤在同一列上、看不出哪个在动。
-func cursorMark(selected bool) string {
-	if selected {
-		return " > "
-	}
-	return "   "
-}
-
 // counter 渲染 "N/上限" 计数：未超限压暗，超限变红并带感叹号。
 func counter(used, limit int, over bool) string {
 	text := fmt.Sprintf("%d/%d", used, limit)
@@ -559,19 +519,82 @@ func counter(used, limit int, over bool) string {
 	return "  " + styleMuted.Render(text)
 }
 
-// filterCategories 按名字做不区分大小写的子串过滤，保持输入顺序。
-func filterCategories(all []Category, query string) []Category {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return all
+// newCategoryRow 是分类列表末尾常驻的「就地新建」行。
+const newCategoryRow = "+ 新建分类…"
+
+// categoryEntry 把分类适配成 bubbles 的 list.Item；placeholder 表示末尾的「+ 新建分类…」行。
+type categoryEntry struct {
+	category    Category
+	placeholder bool
+}
+
+func (e categoryEntry) Title() string {
+	if e.placeholder {
+		return newCategoryRow
 	}
-	var out []Category
-	for _, c := range all {
-		if strings.Contains(strings.ToLower(c.Name), query) {
-			out = append(out, c)
-		}
+	return e.category.Name
+}
+
+func (e categoryEntry) FilterValue() string { return e.Title() }
+
+func (e categoryEntry) Description() string { return fmt.Sprintf("%d 篇", e.category.Count) }
+
+// newCategoryPicker 造分类选择器：分类项 + 末尾常驻的「+ 新建分类…」。
+// 过滤函数把最后一项钉住，因此任何过滤串下都能就地新建分类。
+func newCategoryPicker(categories []Category, width, height int) picker {
+	items := make([]list.Item, 0, len(categories)+1)
+	for _, category := range categories {
+		items = append(items, categoryEntry{category: category})
 	}
-	return out
+	items = append(items, categoryEntry{placeholder: true})
+
+	return newPicker(items, width, height, categoryDelegate{}, pinnedLastFilter(len(categories)))
+}
+
+// categoryDelegate 画分类行：名字（选中加粗、命中高亮）+ 右对齐的「N 篇」。
+type categoryDelegate struct{}
+
+func (d categoryDelegate) Height() int  { return 1 }
+func (d categoryDelegate) Spacing() int { return 0 }
+
+func (d categoryDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
+
+func (d categoryDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	entry, ok := item.(categoryEntry)
+	if !ok {
+		return
+	}
+	width := m.Width()
+	if width <= 0 {
+		return
+	}
+
+	selected := index == m.Index()
+	name := entry.Title()
+	if m.FilterState() == list.Filtering || m.FilterState() == list.FilterApplied {
+		name = highlightMatches(name, m.MatchesForItem(index))
+	}
+	if selected {
+		name = styleSelected.Render(name)
+	}
+
+	mark := "   "
+	if selected {
+		mark = " > "
+	}
+	line := styleCursor.Render(mark) + name
+
+	// 占位行没有篇数，右对齐信息留空
+	meta := ""
+	if !entry.placeholder {
+		meta = styleMuted.Render(fmt.Sprintf("%d 篇", entry.category.Count))
+	}
+	if gap := width - lipgloss.Width(line) - lipgloss.Width(meta); gap > 0 {
+		line += strings.Repeat(" ", gap)
+	}
+	line += meta
+
+	fmt.Fprintf(w, "%s\n", ansi.Truncate(line, width, "…"))
 }
 
 // validateCategoryName 校验新分类名：非空且不超过 30 码点。

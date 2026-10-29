@@ -169,7 +169,7 @@ func addUsage() string {
 	var b strings.Builder
 	b.WriteString("用法: note add [全局参数]\n\n")
 	b.WriteString("在交互式终端里依次完成三步，保存为一条明文笔记：\n")
-	b.WriteString("  1. 选择分类（输入即过滤；列表末尾可当场新建分类）\n")
+	b.WriteString("  1. 选择分类（输入即模糊筛选；列表末尾可当场新建分类）\n")
 	b.WriteString("  2. 输入标题（1-200 字符）\n")
 	b.WriteString("  3. 输入正文（0-2000 码点，支持换行）\n\n")
 	b.WriteString("键位:\n")

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -61,8 +63,15 @@ func newTestAddModel(b *fakeBackend) addModel {
 	if err != nil {
 		panic(err)
 	}
-	m.all, m.filtered = cats, cats
+	m.all = cats
+	m.picker = newCategoryPicker(cats, 80, 10)
 	m.width, m.height = 100, 30
+	// 光标闪烁在真实运行时是后台定时器（530ms 一跳），测试里全部关掉，
+	// 否则每次敲键都要白等一个 tick。
+	m.picker.list.FilterInput.Cursor.SetMode(cursor.CursorStatic)
+	m.create.Cursor.SetMode(cursor.CursorStatic)
+	m.title.Cursor.SetMode(cursor.CursorStatic)
+	m.body.Cursor.SetMode(cursor.CursorStatic)
 	m.layout()
 	return m
 }
@@ -92,47 +101,76 @@ func press(m addModel, name string) addModel {
 			panic("未知键名: " + name)
 		}
 	}
-	next, _ := m.Update(msg)
-	return next.(addModel)
+	return feed(m, msg)
+}
+
+// feed 喂一条消息并把它产生的命令跑到底：bubbles 的过滤结果要等 FilterMatchesMsg
+// 回来才落地，不跑命令看到的还是旧列表。
+func feed(m addModel, msg tea.Msg) addModel {
+	updated, cmd := m.Update(msg)
+	next, ok := updated.(addModel)
+	if !ok {
+		return m
+	}
+	return settleAdd(next, cmd)
+}
+
+func settleAdd(m addModel, cmd tea.Cmd) addModel {
+	if cmd == nil {
+		return m
+	}
+	switch value := cmd().(type) {
+	case nil:
+		return m
+	case tea.BatchMsg:
+		for _, sub := range value {
+			m = settleAdd(m, sub)
+		}
+		return m
+	case list.FilterMatchesMsg:
+		updated, next := m.Update(value)
+		model, ok := updated.(addModel)
+		if !ok {
+			return m
+		}
+		return settleAdd(model, next)
+	default:
+		// 其余命令（光标闪烁的初始消息）与过滤无关，喂回去会拉起定时器
+		return m
+	}
 }
 
 // typeText 逐个码点喂给模型，模拟用户敲字。
 func typeText(m addModel, text string) addModel {
 	for _, r := range text {
-		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-		m = next.(addModel)
+		m = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	return m
 }
 
-// pickCategory 在分类步选中指定名字的分类（跳过过滤逻辑）。
+// pickCategory 在分类步选中指定名字的分类：敲名字把它筛出来再回车。
 func pickCategory(t *testing.T, m addModel, name string) addModel {
 	t.Helper()
-	for i, c := range m.filtered {
-		if c.Name == name {
-			m.cursor = i
-			m = press(m, "enter")
-			if m.step != stepTitle {
-				t.Fatalf("选分类后应进入标题步，当前 step=%v status=%q", m.step, m.status)
-			}
-			return m
-		}
+	m = typeText(m, name)
+	m = press(m, "enter")
+	if m.step != stepTitle {
+		t.Fatalf("选分类后应进入标题步，当前 step=%v status=%q", m.step, m.status)
 	}
-	t.Fatalf("分类列表里没有 %q", name)
 	return m
 }
 
-func TestFilterCategoriesMatchesIgnoringCase(t *testing.T) {
-	all := []Category{{ID: 1, Name: "未分类", IsDefault: true}, {ID: 2, Name: "工作"}, {ID: 3, Name: "读书笔记"}}
-	if got := filterCategories(all, "读"); len(got) != 1 || got[0].ID != 3 {
-		t.Fatalf("过滤「读」应只剩读书笔记，得到 %+v", got)
+// categoryNames 返回分类步当前可见的行（含常驻的「+ 新建分类…」占位项）。
+func categoryNames(m addModel) []string {
+	items := m.picker.list.VisibleItems()
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		entry, ok := item.(categoryEntry)
+		if !ok {
+			continue
+		}
+		names = append(names, entry.Title())
 	}
-	if got := filterCategories(all, "工作"); len(got) != 1 || got[0].ID != 2 {
-		t.Fatalf("过滤「工作」应只剩工作，得到 %+v", got)
-	}
-	if got := filterCategories(all, ""); len(got) != 3 {
-		t.Fatalf("空过滤应返回全部，得到 %d 条", len(got))
-	}
+	return names
 }
 
 func TestValidateCategoryNameRuneBoundaries(t *testing.T) {
@@ -151,12 +189,10 @@ func TestNewCategorySuccessReturnsToCategoryAndSelectsIt(t *testing.T) {
 	backend := &fakeBackend{}
 	m := newTestAddModel(backend)
 
-	// ↓ 到最后一行（+ 新建分类…）再回车
-	for i := 0; i < len(m.filtered); i++ {
-		m = press(m, "down")
-	}
-	if m.cursor != len(m.filtered) {
-		t.Fatalf("↓ 到底应停在「+ 新建分类…」行，cursor=%d", m.cursor)
+	// 敲一个匹配不上的串，把列表收敛到只剩占位项，再回车
+	m = typeText(m, "新分类前先清场")
+	if got := categoryNames(m); len(got) != 1 || got[0] != newCategoryRow {
+		t.Fatalf("应当只剩占位项，得到 %v", got)
 	}
 	m = press(m, "enter")
 	if m.step != stepNewCategory {
@@ -186,7 +222,7 @@ func TestNewCategorySuccessReturnsToCategoryAndSelectsIt(t *testing.T) {
 func TestNewCategoryRejectionKeepsStep(t *testing.T) {
 	backend := &fakeBackend{createCategoryErr: errors.New("分类「工作」已存在")}
 	m := newTestAddModel(backend)
-	m.cursor = len(m.filtered)
+	m = typeText(m, "新建入口")
 	m = press(m, "enter")
 
 	m = typeText(m, "工作")
@@ -203,20 +239,17 @@ func TestNewCategoryRejectionKeepsStep(t *testing.T) {
 	}
 }
 
-func TestEmptyFilterResultFallsOnNewCategoryRow(t *testing.T) {
+func TestAddCategoryStepKeepsCreateRow(t *testing.T) {
 	m := newTestAddModel(&fakeBackend{})
-	m = typeText(m, "不存在")
-	m = press(m, "down") // 已经只剩「+ 新建分类…」一行，↓ 应被夹住
 
-	if len(m.filtered) != 0 {
-		t.Fatalf("无匹配时应过滤到空，得到 %+v", m.filtered)
+	m = typeText(m, "谁都匹配不上")
+	if got := categoryNames(m); len(got) != 1 || got[0] != newCategoryRow {
+		t.Fatalf("零命中时应当只剩占位项，得到 %v", got)
 	}
-	if m.cursor != len(m.filtered) {
-		t.Fatalf("cursor 应停在「+ 新建分类…」行，得到 %d", m.cursor)
-	}
+
 	m = press(m, "enter")
 	if m.step != stepNewCategory {
-		t.Fatalf("过滤到空时回车应进入新建分类步，当前 step=%v", m.step)
+		t.Fatalf("零命中时回车应当进新建分类步，当前 step=%v", m.step)
 	}
 }
 
@@ -387,60 +420,53 @@ func TestBuildAddNoteDropsDefaultCategoryID(t *testing.T) {
 	}
 }
 
-func TestMatchRangeFindsCaseInsensitiveSubstring(t *testing.T) {
-	start, end, ok := matchRange("读书笔记", "笔")
-	if !ok || start != 6 || end != 9 {
-		t.Fatalf("应在「笔」处命中（字节 6..9），得到 %d,%d,%v", start, end, ok)
-	}
-	if _, _, ok := matchRange("工作", "work"); ok {
-		t.Fatal("不匹配时不该命中")
-	}
-	if _, _, ok := matchRange("工作", "  "); ok {
-		t.Fatal("空查询不该命中整行")
-	}
-}
-
-func TestCategoryStepRoutesTypingToFilterInput(t *testing.T) {
+func TestAddCategoryStepFuzzyFilters(t *testing.T) {
 	m := newTestAddModel(&fakeBackend{})
-	if !m.filterInput.Focused() {
-		t.Fatal("分类步的过滤框应处于聚焦状态（游标才会闪烁）")
+	if !m.picker.list.FilterInput.Focused() {
+		t.Fatal("分类步的过滤框应当在聚焦状态（否则光标不闪、敲字也进不去）")
 	}
 
-	m = typeText(m, "读")
-	if m.filter != "读" {
-		t.Fatalf("过滤框应收到输入，filter=%q", m.filter)
+	m = typeText(m, "读书")
+	got := categoryNames(m)
+	if len(got) != 2 || got[0] != "读书笔记" || got[1] != newCategoryRow {
+		t.Fatalf("应当只筛出「读书笔记」并保留占位项，得到 %v", got)
 	}
-	if len(m.filtered) != 1 || m.filtered[0].Name != "读书笔记" {
-		t.Fatalf("应过滤到读书笔记，得到 %+v", m.filtered)
+	if m.picker.list.FilterValue() != "读书" {
+		t.Fatalf("过滤串应当是「读书」，得到 %q", m.picker.list.FilterValue())
 	}
 
 	m = press(m, "backspace")
-	if m.filter != "" || len(m.filtered) != 3 {
-		t.Fatalf("退格应清空过滤并复原列表，filter=%q len=%d", m.filter, len(m.filtered))
+	m = press(m, "backspace")
+	if got := categoryNames(m); len(got) != 4 {
+		t.Fatalf("退格删完过滤串后应当恢复全部三项分类 + 占位项，得到 %v", got)
 	}
 }
 
-func TestCategoryStepKeepsJAndKForNavigationWhenFilterEmpty(t *testing.T) {
+func TestAddCategoryStepTreatsJAndKAsFilterChars(t *testing.T) {
 	m := newTestAddModel(&fakeBackend{})
+
 	m = typeText(m, "j")
-	if m.cursor != 1 || m.filter != "" {
-		t.Fatalf("过滤为空时 j 应向下移动，cursor=%d filter=%q", m.cursor, m.filter)
+	if got := m.picker.list.FilterValue(); got != "j" {
+		t.Fatalf("j 应当是过滤字符（不再当导航键），得到过滤串 %q", got)
 	}
-	m = typeText(m, "工")
-	m = typeText(m, "j")
-	if m.filter != "工j" {
-		t.Fatalf("过滤非空时 j 应进入过滤串，filter=%q", m.filter)
+	if got := categoryNames(m); len(got) != 1 || got[0] != newCategoryRow {
+		t.Fatalf("「j」匹配不上任何分类，应当只剩占位项，得到 %v", got)
 	}
 }
 
 func TestBlinkMessagesReachFocusedInputOnEveryStep(t *testing.T) {
 	m := newTestAddModel(&fakeBackend{})
+	// 这条用例专测闪烁链，把 newTestAddModel 关掉的闪烁再打开
+	m.picker.list.FilterInput.Cursor.SetMode(cursor.CursorBlink)
+	m.title.Cursor.SetMode(cursor.CursorBlink)
+	m.body.Cursor.SetMode(cursor.CursorBlink)
 
-	// bubbles 的闪烁是"初始消息 → 每拍复排下一拍"的链：只转按键、丢掉闪烁消息，
-	// 游标就只会亮着不动。这里逐步骤验证链没断。
+	// 分类步的过滤框只在过滤态可见（spec §9.4 的观感），因此只在这一态验证闪烁链没断。
+	m = typeText(m, "读")
 	if _, cmd := m.Update(textinput.Blink()); cmd == nil {
-		t.Fatal("分类步应把闪烁消息转给过滤框并继续排下一拍")
+		t.Fatal("分类步过滤态应把闪烁消息转给过滤框并继续排下一拍")
 	}
+	m = press(m, "esc")
 
 	title := pickCategory(t, m, "工作")
 	if _, cmd := title.Update(textinput.Blink()); cmd == nil {

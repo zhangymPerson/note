@@ -49,27 +49,3 @@ func header(text, step string) string {
 	}
 	return out
 }
-
-// matchRange 返回 name 中第一处命中 query 的字节区间（不区分大小写），没有命中时 ok=false。
-// 空 query 不算命中——否则每行都会被整段高亮。
-func matchRange(name, query string) (start, end int, ok bool) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return 0, 0, false
-	}
-	lowerName, lowerQuery := strings.ToLower(name), strings.ToLower(query)
-	idx := strings.Index(lowerName, lowerQuery)
-	if idx < 0 {
-		return 0, 0, false
-	}
-	return idx, idx + len(lowerQuery), true
-}
-
-// highlight 把命中的子串染成强调色，其余原样——gum filter 的 match 样式。
-func highlight(name, query string) string {
-	start, end, ok := matchRange(name, query)
-	if !ok {
-		return name
-	}
-	return name[:start] + styleMatch.Render(name[start:end]) + name[end:]
-}
