@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-isatty"
 )
 
 // ErrNotTerminal 表示 stdin 不是终端：向导无法运行，调用方应报错而不是挂起。
@@ -366,6 +367,11 @@ func buildAddNote(m addModel) AddNote {
 		note.CategoryID = &id
 	}
 	return note
+}
+
+// isTerminal 判断文件描述符是否连接着终端。
+func isTerminal(f *os.File) bool {
+	return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
 }
 
 // RunAdd 加载分类后跑完整向导；saved=false 表示用户放弃（Esc/Ctrl+C）。

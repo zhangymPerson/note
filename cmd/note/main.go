@@ -44,7 +44,8 @@ func (e exitError) Error() string { return fmt.Sprintf("exit %d", int(e)) }
 
 // run 是全部命令的分发入口。
 //
-//	note            交互菜单（bubbletea；无终端时退化为打印帮助）
+//	note            打印帮助（等价 note help）
+//	note add        交互向导新建一条明文笔记
 //	note web        启动 Web 服务
 //	note info       输出软件与运行信息
 //	note help / -h  帮助
@@ -66,22 +67,12 @@ func run(args []string) error {
 		return nil
 
 	case cli.CommandMenu:
-		action, err := cli.RunMenu()
-		if err != nil {
-			slog.Warn("interactive menu failed", "error", err)
-		}
-		switch action {
-		case cli.MenuWeb:
-			// 菜单退出后进程就结束了，前台服务会跟着没，所以走后台。
-			return runWebStart(opts.ConfigPath, nil)
-		case cli.MenuInfo:
-			return runInfo(opts.ConfigPath, nil)
-		case cli.MenuFallback:
-			// 无终端环境（脚本/管道）跑不了 TUI：打印帮助而非挂住进程
-			fmt.Print(cli.Usage())
-			return nil
-		}
+		// 不带子命令等价于 note help：把"有哪些命令"直接摆出来，而不是藏进菜单。
+		fmt.Print(cli.Usage())
 		return nil
+
+	case cli.CommandAdd:
+		return runAdd(opts.ConfigPath, opts.Args)
 
 	case cli.CommandWeb:
 		switch opts.WebAction {

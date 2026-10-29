@@ -18,6 +18,10 @@ type Category struct {
 // 默认分类固定为 id=1「未分类」，不可改名、不可删除（见 sql/0004 头注释）。
 const defaultCategoryID = 1
 
+// DefaultCategoryID 是内置「未分类」分类的 id。Web 端把它落库成 category_id = NULL，
+// CLI 的 note add 也用同一判断，避免两边对"未分类"的理解分叉。
+const DefaultCategoryID = defaultCategoryID
+
 var (
 	// ErrCategoryExists 表示分类名已被占用（NOCASE，大小写不敏感）。
 	ErrCategoryExists = errors.New("category name already exists")
