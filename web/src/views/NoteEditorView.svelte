@@ -4,6 +4,7 @@
   import { decryptNoteContent, encryptNoteContent, paramsFromNote, KDF_PARAMS } from '../lib/crypto'
   import type { KdfParams } from '../lib/crypto'
   import { editorDraft } from '../lib/draft'
+  import { getTemplate } from '../lib/template'
   import {
     createNote,
     getMasterPassword,
@@ -56,6 +57,8 @@
   let revealFailed = $state(false)
   // 跳去设置主密码是「交棒」，不是离开编辑器，不能顺手清掉刚存的草稿。
   let handingOff = false
+  // 草稿（哪怕是用户清空后的空草稿）优先于模板骨架，不能再被骨架填一遍。
+  let restoredDraft = false
 
   const contentLength = $derived(countCodePoints(content))
   const tooLong = $derived(contentLength > MAX_CONTENT_CODEPOINTS)
@@ -98,6 +101,7 @@
   $effect(() => {
     const draft = editorDraft.take(id)
     if (draft) {
+      restoredDraft = true
       title = draft.title
       content = draft.content
       categoryId = draft.categoryId
@@ -125,6 +129,15 @@
       salt = master.salt_b64
       question = master.question
       masterConfigured = master.configured
+      // 新建笔记预填模板骨架；有草稿时草稿优先（草稿在上面的 $effect 里已先填入）。
+      if (!isEdit && !restoredDraft && content === '') {
+        try {
+          const tpl = await getTemplate()
+          if (content === '') content = tpl.content
+        } catch {
+          // 模板拿不到就是空正文：编辑器不能因此打不开。
+        }
+      }
       if (isEdit) await loadNote()
     } catch (error) {
       formError = fail(error)
@@ -188,6 +201,13 @@
     } finally {
       busy = false
     }
+  }
+
+  // 跳去改模板属于「交棒」：先把当前表单存成草稿，返回时接着编。
+  function editTemplate(): void {
+    handingOff = true
+    editorDraft.save({ noteId: id, title, content, categoryId, encrypt })
+    navigate(`/template?next=${encodeURIComponent('/notes/new')}`)
   }
 
   function goToMasterPassword(): void {
@@ -329,6 +349,9 @@
       <div class="field">
         <div class="field-label-row">
           <label for="note-content">正文</label>
+          {#if !isEdit}
+            <button class="linklike" type="button" onclick={editTemplate}>编辑模板</button>
+          {/if}
           <span class="counter {tooLong ? 'counter-over' : ''}" aria-live="polite">
             {contentLength} / {MAX_CONTENT_CODEPOINTS}
           </span>
