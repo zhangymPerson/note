@@ -46,23 +46,22 @@ func TestRenderTrimsTrailingNewlines(t *testing.T) {
 
 func TestRenderWidthZeroSkipsWordWrap(t *testing.T) {
 	long := strings.Repeat("很长的一句话 ", 20) + "\n"
-	narrow, err := Render(long, Options{Style: "notty", Width: 40})
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
+	// Width 为 0 时不该调用 WithWordWrap，于是落到 glamour 自己的默认宽度 80；
+	// 一旦这层判断被删掉，WithWordWrap(0) 会让 reflow 直接透传（不折行），两者就不再相等。
 	unwrapped, err := Render(long, Options{Style: "notty", Width: 0})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	if unwrapped == narrow {
-		t.Fatal("Width 为 0 时不该折行（应当沿用 glamour 默认宽度）")
+	atDefault, err := Render(long, Options{Style: "notty", Width: 80})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
 	}
-	if !strings.Contains(unwrapped, "很长的一句话 很长的一句话") {
-		t.Fatalf("Width 为 0 时正文被折行或吞掉了：%q", unwrapped)
+	if unwrapped != atDefault {
+		t.Fatal("Width 为 0 时应当沿用 glamour 的默认宽度 80")
 	}
 }
 
-func TestRenderErrorMessageIsChinese(t *testing.T) {
+func TestRenderConstructionErrorMessageIsChinese(t *testing.T) {
 	_, err := Render("hi\n", Options{Style: "nope"})
 	if err == nil {
 		t.Fatal("未知风格应当报错")
