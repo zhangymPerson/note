@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // fakeBackend 是 AddDeps 的假实现：记录调用、按需返回错误，让模型逻辑可以脱离 TTY 与数据库测试。
@@ -449,5 +450,19 @@ func TestBlinkMessagesReachFocusedInputOnEveryStep(t *testing.T) {
 	body := press(typeText(title, "会议纪要"), "enter")
 	if _, cmd := body.Update(textarea.Blink()); cmd == nil {
 		t.Fatal("正文步应把闪烁消息转给 textarea")
+	}
+}
+
+func TestContentStepHasHeaderAndBorderedBox(t *testing.T) {
+	m := newTestAddModel(&fakeBackend{})
+	view := ansi.Strip(press(typeText(pickCategory(t, m, "工作"), "会议纪要"), "enter").View())
+
+	if !strings.Contains(view, "新建笔记") {
+		t.Fatalf("正文步顶部应有「新建笔记」header:\n%s", view)
+	}
+	for _, rune := range []string{"╭", "╮", "╰", "╯"} {
+		if !strings.Contains(view, rune) {
+			t.Fatalf("正文框缺少圆角边框 %q:\n%s", rune, view)
+		}
 	}
 }

@@ -22,6 +22,11 @@ var (
 	styleMuted    = lipgloss.NewStyle().Foreground(mutedColor)
 	styleWarn     = lipgloss.NewStyle().Foreground(warnColor)
 	styleMatch    = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
+	// styleBox 是正文框（gum write 那种细边框）：圆角、灰色描边、左右各留一列内边距。
+	styleBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(mutedColor).
+			Padding(0, 1)
 )
 
 // help 把 [(键, 说明)] 渲染成一行：键洋红、说明压暗、用 · 分隔。

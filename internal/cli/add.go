@@ -136,7 +136,12 @@ func (m *addModel) layout() {
 	m.filterInput.Width = width
 	m.create.Width = width
 	m.title.Width = width
-	m.body.SetWidth(width)
+	// 正文外面套一层细边框：左右各 1 列边框 + 1 列内边距 = 4 列，内容宽度要让出这 4 列。
+	inner := width - 4
+	if inner < 10 {
+		inner = 10
+	}
+	m.body.SetWidth(inner)
 
 	height := 10
 	if m.height < 14 {
@@ -511,14 +516,17 @@ func (m addModel) viewTitle() string {
 func (m addModel) viewContent() string {
 	var b strings.Builder
 	b.WriteString(header("正文", "3/3"))
+	b.WriteString("\n")
+	// gum write 的 header：正文框上方一行标题，后面带当前分类与已填标题的上下文。
+	b.WriteString(styleBrand.Render("新建笔记"))
 	if m.chosen != nil {
 		b.WriteString(styleMuted.Render(" · 分类 " + m.chosen.Name))
 	}
 	if title := strings.TrimSpace(m.title.Value()); title != "" {
 		b.WriteString(styleMuted.Render(" · 标题 " + title))
 	}
-	b.WriteString("\n\n")
-	b.WriteString(m.body.View() + "\n")
+	b.WriteString("\n")
+	b.WriteString(styleBox.Render(m.body.View()) + "\n")
 	used := utf8.RuneCountInString(m.body.Value())
 	if used > maxAddContentRunes {
 		b.WriteString(counter(used, maxAddContentRunes, true) + "\n")
