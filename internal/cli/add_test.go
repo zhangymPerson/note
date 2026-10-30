@@ -715,6 +715,33 @@ func TestPreviewEscKeepsOriginal(t *testing.T) {
 	}
 }
 
+func TestOptimizedPreviewIgnoresKeysWhileReoptimizing(t *testing.T) {
+
+	m := enterContentStep(t)
+	m.deps.AIModel, m.deps.AIHost = "m1", "h"
+	m.deps.Optimize = func(context.Context, string) (OptimizeResult, error) {
+		return OptimizeResult{Content: "# 优化后", Model: "m1"}, nil
+	}
+	m, cmd := pressCmd(m, "ctrl+o")
+	m = feed(m, cmd())
+	if m.step != stepOptimized || m.aiResult != "# 优化后" {
+		t.Fatalf("应先到预览步: step=%v result=%q", m.step, m.aiResult)
+	}
+
+	// 预览屏里按 Ctrl+O 重新优化：等待期间再按 Enter 不得把正文清空
+	m, _ = pressCmd(m, "ctrl+o")
+	if !m.aiBusy {
+		t.Fatal("重新优化应当进入等待")
+	}
+	m = press(m, "enter")
+	if m.step != stepOptimized {
+		t.Fatalf("等待期间 Enter 不应生效: step=%v", m.step)
+	}
+	if m.body.Value() != "原正文" {
+		t.Fatalf("等待期间采用会清空正文: %q", m.body.Value())
+	}
+}
+
 func TestOptimizeErrorKeepsOriginalAndStays(t *testing.T) {
 	m := enterContentStep(t)
 	m.deps.AIModel, m.deps.AIHost = "m1", "h"

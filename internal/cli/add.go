@@ -447,6 +447,12 @@ func (m addModel) finishOptimize(msg optimizeFinishedMsg) (tea.Model, tea.Cmd) {
 
 // updateOptimizedStep 是预览屏：Enter 采用、Esc 保留原文、Ctrl+O 重新优化。
 func (m addModel) updateOptimizedStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// 重新优化期间一律不响应按键：此时 aiResult 已清空，
+	// 任何「采用」都会把用户正文换成空串。
+	if m.aiBusy {
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "esc":
 		m.step = stepContent
@@ -654,11 +660,15 @@ func (m addModel) viewOptimized() string {
 	var b strings.Builder
 	b.WriteString(header("AI 优化结果", ""))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render(fmt.Sprintf("%s · %d → %d 码点",
-		m.aiModel,
-		utf8.RuneCountInString(m.aiRequestContent),
-		utf8.RuneCountInString(m.aiResult))))
-	b.WriteString("\n\n")
+	// 重新优化期间 aiResult 是空的，只显示状态行，不显示「0 → 0 码点」。
+	if !m.aiBusy {
+		b.WriteString(styleMuted.Render(fmt.Sprintf("%s · %d → %d 码点",
+			m.aiModel,
+			utf8.RuneCountInString(m.aiRequestContent),
+			utf8.RuneCountInString(m.aiResult))))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(m.aiView.View())
 	b.WriteString("\n")
 	if m.status != "" {

@@ -53,6 +53,21 @@ var (
 	ErrEmptyResult = errors.New("upstream returned empty content")
 )
 
+// chatMessage / chatRequest 是发往上游的请求体。字段上的 json tag 不是装饰：
+// OpenAI 兼容服务的 role/content 键名大小写敏感，没有 tag 时 encoding/json 会
+// 发成 Role/Content，真正的服务会直接 400。
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatRequest struct {
+	Model       string        `json:"model"`
+	Messages    []chatMessage `json:"messages"`
+	Temperature float64       `json:"temperature"`
+	Stream      bool          `json:"stream"`
+}
+
 // ModelError 表示请求的模型不在 ai.models 里：切换模型是显式选择，不猜。
 type ModelError struct{ Model string }
 
@@ -132,15 +147,8 @@ func (c *Client) Optimize(ctx context.Context, content, model string) (Result, e
 		return Result{}, ModelError{Model: model}
 	}
 
-	payload := struct {
-		Model       string                           `json:"model"`
-		Messages    []struct{ Role, Content string } `json:"messages"`
-		Temperature float64                          `json:"temperature"`
-		Stream      bool                             `json:"stream"`
-	}{Model: model, Temperature: 0.2}
-	payload.Messages = []struct{ Role, Content string }{
-		{Role: "user", Content: BuildPrompt(c.Prompt, content)},
-	}
+	payload := chatRequest{Model: model, Temperature: 0.2}
+	payload.Messages = []chatMessage{{Role: "user", Content: BuildPrompt(c.Prompt, content)}}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Result{}, fmt.Errorf("encode request: %w", err)

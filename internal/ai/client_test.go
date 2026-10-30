@@ -68,6 +68,53 @@ func TestOptimizeSendsRenderedPrompt(t *testing.T) {
 	}
 }
 
+// 线上对端是真正的 OpenAI 兼容服务，键名大小写敏感：必须发 role/content 而不是
+// Go 结构体字段名。解码用无 tag 的结构体会自动忽略大小写，看不出问题，所以这里
+// 直接断言原始 JSON 的键。
+func TestOptimizeSendsLowercaseMessageKeys(t *testing.T) {
+	var raw []byte
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	})
+	c.Prompt = "整理：" + config.PromptVariable
+
+	if _, err := c.Optimize(context.Background(), "原始正文", ""); err != nil {
+		t.Fatalf("Optimize: %v", err)
+	}
+
+	var payload struct {
+		Model       string              `json:"model"`
+		Temperature float64             `json:"temperature"`
+		Stream      *bool               `json:"stream"`
+		Messages    []map[string]string `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("请求体不是 JSON: %v (%s)", err, raw)
+	}
+	if payload.Model != "m1" {
+		t.Errorf("model = %q", payload.Model)
+	}
+	if payload.Temperature != 0.2 {
+		t.Errorf("temperature = %v", payload.Temperature)
+	}
+	if payload.Stream == nil || *payload.Stream {
+		t.Errorf("stream 必须是显式 false")
+	}
+	if len(payload.Messages) != 1 {
+		t.Fatalf("messages = %v", payload.Messages)
+	}
+	if payload.Messages[0]["role"] != "user" {
+		t.Errorf("role 键必须是全小写，得到 %v", payload.Messages[0])
+	}
+	if payload.Messages[0]["content"] != "整理：原始正文" {
+		t.Errorf("content = %q", payload.Messages[0]["content"])
+	}
+	if len(payload.Messages[0]) != 2 {
+		t.Errorf("messages[0] 只该有 role 与 content，得到 %v", payload.Messages[0])
+	}
+}
+
 func TestOptimizeRejectsUnknownModel(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("模型不在列表时不该发请求")
