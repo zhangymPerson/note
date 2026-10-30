@@ -130,13 +130,7 @@ func newAddModel(deps AddDeps) addModel {
 
 // layout 按终端尺寸摆放输入组件；窄终端下夹到可用下限，避免出屏。
 func (m *addModel) layout() {
-	width := m.width - 4
-	if width < 20 {
-		width = 20
-	}
-	if width > 80 {
-		width = 80
-	}
+	width := m.listWidth()
 	m.create.Width = width
 	m.title.Width = width
 	m.picker.list.SetSize(width, m.categoryHeight())
@@ -163,7 +157,20 @@ func (m addModel) categoryHeight() int {
 	return height
 }
 
-// Init 让分类步的过滤框一开始就闪烁游标；后续步进各自返回对应控件的 Blink。
+// listWidth 是列表与输入框共用的内容宽度：给终端两侧各留 2 列，并夹到 [20, 80]。
+// 重建选择器时也要走它，否则窄终端下新建分类后列宽会突然缩水。
+func (m addModel) listWidth() int {
+	width := m.width - 4
+	if width < 20 {
+		width = 20
+	}
+	if width > 80 {
+		width = 80
+	}
+	return width
+}
+
+// Init 让第一步的输入组件一开始就闪烁游标；后续步进各自返回对应控件的 Blink。
 func (m addModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -203,9 +210,7 @@ func (m addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.step {
 	case stepCategory:
-		var handled bool
-		m.picker, handled, cmd = m.picker.update(msg)
-		_ = handled
+		m.picker, _, cmd = m.picker.update(msg)
 	case stepNewCategory:
 		m.create, cmd = m.create.Update(msg)
 	case stepTitle:
@@ -261,6 +266,9 @@ func (m addModel) updateNewCategoryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.createErr = ""
 		m.create.Blur()
+		// 过滤框还留在过滤态（list 的状态没变），不把焦点还回去的话
+		// 之后敲字与退格都会被静默吞掉。
+		m.picker.list.FilterInput.Focus()
 		m.step = stepCategory
 		return m, textinput.Blink
 	case "enter":
@@ -279,7 +287,7 @@ func (m addModel) updateNewCategoryStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.all = append(m.all, created)
 		// 重建选择器（过滤函数里钉住的是占位项下标，项数变了就得重来），
 		// 过滤串顺带清空，再把光标落到新分类上，省得用户再找一次。
-		m.picker = newCategoryPicker(m.all, m.width-4, m.categoryHeight())
+		m.picker = newCategoryPicker(m.all, m.listWidth(), m.categoryHeight())
 		m.picker.list.Select(indexOfCategory(m.all, created.ID))
 		m.chosen = &created
 		m.step = stepCategory
@@ -416,7 +424,7 @@ func runAddWizard(ctx context.Context, deps AddDeps, interactive bool) (NoteRef,
 
 	m := newAddModel(deps)
 	m.all = cats
-	m.picker = newCategoryPicker(cats, m.width-4, m.categoryHeight())
+	m.picker = newCategoryPicker(cats, m.listWidth(), m.categoryHeight())
 
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := program.Run()
@@ -536,8 +544,6 @@ func (e categoryEntry) Title() string {
 }
 
 func (e categoryEntry) FilterValue() string { return e.Title() }
-
-func (e categoryEntry) Description() string { return fmt.Sprintf("%d 篇", e.category.Count) }
 
 // newCategoryPicker 造分类选择器：分类项 + 末尾常驻的「+ 新建分类…」。
 // 过滤函数把最后一项钉住，因此任何过滤串下都能就地新建分类。

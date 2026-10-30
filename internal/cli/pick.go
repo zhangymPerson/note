@@ -6,6 +6,8 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // picker 是 note list 与 note add 分类步共用的选择器：包一层 bubbles/list。
@@ -33,6 +35,9 @@ func newPicker(items []list.Item, width, height int, delegate list.ItemDelegate,
 	model.SetShowPagination(false)
 	model.SetFilteringEnabled(true)
 	model.SetShowFilter(true)
+	// bubbles 默认的过滤框提示是英文「Filter: 」，这里统一成中文（note add 分类步与 note list 都用它）
+	model.FilterInput.Prompt = "> "
+	model.FilterInput.Placeholder = "过滤"
 	if filter != nil {
 		model.Filter = filter
 	}
@@ -155,6 +160,17 @@ func pinnedLastFilter(pinnedIndex int) list.FilterFunc {
 		}
 		return append(out, list.Rank{Index: pinnedIndex})
 	}
+}
+
+// pickRow 拼一行「游标 + 主文本 + 右对齐辅助信息」，并夹到列表宽度。
+// note list 与 note add 分类步的 delegate 共用它，免得两份行渲染各自漂移。
+func pickRow(mark, text, meta string, width int) string {
+	line := styleCursor.Render(mark) + text
+	if gap := width - lipgloss.Width(line) - lipgloss.Width(meta); gap > 0 {
+		line += strings.Repeat(" ", gap)
+	}
+	line += meta
+	return ansi.Truncate(line, width, "…")
 }
 
 // highlightMatches 把命中下标处的字符染成强调色，其余原样。

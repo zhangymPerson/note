@@ -21,9 +21,14 @@ type fakeBackend struct {
 
 	createdCategories []string
 	createdNotes      []AddNote
+	// noCategories 为真时返回空分类列表（覆盖「一个分类都没有」的最短路径）
+	noCategories bool
 }
 
 func (b *fakeBackend) categories(context.Context) ([]Category, error) {
+	if b.noCategories {
+		return []Category{}, nil
+	}
 	return []Category{
 		{ID: 1, Name: "未分类", Count: 3, IsDefault: true},
 		{ID: 2, Name: "工作", Count: 5},
@@ -76,8 +81,14 @@ func newTestAddModel(b *fakeBackend) addModel {
 	return m
 }
 
-// press 把一个键名喂给模型；返回新模型（忽略命令，测试只关心状态）。
+// press 把一个键名喂给模型，并把命令跑到底（过滤结果要等 FilterMatchesMsg 落地）。
 func press(m addModel, name string) addModel {
+	next, cmd := pressCmd(m, name)
+	return settleAdd(next, cmd)
+}
+
+// keyMsgFor 把键名翻译成 tea.KeyMsg。
+func keyMsgFor(name string) tea.KeyMsg {
 	var msg tea.KeyMsg
 	switch name {
 	case "enter", "esc", "backspace", "tab", "up", "down":
@@ -101,7 +112,7 @@ func press(m addModel, name string) addModel {
 			panic("未知键名: " + name)
 		}
 	}
-	return feed(m, msg)
+	return msg
 }
 
 // feed 喂一条消息并把它产生的命令跑到底：bubbles 的过滤结果要等 FilterMatchesMsg
@@ -113,6 +124,16 @@ func feed(m addModel, msg tea.Msg) addModel {
 		return m
 	}
 	return settleAdd(next, cmd)
+}
+
+// pressCmd 与 press 一样喂按键，但把命令原样返回：放弃向导这类行为只能从命令看出来。
+func pressCmd(m addModel, name string) (addModel, tea.Cmd) {
+	updated, cmd := m.Update(keyMsgFor(name))
+	next, ok := updated.(addModel)
+	if !ok {
+		return m, cmd
+	}
+	return next, cmd
 }
 
 func settleAdd(m addModel, cmd tea.Cmd) addModel {
@@ -443,14 +464,113 @@ func TestAddCategoryStepFuzzyFilters(t *testing.T) {
 }
 
 func TestAddCategoryStepTreatsJAndKAsFilterChars(t *testing.T) {
-	m := newTestAddModel(&fakeBackend{})
+	for _, letter := range []string{"j", "k"} {
+		m := newTestAddModel(&fakeBackend{})
 
-	m = typeText(m, "j")
-	if got := m.picker.list.FilterValue(); got != "j" {
-		t.Fatalf("j 应当是过滤字符（不再当导航键），得到过滤串 %q", got)
+		m = typeText(m, letter)
+		if got := m.picker.list.FilterValue(); got != letter {
+			t.Fatalf("%s 应当是过滤字符（不再当导航键），得到过滤串 %q", letter, got)
+		}
+		if got := categoryNames(m); len(got) != 1 || got[0] != newCategoryRow {
+			t.Fatalf("「%s」匹配不上任何分类，应当只剩占位项，得到 %v", letter, got)
+		}
 	}
+}
+
+func TestAddCategoryStepEscAbandonsOnlyWhenFilterEmpty(t *testing.T) {
+	// 过滤中：Esc 只清过滤串，向导不退出
+	m := newTestAddModel(&fakeBackend{})
+	m = typeText(m, "读")
+	m, cmd := pressCmd(m, "esc")
+	if cmd != nil {
+		t.Fatal("过滤中的 Esc 不该让向导退出")
+	}
+	if m.step != stepCategory {
+		t.Fatalf("过滤中的 Esc 应当留在分类步，当前 step=%v", m.step)
+	}
+	if got := m.picker.list.FilterValue(); got != "" {
+		t.Fatalf("过滤中的 Esc 应当清空过滤串，得到 %q", got)
+	}
+
+	// 未过滤：再按一次才放弃
+	m, cmd = pressCmd(m, "esc")
+	if cmd == nil {
+		t.Fatal("未过滤时的 Esc 应当让向导退出")
+	}
+	if msg := cmd(); msg != (tea.QuitMsg{}) {
+		t.Fatalf("未过滤时的 Esc 应当发出 tea.Quit，得到 %T", msg)
+	}
+	if m.saved {
+		t.Fatal("放弃向导时 saved 应当为 false")
+	}
+}
+
+func TestAddCategoryStepKeepsTypingAfterEscFromNewCategory(t *testing.T) {
+	// 从新建分类步 Esc 返回后，过滤框必须拿回焦点：
+	// 否则它在过滤态里被 blur，敲字与退格会被静默吞掉。
+	m := newTestAddModel(&fakeBackend{})
+	m = typeText(m, "新建入口")
+	m = press(m, "enter")
+	if m.step != stepNewCategory {
+		t.Fatalf("应当进新建分类步，当前 step=%v", m.step)
+	}
+
+	m = press(m, "esc")
+	if m.step != stepCategory {
+		t.Fatalf("Esc 应当回到分类步，当前 step=%v", m.step)
+	}
+
+	m = typeText(m, "读")
+	if got := m.picker.list.FilterValue(); got != "新建入口读" {
+		t.Fatalf("返回后敲字应当接在原有过滤串后面（说明没被吞掉），得到 %q", got)
+	}
+}
+
+func TestAddCategoryStepNewCategoryBecomesSelected(t *testing.T) {
+	m := newTestAddModel(&fakeBackend{})
+	m = typeText(m, "新建入口")
+	m = press(m, "enter")
+	m = typeText(m, "随手记")
+	m = press(m, "enter")
+
+	if got := m.picker.list.FilterValue(); got != "" {
+		t.Fatalf("新建成功后过滤串应当被清空，得到 %q", got)
+	}
+	if got := m.picker.list.FilterState(); got != list.Unfiltered {
+		t.Fatalf("新建成功后应当回到未过滤态，得到 %v", got)
+	}
+	entry, ok := m.picker.selected().(categoryEntry)
+	if !ok || entry.category.ID != 101 {
+		t.Fatalf("光标应当落在新建的分类上，得到 %+v", m.picker.selected())
+	}
+}
+
+func TestAddCategoryStepWithNoCategoriesShowsCreateRow(t *testing.T) {
+	m := newTestAddModel(&fakeBackend{noCategories: true})
+
 	if got := categoryNames(m); len(got) != 1 || got[0] != newCategoryRow {
-		t.Fatalf("「j」匹配不上任何分类，应当只剩占位项，得到 %v", got)
+		t.Fatalf("一个分类都没有时应当只剩占位项，得到 %v", got)
+	}
+	m = press(m, "enter")
+	if m.step != stepNewCategory {
+		t.Fatalf("回车应当进新建分类步，当前 step=%v", m.step)
+	}
+}
+
+func TestCategoryStepViewShowsCountsAndNoCountForCreateRow(t *testing.T) {
+	m := newTestAddModel(&fakeBackend{})
+	view := ansi.Strip(m.viewCategory())
+
+	if !strings.Contains(view, "选择分类") {
+		t.Fatalf("分类步应当有向导自己的头部：\n%s", view)
+	}
+	if !strings.Contains(view, "读书笔记") || !strings.Contains(view, "3 篇") {
+		t.Fatalf("分类行应当带篇数：\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, newCategoryRow) && strings.Contains(line, "篇") {
+			t.Fatalf("占位行不该有篇数：%q", line)
+		}
 	}
 }
 

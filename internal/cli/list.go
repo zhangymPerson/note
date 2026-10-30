@@ -11,8 +11,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -239,17 +237,9 @@ func (d listDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	if selected {
 		mark = " > "
 	}
-	line := styleCursor.Render(mark) + title
-
-	meta := entry.item.meta()
-	if gap := width - lipgloss.Width(line) - lipgloss.Width(meta); gap > 0 {
-		line += strings.Repeat(" ", gap)
-	}
-	line += styleMuted.Render(meta)
-
-	// 标题可能比终端还宽：不夹住的话它会折行，这一项就变成 3 行以上，
+	// 标题可能比终端还宽：pickRow 会夹到列表宽度，否则这一项会折行、
 	// 而 delegate 声明的 Height 仍是 2，分页与视口随之错位。
-	line = ansi.Truncate(line, width, "…")
+	line := pickRow(mark, title, styleMuted.Render(entry.item.meta()), width)
 
 	summary := listRowSummary(entry.item.Summary, width-4)
 	fmt.Fprintf(w, "%s\n   %s\n", line, styleMuted.Render(summary))

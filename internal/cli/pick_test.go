@@ -249,6 +249,14 @@ func TestPickerPinnedItemSurvivesFiltering(t *testing.T) {
 	}
 }
 
+func TestPickerFilterPromptIsChinese(t *testing.T) {
+	// bubbles 默认给过滤框的提示是英文「Filter: 」，它会直接出现在 note add 与 note list 的界面上
+	p := newTestPicker("一")
+	if strings.Contains(p.list.FilterInput.Prompt, "Filter") {
+		t.Fatalf("过滤框提示应当是中文，得到 %q", p.list.FilterInput.Prompt)
+	}
+}
+
 func TestPickerQuitKeysAreDisabled(t *testing.T) {
 	p := newTestPicker("一", "二")
 
