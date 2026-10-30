@@ -53,6 +53,11 @@ ldflags := if os() == "windows" { `$h = git rev-parse --short HEAD 2>$null; $now
 build: frontend
     go build -trimpath -ldflags "-s -w {{ldflags}}" -o {{binary}} ./cmd/note
 
+# 构建并安装到本机（Windows）：关停后台 note web → 删旧版本 → 拷新版本 → 写用户 PATH
+[windows]
+install-win: build
+    powershell.exe -NoLogo -ExecutionPolicy Bypass -File scripts/install-win.ps1
+
 # 运行后端与前端测试
 test: frontend
     go test ./...

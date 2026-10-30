@@ -1310,6 +1310,10 @@ frontend: install
 build: frontend
     go build -trimpath -ldflags "-s -w {{ldflags}}" -o {{binary}} ./cmd/note
 
+[windows]
+install-win: build
+    powershell.exe -NoLogo -ExecutionPolicy Bypass -File scripts/install-win.ps1
+
 test: frontend
     go test ./...
     npm --prefix web test
@@ -1324,6 +1328,7 @@ check:
 - `just test` 依赖 `frontend`，因此跑 Go 测试前会重建 `internal/web/dist`——embed 的产物永远与被测代码一致。
 - `internal/web/dist` 为生成物，不提交；缺失时 `go build` 因 embed 失败而中止。
 - 另有 `just start` / `just stop` / `just restart`（后台开发服务，日志与 pid 写入 `.run/`）与 `just pull` / `just push`（多远程同步）。
+- `just install-win`（`[windows]` 限定）把 `build` 的产物装到本机：`scripts/install-win.ps1` 先 `note web status` 探测后台实例并 `note web stop`（轮询到进程真正退出才继续），再删旧版本、拷新版本、就地 `--help` 校验，最后把 `%LOCALAPPDATA%\Programs\note` 幂等地写进用户 PATH（写回保留 `REG_EXPAND_SZ`，不破坏 `%USERPROFILE%` 类条目）。关停失败（比如前台实例）时报错停住，不带着运行中的进程换文件。
 - 目标机器只需二进制与数据目录，不需要 Node/npm。
 
 ### 10.4 发布检查

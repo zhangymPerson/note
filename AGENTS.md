@@ -30,6 +30,7 @@ docs/              PRD、技术方案、构建指南
 ## 常用命令（just）
 
 - `just install` / `just frontend` / `just build`：前端依赖、前端产物、单二进制（Windows 输出 `note.exe`）
+- `just install-win`（Windows）：先 `just build`，再关停后台 `note web`、替换 `%LOCALAPPDATA%\Programs\note\note.exe`（日志与状态文件仍在数据目录，不动），并幂等地写入用户 PATH
 - `just test`：`go test ./...` + 前端 Vitest
 - `just check`：`go vet` + `svelte-check`/`tsc`
 - 改动合入前必须 `just test` 与 `just check` 全部通过。

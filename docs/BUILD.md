@@ -148,6 +148,7 @@ YAML 使用 `KnownFields(true)` 严格解析，拼错字段会直接启动失败
 just install    # npm ci，安装前端依赖
 just frontend   # 构建前端到 internal/web/dist
 just build      # 前端 + Go 单二进制
+just install-win # Windows：构建后安装到 %LOCALAPPDATA%\Programs\note 并写入用户 PATH
 just test       # Go 测试 + Vitest
 just check      # go vet + svelte-check/tsc
 just format     # go fmt + Prettier
@@ -198,6 +199,27 @@ config/note.yaml   # 可选，不存在则使用默认值
 ```
 
 首次运行会在当前目录创建 `data/notes.db`。
+
+## 安装到本机（Windows）
+
+`just build` 只产出仓库根目录的 `note.exe`；要让它变成随处可用的 `note` 命令：
+
+```powershell
+just install-win
+```
+
+它先跑 `just build`，再由 `scripts/install-win.ps1` 按固定顺序做四件事：
+
+1. 检查 `note web` 是否在运行（`note web status`）。运行中的可执行文件在 Windows 上删不掉，所以先用 `note web stop` 关停并轮询到进程真正退出；碰到关不掉的前台实例，直接报错让你回那个终端按 `Ctrl+C`，绝不带着运行中的进程往下走。
+2. 删除安装目录里的旧版本（`%LOCALAPPDATA%\Programs\note\note.exe`）。
+3. 复制新版本进去，并就地在目标路径跑一次 `--help` 校验。
+4. 把安装目录写进**用户** PATH：幂等（已经在里面就不动），写回时保留 `REG_EXPAND_SZ`，不会让 `%USERPROFILE%` 之类的条目失效。
+
+整个过程不需要管理员权限。重开一个终端后就可以直接 `note --help`；要把 Web 服务重新启起来用 `note web start`。安装目录可以覆盖：
+
+```powershell
+powershell -NoLogo -ExecutionPolicy Bypass -File scripts/install-win.ps1 -InstallDir D:\tools\note
+```
 
 ## 运行
 

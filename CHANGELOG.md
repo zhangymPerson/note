@@ -8,6 +8,13 @@
 
 ### Added
 
+- `just install-win`：一条命令把构建产物装进系统（实现过程与关键逻辑）：
+  - **前置**：食谱依赖 `just build`（`npm ci` → 前端构建 → Go 编译），用 `[windows]` 属性限定平台，非 Windows 下 just 直接跳过。
+  - **脚本**：新增 `scripts/install-win.ps1`（UTF-8 BOM，与 `scripts/dev.ps1` 一致，否则 PowerShell 5.1 会按 cp936 读坏中文），顺序固定：确认构建产物 → `note web status` 探测后台实例（0 运行中 / 1 进程在但不响应 / 3 未运行）→ 运行则 `note web stop` 并轮询到状态变 3 才算退干净 → 删旧版本 → 拷新版本 → 就地 `--help` 校验 → 写用户 PATH。
+  - **失败不半途**：关停失败（典型是前台实例，`note web stop` 只管后台实例）直接报错并给出「回终端按 Ctrl+C」的指引，**不删旧版本**；删除/复制失败也会报出文件占用的原因。
+  - **PATH 幂等且不破坏变量**：先按分号拆开比对（忽略末尾 `\`），已在里面就不写；新增时写回 `REG_EXPAND_SZ`，避免用户 PATH 里的 `%USERPROFILE%` 类条目因为变成 `REG_SZ` 而失效。
+  - **验证**：在本机实跑两次——首次（无旧版本）直接安装并写入 PATH，新开 shell `(Get-Command note).Source` 指向 `C:\Users\Thinkpad\AppData\Local\Programs\note\note.exe`；第二次连同运行中的后台实例（pid 10944）一起走完全部分支：检测到运行中 → `已停止（pid 10944）` → 删旧 → 拷新 → 提示「安装目录已在用户 PATH 中」（不重复追加）。安装后重新 `note web start` 把原先在跑的 Web 服务恢复。
+
 - CLI 与网页都能「打开即复制原文」（实现过程与关键逻辑）：
   - **一条路径三个入口**：`note show <id>`、`note show`（不给 id）与 `note list` 的 `Enter` 预览共走 `cmd/note/show.go` 的 `openNote`——渲染到 stdout，同时把 `cli.ShowResult.Source`（新增字段，就是库里的 `NoteDetail.Content` 原样）写进剪贴板。复制源文本而不是渲染结果：渲染输出带着色码与按宽度折行，粘到编辑器里就废了。
   - **选择器**：`parse` 不再把「`show` 缺 id」当错误（`ShowOptions` 全零合法），`internal/cli.PickNote` 复用 `note list` 那套 `picker`（同一套 fuzzy 筛选与 gum 键位）；`cmd/note` 的 `showPicked` 在 stdin/stdout 任一非终端时直接报错退出 1（不挂等输入、不把列表当文本吐），空库提示走 stderr 并退出 1，用户 `Esc` 放弃退出 130。加密笔记仍是退出码 4、且**不碰剪贴板**。
