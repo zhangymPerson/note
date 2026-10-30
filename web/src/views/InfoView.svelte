@@ -73,12 +73,15 @@
     }
   }
 
-  // AI 配置（OpenAI 兼容接口三项）：单独加载，配置文件坏了也只影响这张卡片
+  // AI 配置（OpenAI 兼容接口四项）：单独加载，配置文件坏了也只影响这张卡片
   let aiPath = $state('')
   let aiLoaded = $state(false)
   let aiLoadError = $state('')
   let aiBaseURL = $state('')
+  let aiModels = $state('')
   let aiPrompt = $state('')
+  let aiDefaultPrompt = $state('')
+  let aiPromptVariable = $state('')
   let aiKey = $state('')
   let aiKeySet = $state(false)
   let aiKeyMasked = $state('')
@@ -93,7 +96,10 @@
   function applyAIConfig(config: AIConfig): void {
     aiPath = config.path
     aiBaseURL = config.base_url
+    aiModels = config.models.join(', ')
     aiPrompt = config.prompt
+    aiDefaultPrompt = config.default_prompt
+    aiPromptVariable = config.prompt_variable
     aiKeySet = config.api_key_set
     aiKeyMasked = config.api_key_masked
     aiKey = ''
@@ -107,7 +113,11 @@
     aiError = ''
     aiBusy = true
     try {
-      const payload: AIConfigPayload = { base_url: aiBaseURL.trim(), prompt: aiPrompt }
+      const payload: AIConfigPayload = {
+        base_url: aiBaseURL.trim(),
+        models: aiModels.trim(),
+        prompt: aiPrompt,
+      }
       // 输入框留空 ≠ 清空：只有点过「清除密钥」才发空串
       if (aiKey !== '') payload.api_key = aiKey
       else if (aiKeyClear) payload.api_key = ''
@@ -345,7 +355,7 @@
     <div class="card info-card">
       <h2>AI 配置</h2>
       <p class="muted">
-        供 OpenAI 兼容接口使用；三项都存在 note.yaml 里，与 <code>note config list</code> 读的是同一份。
+        供 OpenAI 兼容接口使用；四项都存在 note.yaml 里，与 <code>note config list</code> 读的是同一份。
       </p>
       {#if aiLoadError !== ''}
         <p class="form-error" role="alert">{aiLoadError}</p>
@@ -369,6 +379,20 @@
             {/if}
           </div>
           <div>
+            <label for="ai-models">模型</label>
+            <input
+              id="ai-models"
+              type="text"
+              autocomplete="off"
+              placeholder="gpt-4o-mini, deepseek-chat"
+              bind:value={aiModels}
+            />
+            <p class="muted">逗号分隔，最多 10 个；第一个是默认模型（「用 AI 优化格式」默认用它）。</p>
+            {#if aiFields.models}
+              <p class="field-error" role="alert">{aiFields.models}</p>
+            {/if}
+          </div>
+          <div>
             <label for="ai-api-key">API 密钥</label>
             <input
               id="ai-api-key"
@@ -386,7 +410,10 @@
           <div>
             <label for="ai-prompt">提示词</label>
             <textarea id="ai-prompt" rows="4" bind:value={aiPrompt}></textarea>
-            <p class="muted">可留空，最多 {AI_PROMPT_MAX_RUNES} 字。当前 {aiPromptRunes} 字。</p>
+            <p class="muted">
+              留空表示用内置默认提示词；最多 {AI_PROMPT_MAX_RUNES} 字，当前 {aiPromptRunes} 字。用
+              <code>{aiPromptVariable}</code> 代表笔记正文（必填）。
+            </p>
             {#if aiFields.prompt}
               <p class="field-error" role="alert">{aiFields.prompt}</p>
             {/if}
@@ -395,6 +422,14 @@
             <button class="button" type="submit" disabled={aiBusy}>
               {aiBusy ? '保存中…' : '保存 AI 配置'}
             </button>
+            {#if aiDefaultPrompt !== ''}
+              <button
+                class="button button-quiet"
+                type="button"
+                disabled={aiBusy}
+                onclick={() => (aiPrompt = aiDefaultPrompt)}>恢复默认提示词</button
+              >
+            {/if}
             {#if aiKeySet && !aiKeyClear}
               <button
                 class="button button-quiet"

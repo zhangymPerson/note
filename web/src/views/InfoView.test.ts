@@ -80,7 +80,10 @@ const { default: InfoView } = await import("./InfoView.svelte");
 
 const CONFIGURED = {
   base_url: "https://api.openai.com/v1",
-  prompt: "整理成笔记",
+  models: ["gpt-4o-mini", "deepseek-chat"],
+  prompt: "整理成笔记 {{content}}",
+  default_prompt: "默认提示词 {{content}}",
+  prompt_variable: "{{content}}",
   api_key_set: true,
   api_key_masked: "sk-…abcd",
   path: "/home/u/.config/note/note.yaml",
@@ -118,9 +121,18 @@ function submit(node: Element): void {
 
 beforeEach(() => {
   mocks.getAIConfig.mockResolvedValue({ ...CONFIGURED });
-  mocks.saveAIConfig.mockImplementation(async (payload: unknown) => ({
+  // 服务端把逗号串存成序列再回数组，这里照做，免得组件拿到 string 去 join。
+  mocks.saveAIConfig.mockImplementation(async (payload: Record<string, unknown>) => ({
     ...CONFIGURED,
-    ...(payload as Record<string, unknown>),
+    base_url: (payload.base_url as string) ?? CONFIGURED.base_url,
+    prompt: (payload.prompt as string) ?? CONFIGURED.prompt,
+    models:
+      typeof payload.models === "string"
+        ? payload.models
+            .split(",")
+            .map((model) => model.trim())
+            .filter((model) => model !== "")
+        : CONFIGURED.models,
     api_key_set: true,
     api_key_masked: "sk-…new1",
   }));
@@ -165,6 +177,7 @@ describe("InfoView AI 配置卡片", () => {
 
     expect(mocks.saveAIConfig).toHaveBeenCalledWith({
       base_url: "https://proxy.example.com/v1",
+      models: "gpt-4o-mini, deepseek-chat",
       prompt: CONFIGURED.prompt,
     });
   });
@@ -228,6 +241,67 @@ describe("InfoView AI 配置卡片", () => {
     await vi.waitFor(() =>
       expect(element.querySelector(".field-error")?.textContent).toContain(
         "这里填的地址不合法",
+      ),
+    );
+  });
+
+  it("模型列表以逗号串展示，保存时原文回传", async () => {
+    const element = await render();
+
+    const models = element.querySelector("#ai-models") as HTMLInputElement;
+    expect(models.value).toBe("gpt-4o-mini, deepseek-chat");
+
+    typeInto(models, "qwen-plus, gpt-4o-mini");
+    submit(models);
+    await vi.waitFor(() => expect(mocks.saveAIConfig).toHaveBeenCalled());
+    expect(mocks.saveAIConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ models: "qwen-plus, gpt-4o-mini" }),
+    );
+  });
+
+  it("点「恢复默认提示词」只填输入框，不自动保存", async () => {
+    const element = await render();
+
+    const restore = Array.from(element.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("恢复默认"),
+    );
+    expect(restore).toBeDefined();
+    restore!.dispatchEvent(new Event("click", { bubbles: true }));
+    flushSync();
+
+    expect(
+      (element.querySelector("#ai-prompt") as HTMLTextAreaElement).value,
+    ).toBe(CONFIGURED.default_prompt);
+    expect(mocks.saveAIConfig).not.toHaveBeenCalled();
+
+    submit(element.querySelector("#ai-prompt")!);
+    await vi.waitFor(() => expect(mocks.saveAIConfig).toHaveBeenCalled());
+    expect(mocks.saveAIConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: CONFIGURED.default_prompt }),
+    );
+  });
+
+  it("提示词说明里点明变量，模型非法时报字段错", async () => {
+    const { ApiRequestError } = (await import("../lib/api")) as unknown as {
+      ApiRequestError: new (
+        code: string,
+        message: string,
+        fields?: Record<string, string>,
+      ) => Error;
+    };
+    mocks.saveAIConfig.mockRejectedValueOnce(
+      new ApiRequestError("validation_failed", "请修正输入内容", {
+        models: "ai.models 第 1 项不能包含空白",
+      }),
+    );
+
+    const element = await render();
+    expect(element.textContent).toContain(CONFIGURED.prompt_variable);
+
+    submit(element.querySelector("#ai-models")!);
+    await vi.waitFor(() =>
+      expect(element.querySelector(".field-error")?.textContent).toContain(
+        "不能包含空白",
       ),
     );
   });

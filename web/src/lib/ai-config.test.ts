@@ -10,7 +10,10 @@ import {
 
 const CONFIGURED = {
   base_url: "https://api.openai.com/v1",
-  prompt: "整理成笔记",
+  models: ["gpt-4o-mini", "deepseek-chat"],
+  prompt: "整理成笔记 {{content}}",
+  default_prompt: "默认提示词 {{content}}",
+  prompt_variable: "{{content}}",
   api_key_set: true,
   api_key_masked: "sk-…abcd",
   path: "/home/u/.config/note/note.yaml",
@@ -78,11 +81,12 @@ describe("ai-config api", () => {
     expect(requests[0]).toMatchObject({ method: "GET", url: "/api/ai-config" });
   });
 
-  it("保存时带上 CSRF 令牌，并把三项一起提交", async () => {
+  it("保存时带上 CSRF 令牌，并把四项一起提交", async () => {
     mockEndpoints({});
     await saveAIConfig({
       base_url: "https://x.example.com/v1",
-      prompt: "p",
+      models: "m1, m2",
+      prompt: "p :: {{content}}",
       api_key: "sk-new",
     });
 
@@ -90,7 +94,8 @@ describe("ai-config api", () => {
     expect(put?.url).toBe("/api/ai-config");
     expect(put?.body).toEqual({
       base_url: "https://x.example.com/v1",
-      prompt: "p",
+      models: "m1, m2",
+      prompt: "p :: {{content}}",
       api_key: "sk-new",
     });
     expect((put?.headers as Record<string, string>)["X-CSRF-Token"]).toBe(
@@ -102,12 +107,14 @@ describe("ai-config api", () => {
     mockEndpoints({});
     await saveAIConfig({
       base_url: CONFIGURED.base_url,
+      models: "gpt-4o-mini, deepseek-chat",
       prompt: CONFIGURED.prompt,
     });
 
     const put = requests.find((request) => request.method === "PUT");
     expect(put?.body).toEqual({
       base_url: CONFIGURED.base_url,
+      models: "gpt-4o-mini, deepseek-chat",
       prompt: CONFIGURED.prompt,
     });
   });
@@ -128,7 +135,7 @@ describe("ai-config api", () => {
     });
 
     await expect(
-      saveAIConfig({ base_url: "api.example.com", prompt: "" }),
+      saveAIConfig({ base_url: "api.example.com", models: "", prompt: "" }),
     ).rejects.toMatchObject({
       code: "validation_failed",
       fields: { base_url: "ai.base_url 必须是 http(s) 绝对地址" },
