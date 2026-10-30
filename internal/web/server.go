@@ -36,6 +36,8 @@ func NewWithControl(cfg config.Config, st *store.Store, dist fs.FS, ctl Control)
 	// OpenAI 兼容接口的三项配置：GET 只回密钥掩码，PUT 原子写入 note.yaml。
 	mux.HandleFunc("GET /api/ai-config", app.handleGetAIConfig)
 	mux.HandleFunc("PUT /api/ai-config", app.handlePutAIConfig)
+	// 用 AI 润色正文：服务端代发（密钥不出机器），结果只回前端预览，不落库。
+	mux.HandleFunc("POST /api/ai/optimize", app.handleOptimizeNote)
 	mux.HandleFunc("GET /api/notes", app.handleListNotes)
 	mux.HandleFunc("POST /api/notes", app.handleCreateNote)
 	mux.HandleFunc("GET /api/notes/encrypted", app.handleListEncryptedCiphers)
