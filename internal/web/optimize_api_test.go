@@ -15,11 +15,26 @@ import (
 )
 
 // fakeUpstream 是 OpenAI 兼容接口的替身：只回一条 chat/completions 结果。
+// 它同时校验上游收到的请求形状（一条 user 消息）。注意这里解码是大小写不敏感的，
+// 所以「键名必须是全小写」只能由 internal/ai 的原始 JSON 用例来钉。
 func fakeUpstream(t *testing.T, content string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("path = %q", r.URL.Path)
+		}
+		raw, err := io.ReadAll(r.Body)
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err != nil || json.Unmarshal(raw, &body) != nil {
+			t.Errorf("请求体不是 JSON: %v (%s)", err, raw)
+		} else if len(body.Messages) != 1 || body.Messages[0].Role != "user" || body.Messages[0].Content == "" {
+			t.Errorf("上游收到的 messages 不符合 chat/completions 形状: %s", raw)
 		}
 		io.WriteString(w, `{"choices":[{"message":{"content":`+strconv.Quote(content)+`}}]}`)
 	}))
