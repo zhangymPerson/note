@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"note/internal/ai"
 	"note/internal/cli"
 	"note/internal/config"
 	"note/internal/store"
@@ -26,7 +27,7 @@ func runAdd(globalConfigPath string, args []string) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	ref, saved, err := cli.RunAdd(context.Background(), addDeps(st))
+	ref, saved, err := cli.RunAdd(context.Background(), addDepsWithAI(addDeps(st), cfg))
 	if err != nil {
 		if errors.Is(err, cli.ErrNotTerminal) {
 			fmt.Fprintln(os.Stderr, err)
@@ -85,6 +86,24 @@ func addDeps(st *store.Store) cli.AddDeps {
 			return cli.NoteRef{ID: note.ID, Title: note.Title, CategoryName: note.CategoryName}, nil
 		},
 	}
+}
+
+// addDepsWithAI 补齐 AI 三项：配置不齐时 Optimize 保持 nil（Ctrl+O 只提示怎么补配置），
+// 齐了就把 internal/ai 包成向导要的形状——CLI 不要求 note web 正在跑。
+func addDepsWithAI(deps cli.AddDeps, cfg config.Config) cli.AddDeps {
+	client := ai.NewClient(cfg.AI)
+	deps.AIModel, deps.AIHost = client.DefaultModel(), client.Host()
+	if !client.Configured() {
+		return deps
+	}
+	deps.Optimize = func(ctx context.Context, content string) (cli.OptimizeResult, error) {
+		res, err := client.Optimize(ctx, content, "")
+		if err != nil {
+			return cli.OptimizeResult{}, err
+		}
+		return cli.OptimizeResult{Content: res.Content, Model: res.Model}, nil
+	}
+	return deps
 }
 
 // printAddedNote 打印新建结果；链接用配置里的监听地址拼，需要 note web 正在跑才能打开。

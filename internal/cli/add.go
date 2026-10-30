@@ -13,8 +13,11 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
+
+	"note/internal/markdown"
 )
 
 // ErrNotTerminal 表示 stdin 不是终端：向导无法运行，调用方应报错而不是挂起。
@@ -50,12 +53,21 @@ type NoteRef struct {
 	CategoryName string
 }
 
+// OptimizeResult 是「用 AI 优化正文」的结果：正文已由 internal/ai 剥掉外围代码围栏。
+type OptimizeResult struct{ Content, Model string }
+
 // AddDeps 是向导接触外部世界的全部方式：cmd/note 用 store 实现，测试注入假实现。
 // cli 因此不必 import internal/store。
 type AddDeps struct {
 	Categories     func(ctx context.Context) ([]Category, error)
 	CreateCategory func(ctx context.Context, name string) (Category, error)
 	CreateNote     func(ctx context.Context, in AddNote) (NoteRef, error)
+	// Optimize 为 nil 表示 AI 没配置好：Ctrl+O 只提示怎么补配置。
+	// 真正的 HTTP 调用在 internal/ai，cli 不碰网络。
+	Optimize func(ctx context.Context, content string) (OptimizeResult, error)
+	// AIModel / AIHost 只用于界面披露：用哪个模型、正文会发到哪台主机。
+	AIModel string
+	AIHost  string
 }
 
 // addStep 是向导所处的步骤。
@@ -66,6 +78,7 @@ const (
 	stepNewCategory
 	stepTitle
 	stepContent
+	stepOptimized
 )
 
 // addModel 是单进程多步的 Elm 模型：切步只改 step 字段与焦点，不清屏。
@@ -88,6 +101,14 @@ type addModel struct {
 	status string // 底部一次性提示（保存失败、超限等）
 	ref    NoteRef
 	saved  bool
+
+	// AI 优化的状态：等待期间正文只读，结果先进预览屏，Enter 才采用。
+	aiBusy           bool
+	aiResult         string
+	aiModel          string
+	aiRendered       string
+	aiRequestContent string
+	aiView           viewport.Model
 
 	width  int
 	height int
@@ -122,8 +143,18 @@ func newAddModel(deps AddDeps) addModel {
 		height: 24,
 	}
 	m.picker = newCategoryPicker(nil, m.listWidth(), m.categoryHeight())
+	m.aiView = viewport.New(m.listWidth(), m.previewHeight())
 	m.layout()
 	return m
+}
+
+// previewHeight 是预览屏可用行数：给标题、计数行与键位提示留位。
+func (m addModel) previewHeight() int {
+	height := m.height - 8
+	if height < 6 {
+		height = 6
+	}
+	return height
 }
 
 // layout 按终端尺寸摆放输入组件；窄终端下夹到可用下限，避免出屏。
@@ -132,6 +163,8 @@ func (m *addModel) layout() {
 	m.create.Width = width
 	m.title.Width = width
 	m.picker.list.SetSize(width, m.categoryHeight())
+	// 只改尺寸、不重建 viewport：重建会把已渲染的预览内容清掉。
+	m.aiView.Width, m.aiView.Height = width, m.previewHeight()
 	// 正文外面套一层细边框：左右各 1 列边框 + 1 列内边距 = 4 列，内容宽度要让出这 4 列。
 	inner := width - 4
 	if inner < 10 {
@@ -189,9 +222,13 @@ func (m addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNewCategoryStep(msg)
 		case stepTitle:
 			return m.updateTitleStep(msg)
+		case stepOptimized:
+			return m.updateOptimizedStep(msg)
 		default:
 			return m.updateContentStep(msg)
 		}
+	case optimizeFinishedMsg:
+		return m.finishOptimize(msg)
 	case editorFinishedMsg:
 		if msg.err != nil {
 			m.status = "外接编辑器出错: " + msg.err.Error()
@@ -322,6 +359,13 @@ func (m addModel) updateContentStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.saved = false
 		return m, tea.Quit
+	}
+	// 等待上游期间正文只读：不让编辑与保存把「发出去的那段」和现在的内容混在一起。
+	if m.aiBusy {
+		return m, nil
+	}
+
+	switch msg.String() {
 	case "ctrl+d":
 		if utf8.RuneCountInString(m.body.Value()) > maxAddContentRunes {
 			m.status = fmt.Sprintf("正文最多 %d 码点", maxAddContentRunes)
@@ -336,10 +380,95 @@ func (m addModel) updateContentStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "ctrl+e":
 		return m.openExternalEditor()
+	case "ctrl+o":
+		return m.startOptimize()
 	}
 	m.status = ""
 	var cmd tea.Cmd
 	m.body, cmd = m.body.Update(msg)
+	return m, cmd
+}
+
+// optimizeFinishedMsg 是 AI 调用的回执：错误只回显摘要，不落到正文。
+type optimizeFinishedMsg struct {
+	Content string
+	Model   string
+	Err     error
+}
+
+// startOptimize 发起一次优化：正文与提示词都交给 deps.Optimize（底层是 internal/ai）。
+func (m addModel) startOptimize() (tea.Model, tea.Cmd) {
+	if m.deps.Optimize == nil {
+		m.status = "还没配置 AI：用 note config set ai.models=…（再加上 ai.base_url、ai.api_key），或在信息页的 AI 配置卡片里填"
+		return m, nil
+	}
+	if strings.TrimSpace(m.body.Value()) == "" {
+		m.status = "正文是空的，先写点东西再优化"
+		return m, nil
+	}
+	if utf8.RuneCountInString(m.body.Value()) > maxAddContentRunes {
+		m.status = fmt.Sprintf("正文最多 %d 码点，先删掉一些再优化", maxAddContentRunes)
+		return m, nil
+	}
+
+	m.aiBusy, m.aiResult = true, ""
+	m.aiRequestContent = m.body.Value()
+	m.status = fmt.Sprintf("正在用 %s 优化…（正文会发送到 %s）", m.deps.AIModel, m.deps.AIHost)
+
+	content, optimize := m.body.Value(), m.deps.Optimize
+	return m, func() tea.Msg {
+		res, err := optimize(context.Background(), content)
+		return optimizeFinishedMsg{Content: res.Content, Model: res.Model, Err: err}
+	}
+}
+
+// finishOptimize 落地调用结果：成功就渲染进预览屏，失败退回正文步并回显原因。
+func (m addModel) finishOptimize(msg optimizeFinishedMsg) (tea.Model, tea.Cmd) {
+	m.aiBusy = false
+	if msg.Err != nil {
+		m.step = stepContent
+		m.status = "AI 优化失败: " + msg.Err.Error()
+		return m, nil
+	}
+
+	m.aiResult, m.aiModel = msg.Content, msg.Model
+	rendered, err := markdown.Render(msg.Content, markdown.Options{Width: m.listWidth()})
+	if err != nil {
+		// 渲染失败不拦着采用：正文本身就是合法输入，预览退化成原文
+		rendered = msg.Content
+	}
+	m.aiRendered = rendered
+	m.aiView.SetContent(m.aiRendered)
+	m.aiView.GotoTop()
+	m.step = stepOptimized
+	m.status = ""
+	return m, nil
+}
+
+// updateOptimizedStep 是预览屏：Enter 采用、Esc 保留原文、Ctrl+O 重新优化。
+func (m addModel) updateOptimizedStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.step = stepContent
+		m.status = ""
+		return m, nil
+	case "enter":
+		if n := utf8.RuneCountInString(m.aiResult); n > maxAddContentRunes {
+			m.status = fmt.Sprintf("优化结果有 %d 码点，超过 %d 上限，不能直接采用；按 Esc 保留原文", n, maxAddContentRunes)
+			return m, nil
+		}
+		m.body.SetValue(m.aiResult)
+		m.body.CursorEnd()
+		m.aiResult = ""
+		m.step = stepContent
+		m.status = "已采用 AI 优化结果，Ctrl+D 保存"
+		return m, nil
+	case "ctrl+o":
+		return m.startOptimize()
+	}
+
+	var cmd tea.Cmd
+	m.aiView, cmd = m.aiView.Update(msg)
 	return m, cmd
 }
 
@@ -446,6 +575,8 @@ func (m addModel) View() string {
 		return m.viewNewCategory()
 	case stepTitle:
 		return m.viewTitle()
+	case stepOptimized:
+		return m.viewOptimized()
 	default:
 		return m.viewContent()
 	}
@@ -514,7 +645,26 @@ func (m addModel) viewContent() string {
 	if m.status != "" {
 		b.WriteString(styleWarn.Render("! "+m.status) + "\n")
 	}
-	b.WriteString("\n" + help([][2]string{{"Enter", "换行"}, {"Ctrl+D", "完成"}, {"Ctrl+E", "用 $EDITOR 编辑"}, {"Esc", "放弃"}}) + "\n")
+	b.WriteString("\n" + help([][2]string{{"Enter", "换行"}, {"Ctrl+D", "完成"}, {"Ctrl+O", "用 AI 优化"}, {"Ctrl+E", "用 $EDITOR 编辑"}, {"Esc", "放弃"}}) + "\n")
+	return b.String()
+}
+
+// viewOptimized 是 AI 结果的预览屏：原文保持不动，这里只是「看一眼再决定」。
+func (m addModel) viewOptimized() string {
+	var b strings.Builder
+	b.WriteString(header("AI 优化结果", ""))
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render(fmt.Sprintf("%s · %d → %d 码点",
+		m.aiModel,
+		utf8.RuneCountInString(m.aiRequestContent),
+		utf8.RuneCountInString(m.aiResult))))
+	b.WriteString("\n\n")
+	b.WriteString(m.aiView.View())
+	b.WriteString("\n")
+	if m.status != "" {
+		b.WriteString(styleWarn.Render("! "+m.status) + "\n")
+	}
+	b.WriteString(help([][2]string{{"Enter", "采用"}, {"Esc", "保留原文"}, {"Ctrl+O", "重新优化"}}) + "\n")
 	return b.String()
 }
 

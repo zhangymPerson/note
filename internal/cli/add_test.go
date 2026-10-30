@@ -107,6 +107,8 @@ func keyMsgFor(name string) tea.KeyMsg {
 			msg = tea.KeyMsg{Type: tea.KeyCtrlD}
 		case "ctrl+e":
 			msg = tea.KeyMsg{Type: tea.KeyCtrlE}
+		case "ctrl+o":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlO}
 		case "ctrl+c":
 			msg = tea.KeyMsg{Type: tea.KeyCtrlC}
 		default:
@@ -633,6 +635,140 @@ func TestContentStepHasHeaderAndBorderedBox(t *testing.T) {
 	for _, rune := range []string{"╭", "╮", "╰", "╯"} {
 		if !strings.Contains(view, rune) {
 			t.Fatalf("正文框缺少圆角边框 %q:\n%s", rune, view)
+		}
+	}
+}
+
+// enterContentStep 是 AI 优化相关用例的起点：走到正文步并填好正文。
+func enterContentStep(t *testing.T) addModel {
+	t.Helper()
+	m := newTestAddModel(&fakeBackend{})
+	m = pickCategory(t, m, "工作")
+	m = typeText(m, "标题")
+	m = press(m, "enter")
+	m = typeText(m, "原正文")
+	return m
+}
+
+func TestContentStepCtrlOWithoutAIShowsHint(t *testing.T) {
+	m := enterContentStep(t)
+	m = press(m, "ctrl+o")
+
+	if !strings.Contains(m.status, "note config set ai.models") {
+		t.Fatalf("未配置时应给出补配置的提示: %q", m.status)
+	}
+	if m.body.Value() != "原正文" {
+		t.Fatal("正文不该变")
+	}
+}
+
+func TestCtrlOAdoptsOptimizedContent(t *testing.T) {
+	m := enterContentStep(t)
+	m.deps.AIModel, m.deps.AIHost = "m1", "api.example.com"
+	m.deps.Optimize = func(context.Context, string) (OptimizeResult, error) {
+		return OptimizeResult{Content: "# 优化后", Model: "m1"}, nil
+	}
+
+	m, cmd := pressCmd(m, "ctrl+o")
+	if m.step != stepContent || !m.aiBusy {
+		t.Fatalf("应当进入等待: step=%v busy=%v", m.step, m.aiBusy)
+	}
+	if !strings.Contains(m.status, "api.example.com") {
+		t.Fatalf("状态行要披露目标主机: %q", m.status)
+	}
+	if cmd == nil {
+		t.Fatal("应当返回一个执行优化的命令")
+	}
+
+	// 等待期间编辑被忽略
+	if got := typeText(m, "x"); got.body.Value() != "原正文" {
+		t.Fatal("等待期间不该编辑正文")
+	}
+
+	m = feed(m, cmd()) // optimizeFinishedMsg → 预览步
+	if m.step != stepOptimized {
+		t.Fatalf("step = %v", m.step)
+	}
+
+	m = press(m, "enter")
+	if m.step != stepContent || m.body.Value() != "# 优化后" {
+		t.Fatalf("应采用结果: %q", m.body.Value())
+	}
+	if !strings.Contains(m.status, "Ctrl+D") {
+		t.Fatalf("采用后应提示保存: %q", m.status)
+	}
+}
+
+func TestPreviewEscKeepsOriginal(t *testing.T) {
+	m := enterContentStep(t)
+	m.deps.AIModel, m.deps.AIHost = "m1", "h"
+	m.deps.Optimize = func(context.Context, string) (OptimizeResult, error) {
+		return OptimizeResult{Content: "# 优化后", Model: "m1"}, nil
+	}
+
+	m, cmd := pressCmd(m, "ctrl+o")
+	m = feed(m, cmd())
+	m = press(m, "esc")
+
+	if m.step != stepContent || m.body.Value() != "原正文" {
+		t.Fatalf("Esc 应保留原文: step=%v body=%q", m.step, m.body.Value())
+	}
+}
+
+func TestOptimizeErrorKeepsOriginalAndStays(t *testing.T) {
+	m := enterContentStep(t)
+	m.deps.AIModel, m.deps.AIHost = "m1", "h"
+	m.deps.Optimize = func(context.Context, string) (OptimizeResult, error) {
+		return OptimizeResult{}, errors.New("AI 接口返回 500：boom")
+	}
+
+	m, cmd := pressCmd(m, "ctrl+o")
+	m = feed(m, cmd())
+
+	if m.step != stepContent || m.body.Value() != "原正文" {
+		t.Fatal("失败不该改正文也不该换步")
+	}
+	if !strings.Contains(m.status, "boom") {
+		t.Fatalf("应回显上游原因: %q", m.status)
+	}
+}
+
+func TestPreviewRefusesTooLongResult(t *testing.T) {
+	m := enterContentStep(t)
+	m.deps.AIModel, m.deps.AIHost = "m1", "h"
+	m.deps.Optimize = func(context.Context, string) (OptimizeResult, error) {
+		return OptimizeResult{Content: strings.Repeat("😀", maxAddContentRunes+1), Model: "m1"}, nil
+	}
+
+	m, cmd := pressCmd(m, "ctrl+o")
+	m = feed(m, cmd())
+	m = press(m, "enter")
+
+	if m.step != stepOptimized {
+		t.Fatal("超限结果应留在预览步")
+	}
+	if m.body.Value() != "原正文" {
+		t.Fatal("超限时不该采用")
+	}
+	if !strings.Contains(m.status, "2000") {
+		t.Fatalf("应提示超限: %q", m.status)
+	}
+}
+
+// 预览屏展示新旧码点数与三个键位，正文只读。
+func TestPreviewViewShowsCountsAndHelp(t *testing.T) {
+	m := enterContentStep(t)
+	m.deps.AIModel, m.deps.AIHost = "m1", "h"
+	m.deps.Optimize = func(context.Context, string) (OptimizeResult, error) {
+		return OptimizeResult{Content: "# 优化后", Model: "m1"}, nil
+	}
+	m, cmd := pressCmd(m, "ctrl+o")
+	m = feed(m, cmd())
+
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"AI 优化结果", "m1", "3 → 5", "采用", "保留原文", "重新优化"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("预览屏缺少 %q:\n%s", want, view)
 		}
 	}
 }
