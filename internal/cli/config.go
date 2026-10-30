@@ -38,7 +38,8 @@ func FormatConfigList(path string, found bool, items []ConfigItem) string {
 	}
 
 	b.WriteString("\n用 note config set <键>=<值> 写入；值留空表示清空该项。\n")
-	b.WriteString("这三项供 OpenAI 兼容接口使用，密钥在命令行与网页里都只显示掩码。\n")
+	b.WriteString("ai.prompt 里用 {{content}} 代表笔记正文；留空表示使用内置默认提示词。\n")
+	b.WriteString("上面四项供 OpenAI 兼容接口使用，密钥在命令行与网页里都只显示掩码。\n")
 	return b.String()
 }
 
@@ -61,14 +62,16 @@ func displayConfigValue(value string) string {
 func configUsage() string {
 	return `用法: note config list|set [参数]
 
-读写 note.yaml 里的 AI 三项（OpenAI 兼容接口）：
+读写 note.yaml 里的 AI 四项（OpenAI 兼容接口）：
 
   ai.base_url  接口地址，必须是 http(s) 绝对地址，例如 https://api.openai.com/v1
   ai.api_key   API 密钥；命令行与网页里都只显示掩码
-  ai.prompt    自定义提示词，最多 2000 字，可以多行
+  ai.models    逗号分隔的模型列表，第一个为默认模型；最多 10 个
+  ai.prompt    提示词模板，最多 2000 字，可以多行；
+               用 {{content}} 代表用户的笔记正文，留空表示使用内置默认提示词
 
 子命令:
-  list              输出配置文件路径与三项当前值（密钥掩码）
+  list              输出配置文件路径与四项当前值（密钥掩码）
   set <键>=<值>     写入一项；值留空表示清空该项
 
 参数:
@@ -88,7 +91,9 @@ func configUsage() string {
   note config list
   note config set ai.base_url=https://api.openai.com/v1
   note config set ai.api_key=sk-…
-  note config set "ai.prompt=把下面的内容整理成 Markdown 笔记"
+  note config set ai.models=gpt-4o-mini,deepseek-chat
+  note config set "ai.prompt=把下面这段整理成 Markdown 笔记：{{content}}"
+  note config set ai.prompt=             恢复默认提示词
   note config set ai.api_key=            清空密钥
 `
 }

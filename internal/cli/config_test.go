@@ -95,3 +95,17 @@ func TestFormatConfigSetMasksValue(t *testing.T) {
 		t.Fatalf("清空后的回显应当说明未设置:\n%s", cleared)
 	}
 }
+
+func TestFormatConfigListShowsModelsAndDefaultPromptPlaceholder(t *testing.T) {
+	out := FormatConfigList("/tmp/note.yaml", true, []ConfigItem{
+		{Key: "ai.base_url", Value: "https://api.example.com/v1"},
+		{Key: "ai.models", Value: "（未配置）"},
+		{Key: "ai.prompt", Value: "（默认提示词）"},
+	})
+
+	for _, want := range []string{"ai.models", "（未配置）", "（默认提示词）", "{{content}}", "四项"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("列表输出缺少 %q:\n%s", want, out)
+		}
+	}
+}

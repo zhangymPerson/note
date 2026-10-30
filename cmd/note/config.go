@@ -71,11 +71,12 @@ func setConfig(path, key, value string) error {
 	return fmt.Errorf("写入后没读回 %s", key)
 }
 
-// cliAIItems 把 AI 三项转成 list 的行；密钥只给掩码。
+// cliAIItems 把 AI 四项转成 list 的行；密钥只给掩码，空值换成可读的占位。
 func cliAIItems(ai config.AI) []cli.ConfigItem {
 	return []cli.ConfigItem{
 		{Key: "ai.base_url", Value: ai.BaseURL},
 		{Key: "ai.api_key", Value: config.MaskSecret(ai.APIKey)},
-		{Key: "ai.prompt", Value: ai.Prompt},
+		{Key: "ai.models", Value: config.ModelsDisplay(ai.Models)},
+		{Key: "ai.prompt", Value: config.PromptDisplay(ai.Prompt)},
 	}
 }
