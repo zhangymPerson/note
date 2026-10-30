@@ -115,7 +115,6 @@ func newAddModel(deps AddDeps) addModel {
 	m := addModel{
 		deps:   deps,
 		step:   stepCategory,
-		picker: newCategoryPicker(nil, 0, 0),
 		create: create,
 		title:  title,
 		body:   body,
