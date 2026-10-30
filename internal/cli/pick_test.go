@@ -255,6 +255,9 @@ func TestPickerFilterPromptIsChinese(t *testing.T) {
 	if strings.Contains(p.list.FilterInput.Prompt, "Filter") {
 		t.Fatalf("过滤框提示应当是中文，得到 %q", p.list.FilterInput.Prompt)
 	}
+	if p.list.FilterInput.Placeholder != "过滤" {
+		t.Fatalf("过滤框占位提示应当是中文，得到 %q", p.list.FilterInput.Placeholder)
+	}
 }
 
 func TestPickerQuitKeysAreDisabled(t *testing.T) {

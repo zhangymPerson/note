@@ -14,8 +14,6 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-isatty"
 )
 
@@ -117,13 +115,14 @@ func newAddModel(deps AddDeps) addModel {
 	m := addModel{
 		deps:   deps,
 		step:   stepCategory,
-		picker: newCategoryPicker(nil, 80, 10),
+		picker: newCategoryPicker(nil, 0, 0),
 		create: create,
 		title:  title,
 		body:   body,
 		width:  80,
 		height: 24,
 	}
+	m.picker = newCategoryPicker(nil, m.listWidth(), m.categoryHeight())
 	m.layout()
 	return m
 }
@@ -588,19 +587,12 @@ func (d categoryDelegate) Render(w io.Writer, m list.Model, index int, item list
 	if selected {
 		mark = " > "
 	}
-	line := styleCursor.Render(mark) + name
-
 	// 占位行没有篇数，右对齐信息留空
 	meta := ""
 	if !entry.placeholder {
 		meta = styleMuted.Render(fmt.Sprintf("%d 篇", entry.category.Count))
 	}
-	if gap := width - lipgloss.Width(line) - lipgloss.Width(meta); gap > 0 {
-		line += strings.Repeat(" ", gap)
-	}
-	line += meta
-
-	fmt.Fprintf(w, "%s\n", ansi.Truncate(line, width, "…"))
+	fmt.Fprintf(w, "%s\n", pickRow(mark, name, meta, width))
 }
 
 // validateCategoryName 校验新分类名：非空且不超过 30 码点。
