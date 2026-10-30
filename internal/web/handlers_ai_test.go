@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -11,11 +12,14 @@ import (
 )
 
 type aiConfigResp struct {
-	BaseURL      string `json:"base_url"`
-	Prompt       string `json:"prompt"`
-	APIKeySet    bool   `json:"api_key_set"`
-	APIKeyMasked string `json:"api_key_masked"`
-	Path         string `json:"path"`
+	BaseURL        string   `json:"base_url"`
+	Models         []string `json:"models"`
+	Prompt         string   `json:"prompt"`
+	DefaultPrompt  string   `json:"default_prompt"`
+	PromptVariable string   `json:"prompt_variable"`
+	APIKeySet      bool     `json:"api_key_set"`
+	APIKeyMasked   string   `json:"api_key_masked"`
+	Path           string   `json:"path"`
 }
 
 func decodeAIConfig(t *testing.T, body []byte) aiConfigResp {
@@ -211,5 +215,86 @@ func TestAIConfigAPIRequiresCSRF(t *testing.T) {
 	}
 	if _, err := os.Stat(cfg.ConfigPath); !os.IsNotExist(err) {
 		t.Fatal("被拒的请求不该写配置文件")
+	}
+}
+
+// 模型列表是逗号分隔的字符串（界面上就是一行输入框），响应回数组；
+// 默认提示词与变量名一并下发，前端「恢复默认」不必自己存一份文案。
+func TestAIConfigAPIModelsAndDefaultPrompt(t *testing.T) {
+	handler, cfg := newTestHandler(t)
+	token := csrfTokenFor(t, handler)
+
+	rec := apiRequest(t, handler, http.MethodPut, "/api/ai-config", token,
+		`{"base_url":"https://api.example.com/v1","models":"gpt-4o-mini, deepseek-chat","prompt":"整理：{{content}}"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT = %d: %s", rec.Code, rec.Body)
+	}
+	body := decodeAIConfig(t, rec.Body.Bytes())
+	if !reflect.DeepEqual(body.Models, []string{"gpt-4o-mini", "deepseek-chat"}) {
+		t.Fatalf("models = %#v", body.Models)
+	}
+	if body.DefaultPrompt != config.DefaultAIPrompt || body.PromptVariable != config.PromptVariable {
+		t.Fatalf("响应要带上默认提示词与变量名，得到 %+v", body)
+	}
+	ai, _, err := config.ReadAI(cfg.ConfigPath)
+	if err != nil {
+		t.Fatalf("read ai config: %v", err)
+	}
+	if !reflect.DeepEqual(ai.Models, []string{"gpt-4o-mini", "deepseek-chat"}) {
+		t.Fatalf("models 没落盘: %#v", ai.Models)
+	}
+
+	// 清空 models：写成空列表，读回是 []，JSON 也是 [] 而不是 null
+	rec = apiRequest(t, handler, http.MethodPut, "/api/ai-config", token,
+		`{"base_url":"https://api.example.com/v1","models":"","prompt":""}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("清空 PUT = %d: %s", rec.Code, rec.Body)
+	}
+	body = decodeAIConfig(t, rec.Body.Bytes())
+	if body.Models == nil || len(body.Models) != 0 {
+		t.Fatalf("清空后应当是空数组，得到 %#v", body.Models)
+	}
+	if !strings.Contains(rec.Body.String(), `"models":[]`) {
+		t.Fatalf("JSON 里应当是 []，得到 %s", rec.Body)
+	}
+}
+
+func TestAIConfigAPIPromptMustContainPlaceholder(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	token := csrfTokenFor(t, handler)
+
+	rec := apiRequest(t, handler, http.MethodPut, "/api/ai-config", token,
+		`{"base_url":"https://api.example.com/v1","models":"m","prompt":"没有变量"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT = %d, want 400: %s", rec.Code, rec.Body)
+	}
+	var errBody apiErrorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if !strings.Contains(errBody.Error.Fields["prompt"], config.PromptVariable) {
+		t.Fatalf("应当标红 prompt 并点名变量，得到 %+v", errBody.Error)
+	}
+}
+
+func TestAIConfigAPIModelsValidation(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	token := csrfTokenFor(t, handler)
+
+	rec := apiRequest(t, handler, http.MethodPut, "/api/ai-config", token,
+		`{"base_url":"https://api.example.com/v1","models":"a, b c","prompt":""}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT = %d, want 400: %s", rec.Code, rec.Body)
+	}
+	var errBody apiErrorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if errBody.Error.Code != "validation_failed" || errBody.Error.Fields["models"] == "" {
+		t.Fatalf("应当标红 models，得到 %+v", errBody.Error)
+	}
+	// 优先展示的 message 也应当来自 models（顺序表里有它）
+	if !strings.Contains(errBody.Error.Message, "模型") {
+		t.Fatalf("主提示应当来自 models 字段，得到 %q", errBody.Error.Message)
 	}
 }

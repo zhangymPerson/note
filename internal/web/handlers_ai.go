@@ -15,22 +15,29 @@ const aiConfigMaxBytes = 16 << 10
 // aiConfigResponse 是 GET/PUT 的响应体。密钥永远只出现在 api_key_masked 里，
 // 明文既不进响应也不进日志（安全不变量见 docs/TECH_DESIGN.md 1.2）。
 type aiConfigResponse struct {
-	BaseURL      string `json:"base_url"`
-	Prompt       string `json:"prompt"`
-	APIKeySet    bool   `json:"api_key_set"`
-	APIKeyMasked string `json:"api_key_masked"`
-	Path         string `json:"path"`
+	BaseURL string   `json:"base_url"`
+	Models  []string `json:"models"`
+	Prompt  string   `json:"prompt"`
+	// DefaultPrompt / PromptVariable 让前端「恢复默认提示词」不必自己存一份文案：
+	// 默认模板只存在于 internal/config，网页只管展示。
+	DefaultPrompt  string `json:"default_prompt"`
+	PromptVariable string `json:"prompt_variable"`
+	APIKeySet      bool   `json:"api_key_set"`
+	APIKeyMasked   string `json:"api_key_masked"`
+	Path           string `json:"path"`
 }
 
 // aiConfigRequest 是 PUT 的请求体。api_key 用指针区分「不动它」（省略/null）
 // 与「清空它」（空串）：界面上密钥框留空表示沿用已有的，点清除才真的抹掉。
 type aiConfigRequest struct {
-	BaseURL string  `json:"base_url"`
-	Prompt  string  `json:"prompt"`
-	APIKey  *string `json:"api_key"`
+	BaseURL string `json:"base_url"`
+	// Models 是逗号分隔的字符串（界面上就是一行输入框），落盘时写成 YAML 序列。
+	Models string  `json:"models"`
+	Prompt string  `json:"prompt"`
+	APIKey *string `json:"api_key"`
 }
 
-// handleGetAIConfig 读取配置文件的 AI 三项。每次都在磁盘上读：
+// handleGetAIConfig 读取配置文件的 AI 四项。每次都在磁盘上读：
 // 手改 note.yaml 之后刷新页面就能看到，不存在内存与文件不一致的窗口。
 func (app *application) handleGetAIConfig(w http.ResponseWriter, r *http.Request) {
 	ai, _, err := config.ReadAI(app.cfg.ConfigPath)
@@ -42,7 +49,7 @@ func (app *application) handleGetAIConfig(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, newAIConfigResponse(app.cfg.ConfigPath, ai))
 }
 
-// handlePutAIConfig 写入 AI 三项：先把每一项都校验一遍，再一次性原子落盘，
+// handlePutAIConfig 写入 AI 四项：先把每一项都校验一遍，再一次性原子落盘，
 // 免得「地址写进去了、密钥写失败」这种半截状态。
 func (app *application) handlePutAIConfig(w http.ResponseWriter, r *http.Request) {
 	var req aiConfigRequest
@@ -52,11 +59,16 @@ func (app *application) handlePutAIConfig(w http.ResponseWriter, r *http.Request
 
 	// 与 config.SetValues 用同一套归一化，免得同一个值在命令行能写、在网页却报错
 	baseURL := config.Normalize("ai.base_url", req.BaseURL)
+	modelsText := config.Normalize("ai.models", req.Models)
 	prompt := config.Normalize("ai.prompt", req.Prompt)
+	models := config.SplitModels(modelsText)
 
 	fields := map[string]string{}
 	if err := config.ValidateBaseURL(baseURL); err != nil {
 		fields["base_url"] = err.Error()
+	}
+	if err := config.ValidateModels(models); err != nil {
+		fields["models"] = err.Error()
 	}
 	if err := config.ValidatePrompt(prompt); err != nil {
 		fields["prompt"] = err.Error()
@@ -64,6 +76,7 @@ func (app *application) handlePutAIConfig(w http.ResponseWriter, r *http.Request
 
 	values := []config.KeyValue{
 		{Key: "ai.base_url", Value: baseURL},
+		{Key: "ai.models", Value: modelsText},
 		{Key: "ai.prompt", Value: prompt},
 	}
 	if req.APIKey != nil {
@@ -105,11 +118,18 @@ func (app *application) handlePutAIConfig(w http.ResponseWriter, r *http.Request
 }
 
 func newAIConfigResponse(path string, ai config.AI) aiConfigResponse {
+	models := ai.Models
+	if models == nil {
+		models = []string{} // JSON 里给 []，别让前端处理 null
+	}
 	return aiConfigResponse{
-		BaseURL:      ai.BaseURL,
-		Prompt:       ai.Prompt,
-		APIKeySet:    ai.APIKey != "",
-		APIKeyMasked: config.MaskSecret(ai.APIKey),
-		Path:         path,
+		BaseURL:        ai.BaseURL,
+		Models:         models,
+		Prompt:         ai.Prompt,
+		DefaultPrompt:  config.DefaultAIPrompt,
+		PromptVariable: config.PromptVariable,
+		APIKeySet:      ai.APIKey != "",
+		APIKeyMasked:   config.MaskSecret(ai.APIKey),
+		Path:           path,
 	}
 }
