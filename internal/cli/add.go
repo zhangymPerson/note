@@ -591,7 +591,8 @@ func (d categoryDelegate) Render(w io.Writer, m list.Model, index int, item list
 	if !entry.placeholder {
 		meta = styleMuted.Render(fmt.Sprintf("%d 篇", entry.category.Count))
 	}
-	fmt.Fprintf(w, "%s\n", pickRow(mark, name, meta, width))
+	// 同上：不补结尾换行，bubbles 会在两项之间自己插（否则每项多占一行、溢出终端）
+	fmt.Fprintf(w, "%s", pickRow(mark, name, meta, width))
 }
 
 // validateCategoryName 校验新分类名：非空且不超过 30 码点。

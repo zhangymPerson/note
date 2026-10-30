@@ -119,3 +119,34 @@ func TestRenderNoteTTYPrintsHeader(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderNoteMissingNoteWritesNothing(t *testing.T) {
+	st := openTestStore(t)
+
+	var buf bytes.Buffer
+	if err := renderNote(context.Background(), st, "不存在的-id", cli.ShowOptions{}, false, &buf); err == nil {
+		t.Fatal("找不到笔记应当报错")
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("失败时不该往 stdout 写任何字节，得到 %q", buf.String())
+	}
+}
+
+func TestPrintShowKeepsRawBytesExact(t *testing.T) {
+	raw := "# 标题\n\n正文\n"
+	var buf bytes.Buffer
+	if err := printShow(cli.ShowResult{Body: raw}, &buf); err != nil {
+		t.Fatalf("printShow: %v", err)
+	}
+	if buf.String() != raw {
+		t.Fatalf("--raw 应当逐字节原样输出：%q != %q", buf.String(), raw)
+	}
+
+	buf.Reset()
+	if err := printShow(cli.ShowResult{}, &buf); err != nil {
+		t.Fatalf("printShow: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("空结果不该写任何字节，得到 %q", buf.String())
+	}
+}

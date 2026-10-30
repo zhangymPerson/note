@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -92,9 +93,46 @@ func TestListRowSummaryCollapsesWhitespace(t *testing.T) {
 	}
 }
 
+func TestListModelViewFitsTerminal(t *testing.T) {
+	// bubbles 在两行之间自己插换行（Spacing+1），delegate 多发一个换行就会让每项
+	// 多占一行：分页与视口按 Height() 算，整个视图会溢出终端。
+	items := make([]ListItem, 0, 30)
+	for i := range 30 {
+		items = append(items, plainItem(fmt.Sprintf("id-%02d", i), fmt.Sprintf("笔记 %02d", i), "工作", "2026-10-29T00:00:00Z"))
+	}
+	model := newTestListModel(items...)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = updated.(listModel)
+
+	view := model.View()
+	if got := lipgloss.Height(view); got > 24 {
+		t.Fatalf("列表视图占 %d 行，超过终端 24 行：\n%s", got, view)
+	}
+
+	lines := strings.Split(model.picker.view(), "\n")
+	first, second := lineOf(lines, "笔记 00"), lineOf(lines, "笔记 01")
+	if first < 0 || second < 0 {
+		t.Fatalf("可见项里找不到前两条笔记：\n%s", model.picker.view())
+	}
+	if second-first != 2 {
+		t.Fatalf("相邻两项应当紧挨着（各自两行），得到 %d..%d：\n%s", first, second, model.picker.view())
+	}
+}
+
+func lineOf(lines []string, sub string) int {
+	for i, line := range lines {
+		if strings.Contains(line, sub) {
+			return i
+		}
+	}
+	return -1
+}
 func TestListDelegateRendersTwoLinesWithinWidth(t *testing.T) {
+	long := plainItem("a", strings.Repeat("很长的标题", 12), "工作", "2026-10-29T00:00:00Z")
+	// 摘要里带换行：不折叠的话这一项会多于两行
+	long.Summary = "第一行摘要\n第二行摘要"
 	model := newTestListModel(
-		plainItem("a", strings.Repeat("很长的标题", 12), "工作", "2026-10-29T00:00:00Z"),
+		long,
 		plainItem("b", "短标题", "", "2026-10-29T00:00:00Z"),
 	)
 	model.picker.list.SetSize(40, 10)

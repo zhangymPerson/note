@@ -194,7 +194,7 @@ func Parse(args []string) (Command, Options, error) {
 		case strings.HasPrefix(arg, "-"):
 			return CommandMenu, Options{}, fmt.Errorf("无法识别的参数 %s（启动 Web 服务请用 note web）", arg)
 		default:
-			return CommandMenu, Options{}, fmt.Errorf("无法识别的命令 %s（可用命令: add, web, info, help）", arg)
+			return CommandMenu, Options{}, fmt.Errorf("无法识别的命令 %s（可用命令: add, list, show, web, info, help）", arg)
 		}
 	}
 	return CommandMenu, opts, nil

@@ -49,15 +49,23 @@ func renderNote(ctx context.Context, st *store.Store, id string, opts cli.ShowOp
 	return err
 }
 
-// printShow 打印预览结果：有头部时先打头部与一个空行，正文永远以换行收尾。
+// printShow 打印预览结果：有头部时先打头部与一个空行，正文以换行收尾。
+// 什么都没算出来（比如找不到笔记）时一个字节都不写；
+// 正文本身已带结尾换行时不再补一个，`--raw` 因此是逐字节原样输出。
 func printShow(res cli.ShowResult, out io.Writer) error {
+	if res.Header == "" && res.Body == "" {
+		return nil
+	}
+
 	var b strings.Builder
 	if res.Header != "" {
 		b.WriteString(res.Header)
 		b.WriteString("\n\n")
 	}
 	b.WriteString(res.Body)
-	b.WriteString("\n")
+	if !strings.HasSuffix(res.Body, "\n") {
+		b.WriteString("\n")
+	}
 
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return fmt.Errorf("写输出失败：%w", err)

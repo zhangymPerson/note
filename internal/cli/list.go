@@ -182,6 +182,7 @@ func (m listModel) View() string {
 	b.WriteString(m.picker.view())
 	b.WriteString("\n")
 	b.WriteString(help([][2]string{{"输入", "筛选"}, {"↑/↓", "选择"}, {"Enter", "预览"}, {"Esc", "退出"}}))
+	b.WriteString(styleMuted.Render(fmt.Sprintf("  %d/%d", m.picker.list.Paginator.Page+1, m.picker.list.Paginator.TotalPages)))
 	return b.String()
 }
 
@@ -242,7 +243,10 @@ func (d listDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	line := pickRow(mark, title, styleMuted.Render(entry.item.meta()), width)
 
 	summary := listRowSummary(entry.item.Summary, width-4)
-	fmt.Fprintf(w, "%s\n   %s\n", line, styleMuted.Render(summary))
+	// 注意：这里不能补结尾换行——bubbles 自己在两项之间插 `Spacing()+1` 个换行
+	//（见 list.go 的 populatedView），多发一个会让每项占 Height()+1 行，
+	// 分页与视口按 Height() 算，`note list` 会因此溢出终端。
+	fmt.Fprintf(w, "%s\n   %s", line, styleMuted.Render(summary))
 }
 
 // meta 是行右侧的辅助信息：分类 · 本地时间，加密笔记再追一个标记。

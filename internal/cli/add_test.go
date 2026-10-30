@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -554,6 +555,24 @@ func TestAddCategoryStepWithNoCategoriesShowsCreateRow(t *testing.T) {
 	m = press(m, "enter")
 	if m.step != stepNewCategory {
 		t.Fatalf("回车应当进新建分类步，当前 step=%v", m.step)
+	}
+}
+
+func TestCategoryStepViewFitsTerminal(t *testing.T) {
+	// 与 note list 同一道门道：delegate 不能多发结尾换行，否则每分类多占一行、整个向导溢出终端。
+	m := newTestAddModel(&fakeBackend{})
+	view := m.viewCategory()
+	if got := lipgloss.Height(view); got > m.height {
+		t.Fatalf("分类步视图占 %d 行，超过终端 %d 行：\n%s", got, m.height, view)
+	}
+
+	lines := strings.Split(m.picker.view(), "\n")
+	first, second := lineOf(lines, "未分类"), lineOf(lines, "工作")
+	if first < 0 || second < 0 {
+		t.Fatalf("列表里找不到头两行分类：\n%s", m.picker.view())
+	}
+	if second-first != 1 {
+		t.Fatalf("相邻两行分类应当紧挨着（各自一行），得到 %d..%d：\n%s", first, second, m.picker.view())
 	}
 }
 
