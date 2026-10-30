@@ -1,5 +1,7 @@
 <script lang="ts">
   import Markdown from '../components/Markdown.svelte'
+  import { defaultModel, hostOf, optimizeNote } from '../lib/ai'
+  import { getAIConfig } from '../lib/ai-config'
   import { ApiRequestError } from '../lib/api'
   import { decryptNoteContent, encryptNoteContent, paramsFromNote, KDF_PARAMS } from '../lib/crypto'
   import type { KdfParams } from '../lib/crypto'
@@ -63,6 +65,30 @@
   const contentLength = $derived(countCodePoints(content))
   const tooLong = $derived(contentLength > MAX_CONTENT_CODEPOINTS)
   const unlocked = $derived($hasKey)
+
+  // 「用 AI 优化格式」：配置在信息页里维护，这里只读（失败也不影响编辑）。
+  let aiModels = $state<string[]>([])
+  let aiConfigured = $state(false)
+  let aiHost = $state('')
+  let aiModel = $state('')
+  let aiBusy = $state(false)
+  let aiResult = $state('')
+  let aiResultModel = $state('')
+  let aiError = $state('')
+  // 发起优化时的正文：用户中途改了字就不能直接替换，得重新优化一次。
+  let aiRequestContent = $state('')
+
+  const aiResultLength = $derived(countCodePoints(aiResult))
+  const aiTooLong = $derived(
+    aiResult !== '' && aiResultLength > MAX_CONTENT_CODEPOINTS,
+  )
+  const aiStale = $derived(aiResult !== '' && content !== aiRequestContent)
+  const canReplace = $derived(aiResult !== '' && !aiStale && !aiTooLong)
+  const canOptimize = $derived(
+    aiConfigured && !aiBusy && !loading && content.trim() !== '',
+  )
+  // 加密笔记发给上游的是明文：提示语必须说清楚，不能只写「正文会发送到」。
+  const aiSendsPlaintext = $derived(encrypt || cipher !== '')
   // 加密笔记没密钥时读不出正文；勾选加密但还没派生密钥时需要临时输入。
   const awaitingUnlock = $derived(cipher !== '' && (!unlocked || revealFailed))
   const needsPassword = $derived((encrypt || awaitingUnlock) && !unlocked)
@@ -124,11 +150,23 @@
 
   async function loadFormChrome(): Promise<void> {
     try {
-      const [cats, master] = await Promise.all([listCategories(), getMasterPassword()])
+      const [cats, master, ai] = await Promise.all([
+        listCategories(),
+        getMasterPassword(),
+        // AI 配置拿不到就不显示优化按钮，编辑器该能用还是能用
+        getAIConfig().catch(() => null),
+      ])
       categories = cats
       salt = master.salt_b64
       question = master.question
       masterConfigured = master.configured
+      if (ai !== null) {
+        aiModels = ai.models
+        aiModel = defaultModel(ai.models)
+        aiHost = hostOf(ai.base_url)
+        aiConfigured =
+          ai.api_key_set && ai.base_url !== '' && ai.models.length > 0
+      }
       // 新建笔记预填模板骨架；有草稿时草稿优先（草稿在上面的 $effect 里已先填入）。
       if (!isEdit && !restoredDraft && content === '') {
         try {
@@ -277,6 +315,31 @@
     editorDraft.clear()
     navigate(isEdit ? `/notes/${id}` : '/notes')
   }
+
+  async function optimize(): Promise<void> {
+    aiBusy = true
+    aiError = ''
+    aiResult = ''
+    aiRequestContent = content
+    try {
+      const result = await optimizeNote(content, aiModel === '' ? undefined : aiModel)
+      aiResult = result.content
+      aiResultModel = result.model
+    } catch (error) {
+      aiError = fail(error)
+    } finally {
+      aiBusy = false
+    }
+  }
+
+  // 只有用户点「替换正文」才动编辑器内容：优化结果先看后采。
+  function applyOptimized(): void {
+    if (!canReplace) return
+    content = aiResult
+    dirty = true
+    aiResult = ''
+    aiError = ''
+  }
 </script>
 
 <section class="page editor">
@@ -353,6 +416,28 @@
             {#if !isEdit}
               <button class="linklike" type="button" onclick={editTemplate}>编辑模板</button>
             {/if}
+            <button
+              class="linklike"
+              type="button"
+              disabled={!canOptimize}
+              onclick={optimize}
+            >
+              {aiBusy ? '优化中…' : '用 AI 优化格式'}
+            </button>
+            {#if aiModels.length > 1}
+              <!-- 不用 bind:：<select> 挂载时会把自己的空值写回去，把默认模型冲掉 -->
+              <select
+                id="ai-model"
+                value={aiModel}
+                disabled={aiBusy}
+                aria-label="优化用的模型"
+                onchange={(event) => (aiModel = event.currentTarget.value)}
+              >
+                {#each aiModels as model (model)}
+                  <option value={model}>{model}</option>
+                {/each}
+              </select>
+            {/if}
             <span class="counter {tooLong ? 'counter-over' : ''}" aria-live="polite">
               {contentLength} / {MAX_CONTENT_CODEPOINTS}
             </span>
@@ -366,6 +451,57 @@
             dirty = true
           }}
         ></textarea>
+        {#if aiConfigured}
+          <p class="muted">
+            {aiSendsPlaintext ? '正文会以明文发送到' : '正文会发送到'}
+            <code>{aiHost}</code>；结果先预览，点「替换正文」才会改到上面的输入框。
+          </p>
+        {:else}
+          <p class="muted">
+            还没有配置 AI（接口地址、密钥、模型），<a href="/info">去信息页配置</a>后就能用 AI 优化格式。
+          </p>
+        {/if}
+        {#if aiError !== ''}
+          <div class="ai-result" role="alert">
+            <p class="form-error">{aiError}</p>
+            <div class="actions">
+              <button class="button button-quiet" type="button" disabled={!canOptimize} onclick={optimize}>
+                重新优化
+              </button>
+            </div>
+          </div>
+        {:else if aiResult !== ''}
+          <div class="ai-result">
+            <div class="field-label-row">
+              <h3>AI 优化结果 · {aiResultModel}</h3>
+              <span class="counter {aiTooLong ? 'counter-over' : ''}">
+                {aiResultLength} / {MAX_CONTENT_CODEPOINTS}
+              </span>
+            </div>
+            {#if aiStale}
+              <p class="form-notice">正文在优化期间改过了，请重新优化后再替换。</p>
+            {:else if aiTooLong}
+              <p class="form-error">结果超出正文上限（{aiResultLength} 字），不能替换；可以让模型再精简一些。</p>
+            {/if}
+            <Markdown source={aiResult} />
+            <div class="actions">
+              <button class="button" type="button" disabled={!canReplace} onclick={applyOptimized}>
+                替换正文
+              </button>
+              <button class="button button-quiet" type="button" disabled={!canOptimize} onclick={optimize}>
+                重新优化
+              </button>
+              <button
+                class="button button-quiet"
+                type="button"
+                onclick={() => {
+                  aiResult = ''
+                  aiError = ''
+                }}>放弃</button
+              >
+            </div>
+          </div>
+        {/if}
         {#if fields.content || tooLong}
           <span class="field-error">
             {fields.content ?? `正文请控制在 ${MAX_CONTENT_CODEPOINTS} 字以内，当前 ${contentLength} 字`}

@@ -829,6 +829,28 @@ input {
   min-width: 0;
 }
 
+/* 编辑器里的 AI 优化结果：先看后采，所以给它一块独立区域。 */
+.ai-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.ai-result h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.ai-result .md {
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
 /* 列表页：笔记列表 + 右侧分类树 + 分页 */
 .list {
   display: flex;
