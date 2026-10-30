@@ -88,7 +88,7 @@ func addDeps(st *store.Store) cli.AddDeps {
 	}
 }
 
-// addDepsWithAI 补齐 AI 三项：配置不齐时 Optimize 保持 nil（Ctrl+O 只提示怎么补配置），
+// addDepsWithAI 补齐 AI 四项：配置不齐时 Optimize 保持 nil（Ctrl+O 只提示怎么补配置），
 // 齐了就把 internal/ai 包成向导要的形状——CLI 不要求 note web 正在跑。
 func addDepsWithAI(deps cli.AddDeps, cfg config.Config) cli.AddDeps {
 	client := ai.NewClient(cfg.AI)

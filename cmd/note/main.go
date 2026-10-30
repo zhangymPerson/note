@@ -49,7 +49,7 @@ func (e exitError) Error() string { return fmt.Sprintf("exit %d", int(e)) }
 //	note web        启动 Web 服务
 //	note info       输出软件与运行信息
 //	note status     输出使用统计（事件构成、累计事件、活跃天数）
-//	note config     读写 note.yaml 里的 AI 三项
+//	note config     读写 note.yaml 里的 AI 四项
 //	note help / -h  帮助
 func run(args []string) error {
 	cmd, opts, err := cli.Parse(args)

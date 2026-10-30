@@ -28,7 +28,7 @@ const (
 	CommandShow
 	// CommandStatus 输出使用统计（事件构成、累计事件、活跃天数）。
 	CommandStatus
-	// CommandConfig 读写配置文件里的 AI 三项（list / set）。
+	// CommandConfig 读写配置文件里的 AI 四项（list / set）。
 	CommandConfig
 	// CommandHelp 显示帮助。
 	CommandHelp

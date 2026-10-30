@@ -106,8 +106,18 @@ func TestUsageForShowDescribesStylesAndEncryptedExit(t *testing.T) {
 }
 
 func TestUsageListsConfigCommand(t *testing.T) {
-	if !strings.Contains(Usage(), "note config") {
-		t.Fatalf("总帮助应把 note config 摆出来：\n%s", Usage())
+	text := Usage()
+	if !strings.Contains(text, "note config") {
+		t.Fatalf("总帮助应把 note config 摆出来：\n%s", text)
+	}
+	// 配置是四项（base_url / api_key / models / prompt）：总帮助里最容易漏改的就是这几行
+	for _, want := range []string{"AI 四项", "note config list"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("总帮助缺少 %q：\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "AI 三项") {
+		t.Fatalf("总帮助还在说三项：\n%s", text)
 	}
 }
 

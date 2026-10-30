@@ -9,7 +9,7 @@ import (
 	"note/internal/config"
 )
 
-// runConfig 实现 note config：list 展示 AI 三项（密钥只显示掩码），
+// runConfig 实现 note config：list 展示 AI 四项（密钥只显示掩码），
 // set 原子写入 note.yaml。值本身合不合法由 config.SetValue 判定，
 // 这里只负责挑配置文件、把结果渲染成终端文本。
 func runConfig(globalConfigPath string, opts cli.ConfigOptions) error {

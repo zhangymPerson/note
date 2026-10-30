@@ -88,7 +88,7 @@ func IsSecretKey(key string) bool {
 	return key == "ai.api_key"
 }
 
-// ReadAI 只读配置文件本身的 AI 三项：不合并命令行与内置默认值，也不做地址校验，
+// ReadAI 只读配置文件本身的 AI 四项：不合并命令行与内置默认值，也不做地址校验，
 // 供 note config list 与 GET /api/ai-config 使用。
 // 文件不存在时返回零值与 found=false（首次配置前查看配置不算错误）。
 func ReadAI(path string) (AI, bool, error) {
@@ -214,7 +214,7 @@ func validateValue(key, value string) error {
 	return nil
 }
 
-// ValidateAI 校验配置里的 AI 三项：启动加载、note config set 与
+// ValidateAI 校验配置里的 AI 四项：启动加载、note config set 与
 // PUT /api/ai-config 共用，避免「命令行写得进去、服务却起不来」。
 func ValidateAI(ai AI) error {
 	if err := ValidateBaseURL(ai.BaseURL); err != nil {
