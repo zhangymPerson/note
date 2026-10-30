@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 const testKDFParams = `{"algo":"pbkdf2","prf":"HMAC-SHA256","iter":150000,"keylen":32}`
@@ -732,4 +733,63 @@ func countActivities(t *testing.T, st *Store) int {
 		t.Fatalf("count activities: %v", err)
 	}
 	return count
+}
+
+// note list 的正文过滤需要全文：ListNotesAll 额外带回 FullContent，
+// 网页列表走的 ListNotes 仍只回 140 码点摘要（多读一列会让列表响应变大）。
+func TestListNotesAllReturnsFullContentForFiltering(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	body := strings.Repeat("很长的正文内容 ", 40) + "结尾关键词"
+	plain, err := st.CreateNote(ctx, NoteInput{Title: "长文", Content: &body})
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if _, err := st.SetMasterPassword(ctx, make([]byte, 16), "问题"); err != nil {
+		t.Fatalf("set master password: %v", err)
+	}
+	if _, err := st.CreateNote(ctx, NoteInput{
+		Title:     "加密的",
+		CipherB64: base64.StdEncoding.EncodeToString(make([]byte, 29)),
+		KDFParams: testKDFParams,
+	}); err != nil {
+		t.Fatalf("create encrypted note: %v", err)
+	}
+
+	all, err := st.ListNotesAll(ctx, false)
+	if err != nil {
+		t.Fatalf("ListNotesAll: %v", err)
+	}
+	seen := 0
+	for _, item := range all {
+		switch item.Title {
+		case "长文":
+			seen++
+			if item.FullContent == nil || *item.FullContent != body {
+				t.Fatalf("明文笔记应当带回完整正文，得到 %v", item.FullContent)
+			}
+			if item.Content == nil || utf8.RuneCountInString(*item.Content) > summaryRunes {
+				t.Fatalf("Content 仍应是 140 码点摘要：%v", item.Content)
+			}
+		case "加密的":
+			seen++
+			if item.FullContent != nil {
+				t.Fatalf("加密笔记没有明文，不该有全文：%v", item.FullContent)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("应当读到两条笔记，实到 %d", seen)
+	}
+
+	page, err := st.ListNotes(ctx, NoteFilter{Page: 1})
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	for _, item := range page.Items {
+		if item.ID == plain.ID && item.FullContent != nil {
+			t.Fatalf("ListNotes（网页列表）不该带回全文：%v", item.FullContent)
+		}
+	}
 }

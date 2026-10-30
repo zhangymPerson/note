@@ -10,7 +10,7 @@ import (
 	"note/internal/store"
 )
 
-// runList 是 note list 的入口：加载配置、开库、跑列表；选中一条时复用 renderNote 预览。
+// runList 是 note list 的入口：加载配置、开库、跑列表；选中一条时复用 openNote（渲染 + 复制原文）。
 func runList(globalConfigPath string, args []string, list cli.ListOptions) error {
 	cfg, err := loadConfig(globalConfigPath, args)
 	if err != nil {
@@ -40,8 +40,9 @@ func runList(globalConfigPath string, args []string, list cli.ListOptions) error
 		return nil
 	}
 
-	// 选中即预览：风格与宽度都用默认值（跟随终端），与 note show 走同一条渲染路径
-	return renderNote(ctx, st, res.Selected.ID, cli.ShowOptions{}, stdoutIsTerminal(), os.Stdout)
+	// 选中即预览：风格与宽度都用默认值（跟随终端），与 note show 走同一条
+	// 「渲染 + 复制原文」路径。
+	return openNote(ctx, st, res.Selected.ID, cli.ShowOptions{}, stdoutIsTerminal(), os.Stdout)
 }
 
 // listDeps 把 store 的列表项读成 cli 需要的最小形状。
@@ -64,6 +65,9 @@ func listDeps(st *store.Store) cli.ListDeps {
 				}
 				if note.Content != nil {
 					item.Summary = *note.Content
+				}
+				if note.FullContent != nil {
+					item.Content = *note.FullContent
 				}
 				if note.DeletedAt != nil {
 					item.Trashed = true

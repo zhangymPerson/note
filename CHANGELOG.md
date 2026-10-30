@@ -8,6 +8,22 @@
 
 ### Added
 
+- CLI 与网页都能「打开即复制原文」（实现过程与关键逻辑）：
+  - **一条路径三个入口**：`note show <id>`、`note show`（不给 id）与 `note list` 的 `Enter` 预览共走 `cmd/note/show.go` 的 `openNote`——渲染到 stdout，同时把 `cli.ShowResult.Source`（新增字段，就是库里的 `NoteDetail.Content` 原样）写进剪贴板。复制源文本而不是渲染结果：渲染输出带着色码与按宽度折行，粘到编辑器里就废了。
+  - **选择器**：`parse` 不再把「`show` 缺 id」当错误（`ShowOptions` 全零合法），`internal/cli.PickNote` 复用 `note list` 那套 `picker`（同一套 fuzzy 筛选与 gum 键位）；`cmd/note` 的 `showPicked` 在 stdin/stdout 任一非终端时直接报错退出 1（不挂等输入、不把列表当文本吐），空库提示走 stderr 并退出 1，用户 `Esc` 放弃退出 130。加密笔记仍是退出码 4、且**不碰剪贴板**。
+  - **剪贴板分层**：新增 `internal/clipboard`（`Copy` / `writeOSC52` / `ExplainFailure`，全部可注入，测试不碰真剪贴板）：先试原生实现（把已有的间接依赖 `github.com/atotto/clipboard` 提升为直接依赖，无新下载；Windows `clip.exe`、macOS `pbcopy`、Linux `xclip`/`xsel`），失败再发 OSC52（`ESC ] 52 ; c ; <base64> ST`，SSH 下可用，超 100 KiB 不发），两条都失败只打印一句提示。失败不改变退出码，也不影响查看。
+  - **只在终端下复制**：`openNote` 判断 stdout 是终端才调剪贴板，`note show x --raw > a.md` 这类管道不改用户的剪贴板（脚本里不该有看不见的副作用）；提示统一走 stderr，`--raw` 的 stdout 仍逐字节等于原文。
+  - **`note list` 筛到正文**：`store.ListNotesAll` 新增带回完整正文（`NoteListItem.FullContent`，`json:"-"`，只给 CLI 用；网页列表走的 `ListNotes` 只填 140 码点摘要，列表响应不变大）；`internal/cli/list.go` 的 `noteFilter` 在 bubbles `DefaultFilter`（标题+分类 fuzzy，命中项排前）之后追加正文子串命中项，只命中正文的项把第二行换成命中处附近的片段（`snippetAround`：前推 12 字符、按显示宽度截断、补省略号、折叠换行），并用 `highlightTerm` 把命中词染色（按 rune 比较，不靠 `ToLower` 切字节）。
+  - **网页详情页**：标题旁新增一键「复制原文」图标按钮（`web/src/lib/clipboard.ts#copyText`：异步剪贴板 API，失败回落隐藏 textarea + `execCommand`，临时节点必删；成功后 toast「已复制原文」，失败提示手动选中）。按钮在加密笔记解锁前不渲染——没有明文就不该有复制入口。
+  - **测试**：`internal/cli/filter_test.go`（fuzzy + 子串命中、去重、大小写、只命中正文时的第二行片段、高亮不改文本）、`internal/clipboard/clipboard_test.go`（原生成功不发 OSC52、失败回落序列字节、非终端不发、超限拒绝）、`cmd/note/show_test.go` 新增 4 例（复制的是原文而非渲染结果、加密/找不到时不碰剪贴板、非终端不复制且 `--raw` 逐字节、无 id 且非终端报错）、`internal/store/note_test.go`（`FullContent` 只由 `ListNotesAll` 填）、`web/src/lib/clipboard.test.ts` 与 `web/src/views/NoteDetailView.test.ts`（按钮可见性 + 复制内容 + 失败提示）。
+  - **验证**：`go test ./...` 269 项、`npm --prefix web test` 147 项、`svelte-check` 0 错；真实二进制冒烟：非终端下 `note show` 无 id 退出 1、`note show <不存在>` 退出 1；`internal/clipboard.Copy` 在 Windows 上实际写入剪贴板后 `Get-Clipboard` 读回一致。交互式选择器仍受“`go test` 的 stdin 不是终端”限制，与既有 `note add` 一样需真终端人工验收。
+
+- `note status`：终端里看使用统计，不开 Web 服务也有读数（实现过程与关键逻辑）：
+  - **分层**：`internal/cli/parse.go` 新增 `CommandStatus`（只接受 `-c/--config` 与 `--db`，多余参数退出 2，`-h` 走主题帮助；`note web status` 仍是后台实例状态，两条命令互不吃掉对方）；`internal/cli/stats.go` 只做渲染（`StatsData` / `GroupEvents` / `FormatStats`，`uniseg` 对齐，与 `note info` 同一套排版），`cmd/note/status.go` 负责开库采集，`internal/cli` 因此仍不 import `internal/store`（与 `AddDeps` / `ShowDeps` / `InfoData` 同一套路）。
+  - **口径同源**：数据来自 `store.GetStats`，与 `GET /api/stats` 是同一份 SQL；展示分组「查看笔记 / 新建笔记 / 编辑笔记 / 删除笔记（`note_delete` + `note_purge`）/ 恢复笔记 / 查询 / 分类维护」与前端 `web/src/lib/stats.ts#groupEvents` 一一对应，未进分组的 kind 按名字排序附在末尾——新枚举上线时 CLI 不会静默漏计。
+  - **只读**：数据库文件不存在时只打印「未创建，还没有任何使用记录」，不建库也不建目录（与 `note info` 的只读口径一致）；空账簿不列全零分组。
+  - **验证**：新增 `internal/cli/stats_test.go`（分组合并、对齐输出、空账簿、缺库）与 `cmd/note/status_test.go`（CLI 写入 → 采集 → 渲染全链路、缺库不落盘）；真实二进制冒烟：缺库退出 0 且不建目录、`--days` 等多余参数退出 2、`status -h` 与 `note help status` 一致、`note show` 后「查看笔记」从 0 变 1、`note web status` 仍退出 3。
+
 - `note list` 与 `note show`：CLI 终于能读笔记（实现过程与关键逻辑）：
   - **`note list`**：`internal/cli/list.go` 用 `bubbles/list` 做一个可模糊筛选的列表（输入即筛选、`↑/↓` 选择、`Enter` 预览、`Esc` 退出）；`Enter` 之后**退出 TUI 再打印预览**，与 `note show` 共用同一条渲染路径。stdin 或 stdout 不是终端时（管道、重定向、CI）自动降级为 `text/tabwriter` 对齐的纯文本（`id  标题  分类  updated_at`，时间原样输出 UTC 秒级文本），结果为空时**一个字节都不输出**，因此 `note list --plain | wc -l` 是 0 行。
   - **`note list` 的数据来源**：新增的 `store.ListNotesAll`（与既有 `ListNotes` 共用 WHERE/ORDER 组装与行扫描，但不分页、不做 COUNT、不写活动表）。列表一次性读进内存而不是逐键查库，理由很实在：`ListNotes` 在查询词非空时会 `RecordSearch`，逐键查库会把搜索历史刷爆。
@@ -28,6 +44,11 @@
   - **已验证 / 未验证的边界**：真二进制验证了裸 `note` 打印帮助退出 0、`note add -h` 与 `note help add` 输出一致、`note add foo` 退出 2、管道与 `/dev/null` 喂 stdin 立刻报错退出 1 且不挂起、`--db` 指向新路径会自动建库迁移。**交互三步（含 `Ctrl+E` 外接编辑器）没做自动化**：`go test` 的 stdin 不是终端、`winpty` 在本机无 TTY 环境同样拒绝（`stdin is not a tty`），与 ADR-20 记录的限制相同，仍需真终端人工验收。
 
 ### Changed
+
+- CLI 的两份帮助文案随之改写（`internal/cli/usage.go`）：总帮助里 `list` / `show` 的描述、`listUsage` 键位与筛选说明、`showUsage` 的用法（`note show [<id>]`）、参数（id 可省略）、复制行为、退出码（新增 130）与示例全部按新语义重写；`docs/PRD.md` 升到 v1.12（修订说明、FR-1.12、8.9 命令表两行、AC-58、M11），`docs/TECH_DESIGN.md` 补目录树（`internal/clipboard`、`web/src/lib/clipboard.ts`）、4.1 新增「打开笔记即复制原文」小节、9.6 详情行、测试清单，`AGENTS.md` 与 `README.md` 同步。
+
+- **使用统计的埋点从接口层下沉到数据层**：「查看笔记」原本由 `internal/web/handlers_notes.go#handleGetNote` 记录，现在改为 `store.ViewNote`——它是用户读取的专用入口，Web 详情页与 CLI 的 `note show` / `note list`（`Enter` 预览）共用同一条路径；内部 `GetNote` 保持不埋点，避免 `CreateNote` / `UpdateNote` / `SoftDeleteNote` 成功后的回读把一次写操作重复计成一次查看。回收站里的笔记仍不算「使用」（`deleted_at` 非空时不记），埋点失败只 `slog.Warn`、不影响读取返回。`store.RecordActivity` 与它的 kind 白名单随之删除（唯一调用点已消失，kind 现在只来自包内常量）。
+- CLI 的读写因此进入同一本账簿：`note add`（本来就走 `CreateNote`）、`note show` 与 `note list` 的 `Enter` 预览都会产生事件，网页概览页的「查看笔记」不再只算浏览器里的点开。补齐 `AGENTS.md`、`docs/PRD.md`（v1.11：8.9 命令表、AC-57、M10、模块表、冒烟清单）、`docs/TECH_DESIGN.md`（目录树、子命令表、5.4 事件埋点、8.2 统计口径、14.1 运行示例）与 `README.md`。
 
 - **`note add` 的分类步改用与 `note list` 同一个选择器**：过滤从「不区分大小写的子串匹配」升级为 fuzzy 匹配；行渲染与 `note list` 同一套（游标 + 名字 + 右对齐篇数，`ansi.Truncate` 夹到列表宽度）；`j`/`k` 不再是导航键（它们是过滤字符）；过滤框只在开始输入后出现（旧版一直显示一个「过滤分类…」占位框）。旧的 `filterCategories` / `matchRange` / `highlight` / `cursorMark` 一并删除。
 - **依赖**：新增 `github.com/charmbracelet/glamour`（glow 的渲染内核；glow 本体是 `package main`，无法当库引用）与 `github.com/charmbracelet/x/term`；`github.com/charmbracelet/lipgloss` 被 glamour 抬到 `v1.1.1-0.20250404203927-76690c660834`。新依赖全是纯 Go，`CGO_ENABLED=0` 不变。

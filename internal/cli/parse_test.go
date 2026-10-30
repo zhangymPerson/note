@@ -198,6 +198,42 @@ func TestParseAddRejectsExtraArgs(t *testing.T) {
 	}
 }
 
+func TestParseStatusCommand(t *testing.T) {
+	cmd, opts, err := Parse([]string{"status", "--db", "x.db"})
+	if err != nil || cmd != CommandStatus {
+		t.Fatalf("Parse(status) = %v, %v; want CommandStatus", cmd, err)
+	}
+	if !reflect.DeepEqual(opts.Args, []string{"--db", "x.db"}) {
+		t.Fatalf("配置参数应原样透传，得到 %v", opts.Args)
+	}
+}
+
+func TestParseStatusHelp(t *testing.T) {
+	cmd, opts, err := Parse([]string{"status", "--help"})
+	if err != nil || cmd != CommandHelp {
+		t.Fatalf("Parse(status -h) = %v, %v; want CommandHelp", cmd, err)
+	}
+	if len(opts.Args) != 1 || opts.Args[0] != "status" {
+		t.Fatalf("帮助主题应为 [status]，得到 %v", opts.Args)
+	}
+}
+
+func TestParseStatusIsNotWebStatus(t *testing.T) {
+	// note web status 仍是后台实例状态，不能被顶层 status 吃掉
+	cmd, opts, err := Parse([]string{"web", "status"})
+	if err != nil || cmd != CommandWeb || opts.WebAction != WebStatus {
+		t.Fatalf("cmd=%v opts=%+v err=%v", cmd, opts, err)
+	}
+}
+
+func TestParseStatusRejectsExtraArgs(t *testing.T) {
+	for _, args := range [][]string{{"status", "--days", "7"}, {"status", "extra"}, {"status", "--db"}} {
+		if _, _, err := Parse(args); err == nil {
+			t.Fatalf("note status 不接受 %v，应报错", args)
+		}
+	}
+}
+
 func TestParseListFlags(t *testing.T) {
 	cmd, opts, err := Parse([]string{"list", "--trash", "--plain", "--limit", "5", "--db", "x.db"})
 	if err != nil {
@@ -286,7 +322,6 @@ func TestParseListAndShowRejectBadArgs(t *testing.T) {
 		{"list limit 负数", []string{"list", "--limit", "-1"}},
 		{"list limit 缺值", []string{"list", "--limit"}},
 		{"list 多给了位置参数", []string{"list", "abc"}},
-		{"show 缺 id", []string{"show"}},
 		{"show 多个 id", []string{"show", "a", "b"}},
 		{"show 未知参数", []string{"show", "a", "--nope"}},
 		{"show style 非法", []string{"show", "a", "--style", "nope"}},
@@ -294,7 +329,6 @@ func TestParseListAndShowRejectBadArgs(t *testing.T) {
 		{"show width 太大", []string{"show", "a", "--width", "1001"}},
 		{"show width 非数字", []string{"show", "a", "--width", "abc"}},
 		{"show width 缺值", []string{"show", "a", "--width"}},
-		{"show 只给了配置参数", []string{"show", "--db", "x.db"}},
 	}
 	for _, tc := range cases {
 		if _, _, err := Parse(tc.args); err == nil {
@@ -303,13 +337,23 @@ func TestParseListAndShowRejectBadArgs(t *testing.T) {
 	}
 }
 
-func TestParseShowMissingIDPointsAtList(t *testing.T) {
-	_, _, err := Parse([]string{"show"})
-	if err == nil {
-		t.Fatal("show 缺 id 应当报错")
+// 不给 id 不是错误：note show 会进选择器（是不是终端由 cmd/note 判定）。
+func TestParseShowWithoutIDIsPicker(t *testing.T) {
+	cmd, opts, err := Parse([]string{"show"})
+	if err != nil || cmd != CommandShow {
+		t.Fatalf("cmd=%v err=%v", cmd, err)
 	}
-	if !strings.Contains(err.Error(), "note list") {
-		t.Fatalf("错误信息应当告诉用户先用 note list 找 id，得到 %v", err)
+	if opts.Show != (ShowOptions{}) {
+		t.Fatalf("ShowOptions 应当是全零（无 id、无开关），得到 %+v", opts.Show)
+	}
+
+	// 配置参数仍然可以透传，且不会因此变成「有 id」
+	cmd, opts, err = Parse([]string{"show", "--db", "x.db"})
+	if err != nil || cmd != CommandShow || opts.Show.ID != "" {
+		t.Fatalf("cmd=%v opts=%+v err=%v", cmd, opts, err)
+	}
+	if !slices.Equal(opts.Args, []string{"--db", "x.db"}) {
+		t.Fatalf("Args = %v", opts.Args)
 	}
 }
 

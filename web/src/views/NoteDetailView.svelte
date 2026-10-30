@@ -1,5 +1,6 @@
 <script lang="ts">
   import Markdown from '../components/Markdown.svelte'
+  import { copyText } from '../lib/clipboard'
   import { decryptNoteContent, paramsFromNote } from '../lib/crypto'
   import {
     deleteNote,
@@ -113,6 +114,17 @@
     decryptFailed = false
   }
 
+  // 复制的是原文 Markdown（body：明文笔记的内容或刚解开的明文），不是渲染后的页面文本：
+  // 粘到编辑器里还能继续编辑。加密笔记在解锁前 body 为空，按钮也就不渲染。
+  async function copyBody(): Promise<void> {
+    if (body === '') return
+    if (await copyText(body)) {
+      toast('已复制原文')
+      return
+    }
+    toast('复制失败，请手动选中正文')
+  }
+
   // 删除是软删除：进回收站，可以恢复。加密笔记必须先解锁（awaitingKey 时按钮不渲染），
   // 服务端零密码学，这道门禁只能落在交互层。
   async function remove(): Promise<void> {
@@ -178,12 +190,43 @@
     </a>
   {:else if note}
     <header class="detail-head">
-      <h1>
-        {note.title}
-        {#if encrypted}
-          <span class="badge">已加密</span>
+      <div class="detail-title">
+        <h1>
+          {note.title}
+          {#if encrypted}
+            <span class="badge">已加密</span>
+          {/if}
+        </h1>
+        {#if !awaitingKey && body !== ''}
+          <button
+            class="icon-button"
+            type="button"
+            title="复制原文"
+            aria-label="复制原文"
+            onclick={copyBody}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <rect
+                x="8"
+                y="8"
+                width="12"
+                height="12"
+                rx="2.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+              />
+              <path
+                d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
         {/if}
-      </h1>
+      </div>
       <p class="note-meta">
         更新于 {shownAt(note.updated_at)} · 第 {note.rev} 版
         {#if note.category_name}

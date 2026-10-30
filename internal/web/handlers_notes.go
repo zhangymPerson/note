@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -203,18 +202,13 @@ func (app *application) handleCreateNote(w http.ResponseWriter, r *http.Request)
 }
 
 func (app *application) handleGetNote(w http.ResponseWriter, r *http.Request) {
-	note, err := app.store.GetNote(r.Context(), r.PathValue("id"))
+	// 「查看」事件的埋点已经下沉到 store.ViewNote（CLI 走同一个入口），
+	// 这里只负责把读到的笔记写回响应。回收站里的笔记不算使用（看回收站是维护动作），
+	// 恢复与彻底删除各有自己的事件。
+	note, err := app.store.ViewNote(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeNoteStoreError(w, err, nil)
 		return
-	}
-	// 「查看」是唯一的只读事件：埋点在内层方法里做不到（Create/Update 内部也会 GetNote），
-	// 只能放在这里；写失败只记日志，绝不影响详情返回。回收站里的笔记不算使用（看
-	// 回收站是维护动作），但恢复与彻底删除各有自己的事件。
-	if note.DeletedAt == nil {
-		if err := app.store.RecordActivity(r.Context(), store.ActivityNoteView); err != nil {
-			slog.Warn("record note view", "error", err)
-		}
 	}
 	writeJSON(w, http.StatusOK, note)
 }

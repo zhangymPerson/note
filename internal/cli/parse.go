@@ -24,6 +24,8 @@ const (
 	CommandList
 	// CommandShow 在终端里渲染一条笔记。
 	CommandShow
+	// CommandStatus 输出使用统计（事件构成、累计事件、活跃天数）。
+	CommandStatus
 	// CommandHelp 显示帮助。
 	CommandHelp
 )
@@ -118,7 +120,7 @@ var valueFlags = map[string]bool{
 //	note add                → CommandAdd（交互向导）
 //	note -c <路径> web …    → CommandWeb（全局 -c 记入 Options.ConfigPath）
 //	note web -p 9000 …      → CommandWeb（参数留在 Options.Args）
-//	note info / note help / note -h … → 其余命令
+//	note info / note status / note help / note -h … → 其余命令
 func Parse(args []string) (Command, Options, error) {
 	var opts Options
 	for i := 0; i < len(args); i++ {
@@ -141,11 +143,22 @@ func Parse(args []string) (Command, Options, error) {
 				opts.Args = []string{"add"}
 				return CommandHelp, opts, nil
 			}
-			if err := validateAddArgs(rest); err != nil {
+			if err := validateConfigOnlyArgs("add", rest); err != nil {
 				return CommandMenu, Options{}, err
 			}
 			opts.Args = rest
 			return CommandAdd, opts, nil
+		case arg == "status":
+			rest := args[i+1:]
+			if containsHelpFlag(rest) {
+				opts.Args = []string{"status"}
+				return CommandHelp, opts, nil
+			}
+			if err := validateConfigOnlyArgs("status", rest); err != nil {
+				return CommandMenu, Options{}, err
+			}
+			opts.Args = rest
+			return CommandStatus, opts, nil
 		case arg == "list":
 			rest := args[i+1:]
 			if containsHelpFlag(rest) {
@@ -194,27 +207,27 @@ func Parse(args []string) (Command, Options, error) {
 		case strings.HasPrefix(arg, "-"):
 			return CommandMenu, Options{}, fmt.Errorf("无法识别的参数 %s（启动 Web 服务请用 note web）", arg)
 		default:
-			return CommandMenu, Options{}, fmt.Errorf("无法识别的命令 %s（可用命令: add, list, show, web, info, help）", arg)
+			return CommandMenu, Options{}, fmt.Errorf("无法识别的命令 %s（可用命令: add, list, show, status, web, info, help）", arg)
 		}
 	}
 	return CommandMenu, opts, nil
 }
 
 // addConfigFlags 是允许透传给配置加载的参数（只影响读哪个库/配置，不改变交互形态）。
-// note add / list / show 共用它：这三条命令只把配置参数留给 config.Load，
-// 自己的开关在各自的分支里消费掉。
+// note add / status / list / show 共用它：add 与 status 只把配置参数留给 config.Load，
+// list / show 的开关在各自的分支里消费掉。
 var addConfigFlags = map[string]bool{
 	"-c":       true,
 	"--config": true,
 	"--db":     true,
 }
 
-// validateAddArgs 校验 note add 的参数：只允许「带一个值的配置参数」，
+// validateConfigOnlyArgs 校验只带配置参数的只读子命令（note add / note status）：
 // 交互形态本身不带任何开关，多余参数直接报错而不是被静默忽略。
-func validateAddArgs(args []string) error {
+func validateConfigOnlyArgs(command string, args []string) error {
 	for i := 0; i < len(args); i++ {
 		if !addConfigFlags[args[i]] {
-			return fmt.Errorf("note add 只接受 -c/--config 与 --db 参数（用 note add --help 查看用法）")
+			return fmt.Errorf("note %s 只接受 -c/--config 与 --db 参数（用 note %s --help 查看用法）", command, command)
 		}
 		if i+1 >= len(args) {
 			return fmt.Errorf("%s 需要一个值", args[i])
@@ -258,7 +271,8 @@ func parseListArgs(args []string) (ListOptions, []string, error) {
 	return opts, configArgs, nil
 }
 
-// parseShowArgs 拆 note show 的参数：第一个位置参数是笔记 id，其余开关自己消费。
+// parseShowArgs 拆 note show 的参数：第一个位置参数是笔记 id（可省略，省略时进选择器），
+// 其余开关自己消费。
 func parseShowArgs(args []string) (ShowOptions, []string, error) {
 	var opts ShowOptions
 	var configArgs []string
@@ -301,9 +315,8 @@ func parseShowArgs(args []string) (ShowOptions, []string, error) {
 			opts.ID = arg
 		}
 	}
-	if opts.ID == "" {
-		return ShowOptions{}, nil, fmt.Errorf("note show 需要一个笔记 id（先用 note list 筛选，见 note show --help）")
-	}
+	// 没给 id 不是错误：交互终端里进选择器（gum filter 那套）。
+	// 是不是终端由 cmd/note 判定并给出可读错误，解析层不探测。
 	return opts, configArgs, nil
 }
 

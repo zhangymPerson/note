@@ -48,6 +48,7 @@ func (e exitError) Error() string { return fmt.Sprintf("exit %d", int(e)) }
 //	note add        交互向导新建一条明文笔记
 //	note web        启动 Web 服务
 //	note info       输出软件与运行信息
+//	note status     输出使用统计（事件构成、累计事件、活跃天数）
 //	note help / -h  帮助
 func run(args []string) error {
 	cmd, opts, err := cli.Parse(args)
@@ -93,6 +94,9 @@ func run(args []string) error {
 
 	case cli.CommandInfo:
 		return runInfo(opts.ConfigPath, opts.Args)
+
+	case cli.CommandStatus:
+		return runStatus(opts.ConfigPath, opts.Args)
 	}
 	return nil
 }

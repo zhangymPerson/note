@@ -25,20 +25,6 @@ const (
 	ActivityCategoryDelete = "category_delete"
 )
 
-// allowedActivityKinds 让写坏 kind 在 Go 侧就报错，而不是等 SQLite 抛约束错误。
-var allowedActivityKinds = map[string]struct{}{
-	ActivitySearch:         {},
-	ActivityNoteView:       {},
-	ActivityNoteCreate:     {},
-	ActivityNoteUpdate:     {},
-	ActivityNoteDelete:     {},
-	ActivityNoteRestore:    {},
-	ActivityNotePurge:      {},
-	ActivityCategoryCreate: {},
-	ActivityCategoryRename: {},
-	ActivityCategoryDelete: {},
-}
-
 // NoteHit 是搜索命中的笔记摘要，不包含正文。
 type NoteHit struct {
 	ID        string `json:"id"`
@@ -138,14 +124,6 @@ func recordActivityTx(ctx context.Context, tx *sql.Tx, kind string) error {
 // RecordSearch 写入一条查询活动。
 func (s *Store) RecordSearch(ctx context.Context, query string) error {
 	return insertActivity(ctx, s.db, ActivitySearch, query, nowUTC())
-}
-
-// RecordActivity 写入一条不带查询词的活动事件（详情页「查看」走这条路）。
-func (s *Store) RecordActivity(ctx context.Context, kind string) error {
-	if _, ok := allowedActivityKinds[kind]; !ok {
-		return fmt.Errorf("record activity: unknown kind %q", kind)
-	}
-	return insertActivity(ctx, s.db, kind, "", nowUTC())
 }
 
 // GetStats 汇总使用统计；days 覆盖最近 days 天（含今天），无活动的日期省略。

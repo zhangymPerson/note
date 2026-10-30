@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode/utf8"
 )
@@ -74,6 +75,10 @@ type NoteListItem struct {
 	CategoryName string  `json:"category_name,omitempty"`
 	DeletedAt    *string `json:"deleted_at,omitempty"`
 	UpdatedAt    string  `json:"updated_at"`
+	// FullContent 是明文笔记的完整正文，只给 CLI 的本地筛选用，不进 JSON。
+	// ListNotes（网页列表）只填 140 码点的 Content 摘要，不会填这个字段；
+	// 只有 ListNotesAll（note list / note show 选择器）才会把全文读回来。
+	FullContent *string `json:"-"`
 }
 
 // NoteFilter 是列表与搜索的入参。Deleted=true 时只返回回收站里的笔记。
@@ -172,6 +177,28 @@ func (s *Store) GetNote(ctx context.Context, id string) (Note, error) {
 	}
 	if cipher != nil {
 		note.CipherB64 = base64.StdEncoding.EncodeToString(cipher)
+	}
+	return note, nil
+}
+
+// ViewNote 是「用户打开一条笔记」的读取入口：先按 id 取回，再由本层记一次
+// note_view 事件。Web 详情页与 CLI 的 note show / list 预览都走它，因此两端的
+// 事件口径一致，CLI 的阅读也会进账簿。
+//
+// 与 GetNote 的分工：GetNote 是内部读取（CreateNote / UpdateNote / SoftDeleteNote
+// 成功后都要回读一次），埋在 GetNote 里会把一次写操作重复记成一次查看。
+// 回收站里的笔记不算「使用」（看回收站是维护动作），因此不记事件；
+// 埋点失败只告警，不影响读取本身。
+func (s *Store) ViewNote(ctx context.Context, id string) (Note, error) {
+	note, err := s.GetNote(ctx, id)
+	if err != nil {
+		return Note{}, err
+	}
+	if note.DeletedAt != nil {
+		return note, nil
+	}
+	if err := insertActivity(ctx, s.db, ActivityNoteView, "", nowUTC()); err != nil {
+		slog.Warn("record note view", "error", err)
 	}
 	return note, nil
 }
@@ -463,7 +490,7 @@ func (s *Store) ListNotes(ctx context.Context, filter NoteFilter) (NotePage, err
 	}
 	defer rows.Close()
 
-	items, err := scanNoteItems(rows)
+	items, err := scanNoteItems(rows, false)
 	if err != nil {
 		return result, err
 	}
@@ -521,9 +548,10 @@ func buildNoteQuery(filter NoteFilter) noteQuery {
 	return q
 }
 
-// scanNoteItems 把列表查询的行读成 NoteListItem；加密笔记没有明文摘要列，
-// 明文只回前 140 码点用于预览。
-func scanNoteItems(rows *sql.Rows) ([]NoteListItem, error) {
+// scanNoteItems 把列表查询的行读成 NoteListItem；加密笔记没有明文可读，
+// Content 与 FullContent 都留空。明文只回前 140 码点用于列表预览；
+// withFull 为真时额外带回完整正文（只有 CLI 的本地过滤需要）。
+func scanNoteItems(rows *sql.Rows, withFull bool) ([]NoteListItem, error) {
 	items := []NoteListItem{}
 	for rows.Next() {
 		var (
@@ -554,6 +582,10 @@ func scanNoteItems(rows *sql.Rows) ([]NoteListItem, error) {
 		if content != nil && !item.Encrypted {
 			summary := truncateRunes(*content, summaryRunes)
 			item.Content = &summary
+			if withFull {
+				full := *content
+				item.FullContent = &full
+			}
 		}
 		items = append(items, item)
 	}
@@ -566,6 +598,7 @@ func scanNoteItems(rows *sql.Rows) ([]NoteListItem, error) {
 // ListNotesAll 返回全部（deleted 为真时只返回回收站）笔记列表项：不分页、不记搜索活动。
 // note list 需要一次性读进内存做本地模糊筛选：逐键查库会经 RecordSearch 污染搜索历史，
 // 而每页 20 条的 LIMIT 会让「筛选」退化成「只筛第一页」。
+// 与 ListNotes 的区别：这里额外带回完整正文（FullContent），过滤才能命中正文内容。
 func (s *Store) ListNotesAll(ctx context.Context, deleted bool) ([]NoteListItem, error) {
 	q := buildNoteQuery(NoteFilter{Deleted: deleted})
 
@@ -578,7 +611,7 @@ func (s *Store) ListNotesAll(ctx context.Context, deleted bool) ([]NoteListItem,
 	}
 	defer rows.Close()
 
-	return scanNoteItems(rows)
+	return scanNoteItems(rows, true)
 }
 
 const listSelectSQL = `SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.deleted_at, n.updated_at

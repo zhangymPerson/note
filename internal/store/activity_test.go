@@ -36,8 +36,8 @@ func TestActivityEventsRecordedForNoteAndCategoryCRUD(t *testing.T) {
 	if _, err := st.UpdateNote(ctx, created.ID, NoteInput{Title: "周报二", Content: &body}); err != nil {
 		t.Fatalf("update note: %v", err)
 	}
-	if err := st.RecordActivity(ctx, ActivityNoteView); err != nil {
-		t.Fatalf("record view: %v", err)
+	if _, err := st.ViewNote(ctx, created.ID); err != nil {
+		t.Fatalf("view note: %v", err)
 	}
 	if _, err := st.ListNotes(ctx, NoteFilter{Q: "周报", Page: 1}); err != nil {
 		t.Fatalf("search notes: %v", err)
@@ -141,10 +141,49 @@ func TestActivityEventsSkippedWhenWriteFails(t *testing.T) {
 	}
 }
 
-func TestRecordActivityRejectsUnknownKind(t *testing.T) {
+// 「查看」事件只在用户打开笔记时记：内部回读（GetNote）、取不存在的 id、
+// 回收站里的笔记都不记。
+func TestViewNoteRecordsOnlyUserReads(t *testing.T) {
 	st := noteTestStore(t)
+	ctx := context.Background()
 
-	if err := st.RecordActivity(context.Background(), "bogus"); err == nil {
-		t.Fatal("expected unknown kind to be rejected")
+	body := "正文"
+	note, err := st.CreateNote(ctx, NoteInput{Title: "路线", Content: &body})
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if got := kindCount(t, st, ActivityNoteView); got != 0 {
+		t.Fatalf("CreateNote 成功后内部回读不该记查看，got %d", got)
+	}
+
+	if _, err := st.GetNote(ctx, note.ID); err != nil {
+		t.Fatalf("get note: %v", err)
+	}
+	if got := kindCount(t, st, ActivityNoteView); got != 0 {
+		t.Fatalf("GetNote 是内部读取，不该记查看，got %d", got)
+	}
+
+	if _, err := st.ViewNote(ctx, note.ID); err != nil {
+		t.Fatalf("view note: %v", err)
+	}
+	if got := kindCount(t, st, ActivityNoteView); got != 1 {
+		t.Fatalf("ViewNote 应记 1 次查看，got %d", got)
+	}
+
+	if _, err := st.ViewNote(ctx, "8f1a1a1a-0000-4000-8000-000000000000"); !errors.Is(err, ErrNoteNotFound) {
+		t.Fatalf("expected note not found, got %v", err)
+	}
+	if got := kindCount(t, st, ActivityNoteView); got != 1 {
+		t.Fatalf("失败的查看不该记事件，got %d", got)
+	}
+
+	if _, err := st.SoftDeleteNote(ctx, note.ID); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+	if _, err := st.ViewNote(ctx, note.ID); err != nil {
+		t.Fatalf("view trashed note: %v", err)
+	}
+	if got := kindCount(t, st, ActivityNoteView); got != 1 {
+		t.Fatalf("回收站里的笔记不该记查看，got %d", got)
 	}
 }

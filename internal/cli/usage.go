@@ -16,8 +16,9 @@ func Usage() string {
 	b.WriteString("  web      启动 Web 服务（start/stop/status 管理后台实例，不带动作则前台运行）\n")
 	b.WriteString("  info     输出软件与运行信息\n")
 	b.WriteString("  add      新建一条笔记（交互向导：选分类 → 标题 → 正文）\n")
-	b.WriteString("  list     列出笔记并筛选（输入即筛选；Enter 预览；非终端时输出纯文本）\n")
-	b.WriteString("  show     在终端里渲染一条笔记（note show <id>）\n")
+	b.WriteString("  list     列出笔记并筛选（输入即筛选标题/分类/正文；Enter 预览；非终端时输出纯文本）\n")
+	b.WriteString("  show     渲染一条笔记并把原文复制到剪贴板（不给 id 时先选后看）\n")
+	b.WriteString("  status   输出使用统计（事件构成、累计事件、活跃天数、Top 查询词）\n")
 	b.WriteString("  help     显示帮助；help <命令> 显示该命令的参数\n\n")
 	b.WriteString("全局参数:\n")
 	b.WriteString("  -c, --config <路径>    配置文件路径\n")
@@ -33,7 +34,9 @@ func Usage() string {
 	b.WriteString("  note web --remote --addr 0.0.0.0:8080    允许局域网访问\n")
 	b.WriteString("  note info                   查看软件与运行信息\n")
 	b.WriteString("  note list                   筛选并预览笔记\n")
-	b.WriteString("  note show 9f2c1a3b-…       在终端里渲染一条笔记\n\n")
+	b.WriteString("  note show                   交互选一条，渲染并复制原文\n")
+	b.WriteString("  note show 9f2c1a3b-…       按 id 渲染并复制原文\n")
+	b.WriteString("  note status                 查看使用统计（与网页概览页同源）\n\n")
 	b.WriteString("配置文件默认位置（与其他常见开源项目一致，跟随用户配置目录）:\n")
 	b.WriteString("  Windows  %AppData%\\note\\note.yaml\n")
 	b.WriteString("  macOS    ~/Library/Application Support/note/note.yaml\n")
@@ -51,7 +54,7 @@ func Usage() string {
 	return b.String()
 }
 
-// UsageFor 返回指定主题（web/info/add/list/show）的帮助文本；未知主题回退为总帮助。
+// UsageFor 返回指定主题（web/info/add/list/show/status）的帮助文本；未知主题回退为总帮助。
 func UsageFor(topic string) string {
 	switch strings.TrimSpace(topic) {
 	case "web":
@@ -64,6 +67,8 @@ func UsageFor(topic string) string {
 		return listUsage()
 	case "show":
 		return showUsage()
+	case "status":
+		return statusUsage()
 	default:
 		return Usage()
 	}
@@ -105,6 +110,28 @@ func infoUsage() string {
 	return b.String()
 }
 
+// statusUsage 是 note status 的主题帮助；分区与 GroupEvents 的展示口径必须一致。
+func statusUsage() string {
+	var b strings.Builder
+	b.WriteString("用法: note status [参数]\n\n")
+	b.WriteString("输出使用统计：累计事件、活跃天数、查询次数、事件构成与 Top 查询词。\n")
+	b.WriteString("数据直接读 activities 表，与网页概览页同源同口径：网页与 CLI 的操作都计入\n")
+	b.WriteString("（查看笔记、新建、编辑、删除、恢复、查询、分类维护均算事件）。\n\n")
+	b.WriteString("参数:\n")
+	b.WriteString("  -c, --config <路径>    配置文件路径\n")
+	b.WriteString("  --db <路径>            SQLite 数据库路径\n")
+	b.WriteString("  -h, --help             显示本帮助\n\n")
+	b.WriteString("本命令只读：数据库文件不存在时只提示未创建，不建库也不写文件。\n\n")
+	b.WriteString("退出码:\n")
+	b.WriteString("  0  正常\n")
+	b.WriteString("  1  读取失败\n")
+	b.WriteString("  2  参数错误\n\n")
+	b.WriteString("示例:\n")
+	b.WriteString("  note status                       看累计事件与事件构成\n")
+	b.WriteString("  note status --db ./data/notes.db  指定数据库\n")
+	return b.String()
+}
+
 // listUsage 是 note list 的主题帮助；键位与实现（pick.go 的 picker）必须保持一致。
 func listUsage() string {
 	var b strings.Builder
@@ -119,7 +146,9 @@ func listUsage() string {
 	b.WriteString("  --limit <N>            非交互输出最多 N 条（0 = 全部，默认）\n")
 	b.WriteString("  -h, --help             显示本帮助\n\n")
 	b.WriteString("键位:\n")
-	b.WriteString("  输入即筛选 · ↑/↓ 选择 · Enter 预览 · Esc 退出\n\n")
+	b.WriteString("  输入即筛选 · ↑/↓ 选择 · Enter 预览并复制原文 · Esc 退出\n\n")
+	b.WriteString("筛选同时看标题与分类（fuzzy）和正文（子串）：标题/分类命中的排在前面，\n")
+	b.WriteString("只命中正文的会在第二行显示命中处附近的一小段。\n\n")
 	b.WriteString("非交互输出的列: id  标题  分类  updated_at（UTC 秒级文本，原样输出）。\n")
 	b.WriteString("结果为空时不输出任何内容，退出码 0。\n\n")
 	b.WriteString("退出码:\n")
@@ -138,11 +167,14 @@ func listUsage() string {
 // showUsage 是 note show 的主题帮助。
 func showUsage() string {
 	var b strings.Builder
-	b.WriteString("用法: note show <id> [参数]\n\n")
+	b.WriteString("用法: note show [<id>] [参数]\n\n")
 	b.WriteString("在终端里把一条笔记渲染成 Markdown（渲染内核是 glow 的 glamour）。\n")
-	b.WriteString("标题与正文在库里是两个字段，因此真终端下先打印三行头部（标题、分类·时间·id、分隔线）。\n\n")
+	b.WriteString("标题与正文在库里是两个字段，因此真终端下先打印三行头部（标题、分类·时间·id、分隔线）。\n")
+	b.WriteString("打开后会把原文（库里的 Markdown，不是渲染结果）复制到剪贴板；复制失败只提示，不影响查看。\n")
+	b.WriteString("不给 id 时先弹选择器（与 note list 同一套筛选与键位），选中再渲染+复制；\n")
+	b.WriteString("这条交互路径要求 stdin/stdout 都是终端。\n\n")
 	b.WriteString("参数:\n")
-	b.WriteString("  <id>                   笔记 id（必填；不知道 id 就先跑 note list 筛选）\n")
+	b.WriteString("  <id>                   笔记 id（可省略：省略时进选择器）\n")
 	b.WriteString("  -c, --config <路径>    配置文件路径\n")
 	b.WriteString("  --db <路径>            SQLite 数据库路径\n")
 	b.WriteString("  --style <名>           auto（默认）/ dark / light / notty / ascii / pink / dracula / tokyo-night\n")
@@ -150,16 +182,18 @@ func showUsage() string {
 	b.WriteString("  --raw                  只输出原始 Markdown，不渲染\n")
 	b.WriteString("  -h, --help             显示本帮助\n\n")
 	b.WriteString("非终端（管道/重定向）下不打印头部，并默认用 notty 风格（纯文本、无 ANSI）；\n")
-	b.WriteString("显式给了 --style 就按显式值走。\n\n")
+	b.WriteString("显式给了 --style 就按显式值走。非终端下也不动剪贴板：脚本里不该有看不见的副作用。\n\n")
 	b.WriteString("加密笔记无法在 CLI 解密（主密码只在浏览器里）：打印元信息与提示，退出码 4。\n\n")
 	b.WriteString("退出码:\n")
 	b.WriteString("  0  正常\n")
-	b.WriteString("  1  找不到笔记，或渲染失败\n")
+	b.WriteString("  1  找不到笔记、渲染失败，或库里还没有笔记\n")
 	b.WriteString("  2  参数错误\n")
-	b.WriteString("  4  这条笔记是加密的\n\n")
+	b.WriteString("  4  这条笔记是加密的（CLI 没有主密码，看不了也就没有可复制的原文）\n")
+	b.WriteString("  130 选择器里没选就退出\n\n")
 	b.WriteString("示例:\n")
-	b.WriteString("  note show 9f2c1a3b-…                 终端渲染\n")
-	b.WriteString("  note show 9f2c1a3b-… --raw            取原始 Markdown\n")
+	b.WriteString("  note show                            交互选一条，渲染并复制原文\n")
+	b.WriteString("  note show 9f2c1a3b-…                 终端渲染并复制原文\n")
+	b.WriteString("  note show 9f2c1a3b-… --raw            只输出原始 Markdown（不碰剪贴板）\n")
 	b.WriteString("  note show 9f2c1a3b-… --style dark     指定风格\n")
 	return b.String()
 }

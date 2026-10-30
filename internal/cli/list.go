@@ -8,19 +8,23 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rivo/uniseg"
 )
 
-// ListItem 是 note list 的一行：只带展示需要的字段，不含完整正文。
+// ListItem 是 note list 的一行：只带展示需要的字段与过滤用的正文。
 type ListItem struct {
 	ID           string
 	Title        string
 	CategoryName string
 	// Summary 是明文笔记正文的前 140 码点；加密笔记为空。
 	Summary string
+	// Content 是明文笔记的完整正文，只用于本地过滤（不进列表展示）；
+	// 加密笔记为空——CLI 拿不到明文，只能按标题/分类命中。
+	Content string
 	// Encrypted 为真表示这条笔记在库里只有密文，CLI 解不开。
 	Encrypted bool
 	// Trashed 为真表示这条笔记在回收站里。
@@ -30,8 +34,8 @@ type ListItem struct {
 }
 
 // FilterTarget 是 fuzzy 匹配的目标：标题 + 分类。
-// 摘要不进目标：库里存的是原始正文，随便一个词都可能命中摘要而把列表搅乱，
-// 而 CLI 找笔记的主线是「按标题找」。
+// 正文不进这个目标：fuzzy 是子序列匹配，套在长正文上几乎什么词都能命中，
+// 列表会失去筛选意义；正文改由 noteFilter 做子串匹配（见该函数注释）。
 func (i ListItem) FilterTarget() string {
 	category := i.CategoryName
 	if category == "" {
@@ -112,6 +116,13 @@ func FormatListPlain(items []ListItem, limit int) string {
 	return b.String()
 }
 
+// PickNote 是 note show 不带 id 时的选择器：走与 note list 同一个交互列表，
+// 选中即返回那条笔记。调用方必须先确认终端可用——这里强制走交互路径，
+// 不接受纯文本降级（note show 没有 id 时不该静默输出一屏列表）。
+func PickNote(ctx context.Context, deps ListDeps) (ListResult, error) {
+	return runList(ctx, deps, ListOptions{}, true)
+}
+
 // runListTUI 跑交互列表；ok=false 表示用户没选就退出。
 func runListTUI(items []ListItem) (ListItem, bool, error) {
 	final, err := tea.NewProgram(newListModel(noteEntries(items)), tea.WithAltScreen()).Run()
@@ -134,9 +145,114 @@ type listModel struct {
 
 func newListModel(items []list.Item) listModel {
 	return listModel{
-		picker: newPicker(items, 80, 24, listDelegate{}, nil),
+		picker: newPicker(items, 80, 24, listDelegate{}, noteFilter(contentsOf(items))),
 		count:  len(items),
 	}
+}
+
+// contentsOf 取出每一项的完整正文，下标与 items 对齐（bubbles 的过滤器
+// 收到的 targets 也是同样顺序，两者靠下标对应）。
+func contentsOf(items []list.Item) []string {
+	contents := make([]string, len(items))
+	for i, item := range items {
+		if entry, ok := item.(listEntry); ok {
+			contents[i] = entry.item.Content
+		}
+	}
+	return contents
+}
+
+// noteFilter 让「标题/分类 fuzzy」与「正文子串」都能命中：
+// fuzzy 套在长正文上会把任何子序列都算命中，所以正文改用不区分大小写的子串；
+// 标题/分类命中的项保持在前面（DefaultFilter 按匹配度排好），正文命中的追加在后面。
+func noteFilter(contents []string) list.FilterFunc {
+	return func(term string, targets []string) []list.Rank {
+		ranks := list.DefaultFilter(term, targets)
+		needle := strings.ToLower(strings.TrimSpace(term))
+		if needle == "" {
+			return ranks
+		}
+
+		matched := make(map[int]bool, len(ranks))
+		for _, rank := range ranks {
+			matched[rank.Index] = true
+		}
+		for i := range targets {
+			if matched[i] || i >= len(contents) || contents[i] == "" {
+				continue
+			}
+			if strings.Contains(strings.ToLower(contents[i]), needle) {
+				// 正文命中不给 MatchedIndexes：那些下标是相对标题的，别拿去高亮
+				ranks = append(ranks, list.Rank{Index: i})
+			}
+		}
+		return ranks
+	}
+}
+
+// snippetAround 取正文里命中词附近的一小段作为列表第二行：从命中处往前推 12 个
+// 字符作为上下文起点，按显示宽度截断，前面被裁掉时补省略号。
+// 返回空串表示正文里没有这个词（此时第二行照旧显示摘要）。
+func snippetAround(content, term string, width int) string {
+	flat := strings.Join(strings.Fields(content), " ")
+	needle := []rune(strings.ToLower(strings.TrimSpace(term)))
+	if flat == "" || len(needle) == 0 || width <= 0 {
+		return ""
+	}
+
+	runes := []rune(flat)
+	index := -1
+	for i := 0; i+len(needle) <= len(runes); i++ {
+		if runesMatchFold(runes[i:i+len(needle)], needle) {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return ""
+	}
+
+	start := 0
+	if index > 12 {
+		start = index - 12
+	}
+	snippet := truncateDisplay(string(runes[start:]), width)
+	if start > 0 {
+		snippet = "…" + snippet
+	}
+	return snippet
+}
+
+// highlightTerm 把 text 里出现的 term 染色（按 Unicode 小写比较，逐 rune 对齐，
+// 不用 ToLower 切字节——那会在少数语言里错位）。
+func highlightTerm(text, term string) string {
+	needle := []rune(strings.ToLower(term))
+	if len(needle) == 0 {
+		return text
+	}
+
+	runes := []rune(text)
+	var b strings.Builder
+	for i := 0; i < len(runes); {
+		if i+len(needle) <= len(runes) && runesMatchFold(runes[i:i+len(needle)], needle) {
+			b.WriteString(styleMatch.Render(string(runes[i : i+len(needle)])))
+			i += len(needle)
+			continue
+		}
+		b.WriteRune(runes[i])
+		i++
+	}
+	return b.String()
+}
+
+// runesMatchFold 判断 value 是否在忽略大小写后等于 lowered。
+func runesMatchFold(value, lowered []rune) bool {
+	for i, r := range value {
+		if unicode.ToLower(r) != lowered[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (m listModel) Init() tea.Cmd { return nil }
@@ -227,8 +343,13 @@ func (d listDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 
 	selected := index == m.Index()
 	title := entry.item.Title
-	if m.FilterState() == list.Filtering || m.FilterState() == list.FilterApplied {
-		title = highlightMatches(title, m.MatchesForItem(index))
+	// 过滤中与过滤已应用的两种状态都要算：match 只在这两种状态里可用
+	term := ""
+	matches := []int(nil)
+	if state := m.FilterState(); state == list.Filtering || state == list.FilterApplied {
+		term = strings.TrimSpace(m.FilterInput.Value())
+		matches = m.MatchesForItem(index)
+		title = highlightMatches(title, matches)
 	}
 	if selected {
 		title = styleSelected.Render(title)
@@ -242,7 +363,14 @@ func (d listDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	// 而 delegate 声明的 Height 仍是 2，分页与视口随之错位。
 	line := pickRow(mark, title, styleMuted.Render(entry.item.meta()), width)
 
+	// 第二行默认是摘要；如果过滤词只命中正文（标题没命中），就把摘要换成
+	// 正文里命中处的那一小段并染色——否则用户看不出这条为什么被筛出来。
 	summary := listRowSummary(entry.item.Summary, width-4)
+	if len(matches) == 0 {
+		if snippet := snippetAround(entry.item.Content, term, width-4); snippet != "" {
+			summary = highlightTerm(snippet, term)
+		}
+	}
 	// 注意：这里不能补结尾换行——bubbles 自己在两项之间插 `Spacing()+1` 个换行
 	//（见 list.go 的 populatedView），多发一个会让每项占 Height()+1 行，
 	// 分页与视口按 Height() 算，`note list` 会因此溢出终端。

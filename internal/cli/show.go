@@ -35,6 +35,9 @@ type ShowResult struct {
 	Header string
 	// Body 是渲染后的正文；--raw 时为原始 Markdown；加密笔记为提示行。
 	Body string
+	// Source 是库里的原始 Markdown（加密笔记为空）。「复制原文」复制的是它，
+	// 而不是渲染后的终端文本：带着色与折行的渲染结果粘到别处就不可用了。
+	Source string
 }
 
 // encryptedHint 是加密笔记在正文位置打印的提示：说清为什么看不了、去哪儿看。
@@ -75,7 +78,7 @@ func BuildShow(ctx context.Context, deps ShowDeps, opts ShowOptions, tty bool, t
 	}
 
 	width := resolveWidth(opts.Width, termWidth)
-	var result ShowResult
+	result := ShowResult{Source: detail.Content}
 	if tty {
 		result.Header = showHeader(detail, width)
 	}

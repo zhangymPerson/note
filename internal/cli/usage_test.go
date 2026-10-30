@@ -46,6 +46,18 @@ func TestUsageForTopics(t *testing.T) {
 	}
 }
 
+func TestUsageForStatusDescribesLedger(t *testing.T) {
+	if !strings.Contains(Usage(), "note status") {
+		t.Fatalf("总帮助应把 note status 摆出来：\n%s", Usage())
+	}
+	text := UsageFor("status")
+	for _, want := range []string{"note status", "事件构成", "累计事件", "只读", "-c, --config", "--db"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("statusUsage 缺少 %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestUsageListsAddCommand(t *testing.T) {
 	if !strings.Contains(Usage(), "add") {
 		t.Fatal("总帮助的命令表里缺少 add")

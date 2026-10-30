@@ -988,6 +988,47 @@ input {
   overflow-wrap: anywhere;
 }
 
+/* 标题行：标题与「复制原文」图标并排，长标题换行时图标跟着沉底而不跑位 */
+.detail-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 图标按钮保持 44×44 的触控目标（与移动端适配的约定一致） */
+.icon-button {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.icon-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-button {
+    transition: none;
+  }
+}
+
 .detail-body {
   padding: 20px 22px;
   border: 1px solid var(--border);

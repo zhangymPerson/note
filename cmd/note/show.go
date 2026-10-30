@@ -11,10 +11,16 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"note/internal/cli"
+	"note/internal/clipboard"
 	"note/internal/store"
 )
 
-// runShow 是 note show 的入口：加载配置、开库、探测终端，再交给 renderNote 打印。
+// copyToClipboard 留成变量：测试可以替换它，免得测试真的写开发机的剪贴板。
+var copyToClipboard = clipboard.Copy
+
+// runShow 是 note show 的入口：加载配置、开库、探测终端。
+// 给了 id 就直接渲染；没给 id 时进交互选择器，选中再渲染。两条路都会把
+// 原文（库里的 Markdown，不是渲染后的终端文本）复制到剪贴板。
 func runShow(globalConfigPath string, args []string, show cli.ShowOptions) error {
 	cfg, err := loadConfig(globalConfigPath, args)
 	if err != nil {
@@ -27,18 +33,70 @@ func runShow(globalConfigPath string, args []string, show cli.ShowOptions) error
 	}
 	defer func() { _ = st.Close() }()
 
-	return renderNote(context.Background(), st, show.ID, show, stdoutIsTerminal(), os.Stdout)
+	ctx := context.Background()
+	tty := stdoutIsTerminal()
+	if strings.TrimSpace(show.ID) == "" {
+		return showPicked(ctx, st, show, tty)
+	}
+	return openNote(ctx, st, show.ID, show, tty, os.Stdout)
 }
 
-// renderNote 是 note show 与 note list 共用的预览：算出内容 → 打印 → 把「加密笔记」
-// 映射成退出码 4。tty 与输出流由调用方传入，测试因此不需要真终端。
-func renderNote(ctx context.Context, st *store.Store, id string, opts cli.ShowOptions, tty bool, out io.Writer) error {
-	// id 是「要渲染哪一条」的唯一来源：note list 选中后预览时 opts 里没有 id
+// showPicked 跑 note show 的选择器：非终端、空库、用户 Esc 各给出可读的结果与退出码。
+func showPicked(ctx context.Context, st *store.Store, show cli.ShowOptions, tty bool) error {
+	if !tty || !cli.IsTerminal(os.Stdin) {
+		return fmt.Errorf("note show 需要一个笔记 id；想在终端里挑一条就交互式运行 note show")
+	}
+
+	res, err := cli.PickNote(ctx, listDeps(st))
+	if err != nil {
+		return err
+	}
+	if res.Text != "" {
+		// 空库提示（“还没有笔记，用 note add 新建一条”）走 stderr：
+		// stdout 只留笔记正文，脚本永远能拿到干净输出。
+		fmt.Fprint(os.Stderr, res.Text)
+		return exitError(1)
+	}
+	if res.Selected == nil {
+		// 没选就退出不是失败，但也没看成任何笔记：130 与 note add 的「放弃」一致
+		return exitError(130)
+	}
+	return openNote(ctx, st, res.Selected.ID, show, tty, os.Stdout)
+}
+
+// showNote 读一条笔记并算出要打印的内容（不打印、不复制）。
+func showNote(ctx context.Context, st *store.Store, id string, opts cli.ShowOptions, tty bool) (cli.ShowResult, error) {
+	// id 是要渲染哪一条的唯一来源：选择器选中后预览时 opts 里没有 id
 	opts.ID = id
-	res, err := cli.BuildShow(ctx, showDeps(st), opts, tty, stdoutWidth(tty))
+	return cli.BuildShow(ctx, showDeps(st), opts, tty, stdoutWidth(tty))
+}
+
+// openNote = 渲染并打印 + 把原文复制到剪贴板。note show 与 note list 选中都走它：
+// 「打开一条笔记」在 CLI 里只该有一个含义，两条入口不该有两套行为。
+// 复制只在终端下做：管道与脚本（`note show x --raw > a.md`）不该被偷偷改剪贴板。
+func openNote(ctx context.Context, st *store.Store, id string, opts cli.ShowOptions, tty bool, out io.Writer) error {
+	res, err := showNote(ctx, st, id, opts, tty)
 	if printErr := printShow(res, out); printErr != nil {
 		return printErr
 	}
+	if err == nil && tty {
+		copySource(res.Source)
+	}
+	return showExitError(err)
+}
+
+// copySource 复制库里的原始 Markdown。失败只提示，绝不影响查看；
+// 提示走 stderr：stdout 要留给正文（`note show x --raw` 的输出不能被污染）。
+func copySource(source string) {
+	if err := copyToClipboard(source); err != nil {
+		fmt.Fprintln(os.Stderr, clipboard.ExplainFailure(err))
+		return
+	}
+	fmt.Fprintln(os.Stderr, "已复制原文到剪贴板")
+}
+
+// showExitError 把渲染结果里的错误映射成退出码：加密笔记是 4，不是故障。
+func showExitError(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -78,7 +136,9 @@ func printShow(res cli.ShowResult, out io.Writer) error {
 func showDeps(st *store.Store) cli.ShowDeps {
 	return cli.ShowDeps{
 		Note: func(ctx context.Context, id string) (cli.NoteDetail, error) {
-			note, err := st.GetNote(ctx, id)
+			// 走 ViewNote 而不是 GetNote：cli 的阅读（note show 与 note list 的 Enter
+			// 预览）也算一次「查看」，与网页详情页同口径。
+			note, err := st.ViewNote(ctx, id)
 			if err != nil {
 				if errors.Is(err, store.ErrNoteNotFound) {
 					return cli.NoteDetail{}, fmt.Errorf("找不到笔记 %s", id)

@@ -94,8 +94,9 @@
 ```text
 note/
 ├── go.mod
-├── cmd/note/main.go             # 子命令分发（note 菜单 / web / info）、runWeb、runInfo
+├── cmd/note/main.go             # 子命令分发（note 菜单 / web / info / status）、runWeb、runInfo
 ├── cmd/note/web_service.go      # web start / stop / status 三命令实现
+├── cmd/note/status.go           # note status：只读采集 activities 统计并交给 internal/cli 渲染
 ├── config/
 │   └── note.yaml                 # 示例配置（原始默认值；运行时读用户配置目录，不自动加载）
 ├── sql/
@@ -108,15 +109,18 @@ note/
 │   └── 0006_note_soft_delete.sql # notes.deleted_at + 活动/回收站两条部分索引
 ├── internal/
 │   ├── build/info.go             # 版本/git hash/构建日期变量（ldflags 注入）+ vcs 回落
-│   ├── cli/                      # 命令行界面：解析、note add 向导、note list/show 渲染、共用选择器、信息/状态渲染、帮助
+│   ├── cli/                      # 命令行界面：解析、note add 向导、note list/show 渲染、共用选择器、复制原文、信息/状态渲染、帮助
 │   │   ├── parse.go              # 子命令与全局 -c 解析、web 动作（start/stop/status）、list/show 开关、-h 预扫描
 │   │   ├── add.go                # note add 三步向导（bubbletea + bubbles；模型可单测；非终端报错退出）
 │   │   ├── pick.go               # 共用选择器：bubbles/list + gum filter 键位语义（note list 与分类步都用）
-│   │   ├── list.go               # note list：可模糊筛选的交互列表、非交互纯文本、行渲染与摘要截断
-│   │   ├── show.go               # note show：渲染参数解析、头部拼接、加密笔记的拒绝与退出码 4
+│   │   ├── list.go               # note list：交互列表（标题/分类 fuzzy + 正文子串）、非交互纯文本、行渲染与命中片段
+│   │   ├── show.go               # note show：渲染参数解析、头部拼接、Source 原文（供复制）、加密笔记的拒绝与退出码 4
 │   │   ├── info.go               # note info 渲染（uniseg CJK 对齐、缺库占位、日志行）
 │   │   ├── status.go             # note web status 三态渲染与 uptime/文件大小文案
+│   │   ├── stats.go              # note status 使用统计渲染：事件分组合并、uniseg 对齐、缺库占位
 │   │   └── usage.go              # 总帮助与子命令帮助（动态带出本机默认路径）
+│   ├── clipboard/                # 把文本写进剪贴板：原生实现（clip.exe/pbcopy/xclip）+ OSC52 兜底
+│   │   └── clipboard.go          # Copy / writeOSC52 / ExplainFailure（失败只返回错误，从不 panic）
 │   ├── markdown/                 # 全项目唯一 import glamour 的地方（把 Markdown 渲染成终端文本）
 │   │   └── render.go             # Options{Width,Style} 与 Render（notty 风格即纯文本）
 │   ├── daemon/                   # 后台运行支持（纯库，不含业务逻辑）
@@ -229,19 +233,20 @@ note/
 
 v1.5 起入口是 CLI 子命令（`internal/cli.Parse` 分发）：
 
-| 调用                      | 行为                                                                                                                                                                                |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `note`                    | 打印帮助（等价 `note help`）：把可用命令直接摆出来，不再进交互菜单                                                                                                                  |
-| `note add [参数]`         | bubbletea 三步向导：选分类（输入即模糊筛选，可就地新建）→ 标题 → 正文（支持换行，`Ctrl+D` 完成）；只创建明文笔记；stdin 非终端时报错退出 1                                          |
-| `note list [参数]`        | 可模糊筛选的笔记列表（输入即筛选、`Enter` 预览、`Esc` 退出）；非终端时输出纯文本一行一条，空结果零字节；数据一次性读进内存（`store.ListNotesAll`，避免逐键查库污染 `RecordSearch`） |
-| `note show <id> [参数]`   | 在终端里渲染一条笔记（`internal/markdown` → glamour）；真终端打印三行头部，非终端无头部且默认 `notty`（无 ANSI）；加密笔记打印提示并退出 4                                          |
-| `note web [参数]`         | 前台启动 Web 服务，唯一会启动前端页面的基线命令（日志进终端，不建日志文件）                                                                                                         |
-| `note web start [参数]`   | 后台启动；已在运行则打印地址后退出 0                                                                                                                                                |
-| `note web stop [参数]`    | 请求后台实例优雅停止；未运行则提示并退出 0                                                                                                                                          |
-| `note web status [参数]`  | 输出运行情况；运行中 0 / 进程在但不响应 1 / 未运行 3                                                                                                                                |
-| `note info [参数]`        | 输出软件与运行信息（见 8.6 同源口径）后退出；数据库文件已存在时才打开，不产生新文件                                                                                                 |
-| `note help [命令]` / `-h` | 帮助；`note web -h` / `note help web` 显示子命令参数                                                                                                                                |
-| 参数错误                  | 错误信息 + 帮助，退出码 2（与 flag 包惯例一致）                                                                                                                                     |
+| 调用                      | 行为                                                                                                                                                                                                                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `note`                    | 打印帮助（等价 `note help`）：把可用命令直接摆出来，不再进交互菜单                                                                                                                                                                                                                  |
+| `note add [参数]`         | bubbletea 三步向导：选分类（输入即模糊筛选，可就地新建）→ 标题 → 正文（支持换行，`Ctrl+D` 完成）；只创建明文笔记；stdin 非终端时报错退出 1                                                                                                                                          |
+| `note list [参数]`        | 可筛选的笔记列表（输入即筛选标题/分类（fuzzy）与正文（子串）、`Enter` 预览并复制原文、`Esc` 退出）；非终端时输出纯文本一行一条，空结果零字节；数据一次性读进内存（`store.ListNotesAll`，避免逐键查库污染 `RecordSearch`）                                                           |
+| `note show [<id>] [参数]` | 渲染一条笔记（`internal/markdown` → glamour）并把库里的原始 Markdown 复制到剪贴板（仅 stdout 是终端时复制，失败只提示）；省略 id 时进与 `note list` 同一个选择器（要求 stdin/stdout 都是终端）；真终端打印三行头部，非终端无头部且默认 `notty`（无 ANSI）；加密笔记打印提示并退出 4 |
+| `note web [参数]`         | 前台启动 Web 服务，唯一会启动前端页面的基线命令（日志进终端，不建日志文件）                                                                                                                                                                                                         |
+| `note web start [参数]`   | 后台启动；已在运行则打印地址后退出 0                                                                                                                                                                                                                                                |
+| `note web stop [参数]`    | 请求后台实例优雅停止；未运行则提示并退出 0                                                                                                                                                                                                                                          |
+| `note web status [参数]`  | 输出运行情况；运行中 0 / 进程在但不响应 1 / 未运行 3                                                                                                                                                                                                                                |
+| `note info [参数]`        | 输出软件与运行信息（见 8.6 同源口径）后退出；数据库文件已存在时才打开，不产生新文件                                                                                                                                                                                                 |
+| `note status [参数]`      | 输出使用统计（累计事件、活跃天数、事件构成、Top 查询词）；读 `store.GetStats`，与 `/api/stats` 同源；文件不存在时不建库                                                                                                                                                             |
+| `note help [命令]` / `-h` | 帮助；`note web -h` / `note help web` 显示子命令参数                                                                                                                                                                                                                                |
+| 参数错误                  | 错误信息 + 帮助，退出码 2（与 flag 包惯例一致）                                                                                                                                                                                                                                     |
 
 启动顺序（`note web`）：
 
@@ -263,6 +268,17 @@ v1.5 起入口是 CLI 子命令（`internal/cli.Parse` 分发）：
 5. 关闭数据库连接。
 
 启动失败时输出明确错误并以非零码退出；不得在数据库损坏时静默重建文件。
+
+#### 打开笔记即复制原文（v1.12）
+
+`note show <id>`、`note show`（不给 id 时先选）与 `note list` 的 `Enter` 预览是同一件事的三个入口，行为必须一致：渲染到 stdout，**同时**把库里的原始 Markdown 复制到剪贴板。
+
+- **复制的是原文**：`cli.BuildShow` 的 `ShowResult` 除了 `Header`/`Body` 还带 `Source`（`NoteDetail.Content` 原样，`--raw` 与否都一样）。复制 `Source` 而不是 `Body`：渲染结果带着色码与按宽度折行，粘到编辑器里就废了。
+- **只在终端下复制**：`cmd/note` 的 `openNote` 判断 stdout 是终端才调 `internal/clipboard`；`note show x --raw > a.md` 这类管道不改用户的剪贴板——脚本里不该有看不见的副作用。成功/失败提示都写 stderr，stdout 只留正文或渲染结果。
+- **失败不致命**：`internal/clipboard.Copy` 先试原生实现（`github.com/atotto/clipboard`：Windows `clip.exe`、macOS `pbcopy`、Linux `xclip`/`xsel`），失败再试 OSC52（`ESC ] 52 ; c ; <base64> ST`，SSH 下只要终端支持就能用，超过 100 KiB 不发）。两条都失败只打印「复制到剪贴板失败：…」，笔记照常显示、退出码不变。
+- **加密笔记没有可复制的原文**：CLI 没有主密码，`note show` 打提示并以退出码 4 结束（不碰剪贴板）；选择器里选中加密笔记同理。
+
+`note list` 的筛选因此同时看两样东西（`internal/cli/list.go`）：标题 + 分类仍走 bubbles 的 `DefaultFilter`（fuzzy，命中下标用来染色、命中项排前面），正文用**子串**匹配（fuzzy 套在长正文上几乎任何子序列都算命中，列表就失去筛选意义）。只命中正文的项追加在标题命中项之后，第二行改显示正文里命中处附近的一小段（前推 12 个字符、按显示宽度截断、命中词染色），否则用户看不出这条为什么被筛出来。正文来自 `store.ListNotesAll` 新增的 `NoteListItem.FullContent`（`json:"-"`，只给 CLI 用；网页列表走的 `ListNotes` 仍只带 140 码点摘要，响应不会变大）。
 
 ### 4.1.1 后台运行（v1.6）
 
@@ -658,7 +674,7 @@ SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.update
 - SQLite `LIKE` 对 ASCII 大小写不敏感，对中文为精确子串；不做分词、拼音和纠错。
 - 每次非空搜索写一条 `activities(kind='search')`，供首页活动频率与高频词统计；查询词本身只进数据库，不进日志。
 - 查询词通过 URL 参数传递，会进入浏览器历史。
-- 活动事件（`activities`）：写操作在自己那个事务里顺带插一行（`recordActivityTx`），创建/更新/软删除/恢复/彻底删除失败就不会留下事件；`note_restore`/`note_purge` 与 `note_delete` 分开计，前端把 `note_purge` 折进「删除笔记」柱、`note_restore` 单列；`note_view` 由 `handleGetNote` 在详情成功返回后写（回收站里的笔记不算「使用」，`deleted_at` 非空时不记；`CreateNote`/`UpdateNote` 内部也会调 `GetNote`，埋在 store 层会把写操作重复计成查看），写失败只 `slog.Warn` 不影响详情返回。事件只落 `kind`、`created_at` 与（仅搜索时的）`query`，不记录标题、正文、分类名。
+- 活动事件（`activities`）：埋点全部下沉在 `internal/store` 的读写方法里，接口层不再自己记事件。写操作在自己那个事务里顺带插一行（`recordActivityTx`），创建/更新/软删除/恢复/彻底删除失败就不会留下事件；`note_restore`/`note_purge` 与 `note_delete` 分开计，前端把 `note_purge` 折进「删除笔记」柱、`note_restore` 单列；「查看」由 `store.ViewNote` 记录——它是用户读取的专用入口（Web 详情页与 CLI 的 `note show` / `note list` 预览都走它），`GetNote` 保持内部读取不埋点（`CreateNote`/`UpdateNote`/`SoftDeleteNote` 成功后都要回读，埋在 `GetNote` 里会把一次写操作重复计成查看），回收站里的笔记不算「使用」（`deleted_at` 非空时不记），埋点失败只 `slog.Warn` 不影响读取返回。事件只落 `kind`、`created_at` 与（仅搜索时的）`query`，不记录标题、正文、分类名。CLI 的 `note add` 也因此自动计入「新建笔记」（它本来就走 `CreateNote`）。
 - 数据量增长后评估 FTS5 `trigram`，仅索引明文笔记；当前不引入。
 - 改密迁移用的两条查询在 `note.go`：`ListEncryptedCiphers` 只选 `id / cipher / kdf_params`，按 `created_at, id` 稳定排序（迁移过程中新增或删除笔记不会让分页错位）；`UpdateNoteCipher` 只写 `cipher / kdf_params / kdf_salt`，先在事务外做只读探针区分「不存在」与「未加密」（`SetMaxOpenConns(1)` 下事务内再开第二条查询会死锁，全局盐也必须事务外取）。语义与取舍见 6.9。
 
@@ -911,7 +927,7 @@ web/src/lib/session-key.ts
 **统计（`store.Stats`）**：`{"total_events":N,"total_searches":N,"active_days":N,"events_by_kind":[{"kind":"note_create","count":N}],"top_queries":[{"query":"…","count":N}],"days":[{"date":"2026-10-26","count":N}]}`。
 
 - `total_events` / `active_days` / `days` / `events_by_kind` 覆盖全部事件；`total_searches` 与 `top_queries` 口径仍限 `kind='search'`（查询这件事单独可读）。
-- `events_by_kind` 只返回出现过的 kind，按次数倒序；中文文案与「分类维护」合并规则在前端 `lib/stats.ts#groupEvents`，后端保持 kind 原样。
+- `events_by_kind` 只返回出现过的 kind，按次数倒序；中文文案与「分类维护」合并规则在前端 `lib/stats.ts#groupEvents`，后端保持 kind 原样。CLI `note status` 用同一份 `store.GetStats`，分组与文案落在 `internal/cli/stats.go#GroupEvents`，两边口径必须一起改。
 - 事件类型：`search`、`note_view`、`note_create`、`note_update`、`note_delete`、`category_create`、`category_rename`、`category_delete`（另有 `note_restore` / `note_purge` 已列入 CHECK，等回收站上线后启用）。
 
 **设置**：`{"name":"张三","name_set":true}`。
@@ -1102,6 +1118,7 @@ web/src/
 │   ├── session-key.ts         # 页面内存里的会话密钥
 │   ├── draft.ts               # 页面内存里的未保存草稿
 │   ├── markdown.ts            # marked → DOMPurify
+│   ├── clipboard.ts           # copyText：异步剪贴板 API + textarea/execCommand 兜底
 │   ├── stats.ts / theme.ts / toast.ts / settings.ts
 │   └── *.test.ts              # 同名 Vitest 用例
 ├── App.svelte                 # 路由分发 + 首屏载入/失败态
@@ -1109,7 +1126,7 @@ web/src/
 └── main.ts
 ```
 
-纯函数与管道（`crypto`、`markdown`、`draft`、`notes`、`stats`、`theme`、`toast`、`router`、`settings`、`reencrypt`、`info`、`onboarding`）都有同名 Vitest 用例；`session-key.ts` 的用例并在 `crypto.test.ts` 里（它断言的是密钥与口令派生的同一套语义）。改密迁移引擎之所以必须是纯函数 + 依赖注入，是因为它的五类落定（6.9）要在没有浏览器和没有服务端的情况下穷尽；视图组件本身不写单测，靠端到端验证覆盖。
+纯函数与管道（`crypto`、`markdown`、`draft`、`notes`、`stats`、`theme`、`toast`、`router`、`settings`、`reencrypt`、`info`、`onboarding`）都有同名 Vitest 用例；`session-key.ts` 的用例并在 `crypto.test.ts` 里（它断言的是密钥与口令派生的同一套语义）。改密迁移引擎之所以必须是纯函数 + 依赖注入，是因为它的五类落定（6.9）要在没有浏览器和没有服务端的情况下穷尽；视图组件基本不写单测、靠端到端验证覆盖，例外是 `views/NoteDetailView.test.ts`——「复制原文按钮在有明文时出现、加密未解锁时不出现」属于安全相关的可见性，值得锁在用例里。
 
 ### 9.3 路由
 
@@ -1170,7 +1187,7 @@ sendJSON(method, path, payload)
 | 引导页     | 两步：步骤 1 只填称呼（`PUT /api/settings/name`，成功后本地推进、不重读设置）；步骤 2 收**必填**的初始主密码（口令 + 确认 + 助记问题 + 不可逆勾选，生成盐 → `POST` → `unlockKey`），没有「暂时跳过」。挂载时先 `GET /api/master-password`：已配置则变成「输入口令解锁」单输入框，绝不重复 POST |
 | 信息页     | 四张卡：运行信息（`GET /api/info` 摊成只读键值行，缺失显示「未知」）、用户名（`PUT /api/settings/name`）、主密码（当前助记问题 + 内联改问题 + 改密表单）、迁移状态（`remaining > 0` 时列出未迁移条目与原因并给「继续迁移」）；全部文本插值                                                     |
 | 列表       | 解析 `q`/`category`/`page`，右侧分类树带各级笔记数（根节点「全部笔记」+「未分类」+ 各分类）；行内显示明文摘要或「密文内容不在列表展示」；删除有二次确认                                                                                                                                        |
-| 详情       | 明文直接渲染 Markdown；加密且无密钥时显示口令框与助记问题入口；解密成功后可编辑、删除、锁定                                                                                                                                                                                                    |
+| 详情       | 明文直接渲染 Markdown；标题旁有「复制原文」图标按钮（`lib/clipboard.ts#copyText` 写入库里的原始 Markdown，失败用 toast 提示手动选中；加密笔记解锁前不渲染该按钮）；加密且无密钥时显示口令框与助记问题入口；解密成功后可编辑、删除、锁定                                                        |     |
 | 编辑器     | 标题、分类（含「未分类」）、正文与防抖预览；勾选加密时若无会话密钥先就地解锁或跳 `/master-password?next=…`，跳转前把内容存进内存草稿；离开时有未保存提醒                                                                                                                                       |
 | 主密码     | 未配置：口令 + 确认 + 助记问题 + 不可逆勾选，成功后派生密钥并回跳 `next`；已配置：只读展示助记问题并给一个去 `/info` 的按钮，改密与改问题都在信息页，本页不再重复表单                                                                                                                          |
 | 忘记主密码 | 展示助记问题与「无法找回」说明；唯一出路是确认删除这条加密笔记，不要求口令                                                                                                                                                                                                                     |
@@ -1410,6 +1427,8 @@ Referrer-Policy: no-referrer
 | `internal/cli/usage_test.go`               | 总帮助覆盖命令/全局参数/默认位置说明；`UsageFor` 各主题参数齐全，未知主题回退总帮助                                                                                                                                                                                                                                                         |
 | `internal/cli/parse_test.go`（web 动作）   | `web start`/`stop`/`status` 识别（动作后的 flag 原样透传）、`web --addr` 不受影响、未知 web 子命令报错并要求退出码 2                                                                                                                                                                                                                        |
 | `internal/cli/status_test.go`              | `FormatStatus` 三种形态（运行中/未运行/进程在但不响应）、pid 行仅在有 pid 时出现、状态文件四态（存在/不存在/残留已清理/属于另一个库）、uptime 与文件大小文案、CJK 对齐                                                                                                                                                                      |
+| `internal/cli/filter_test.go`              | `noteFilter`：标题/分类 fuzzy 与正文子串都能命中、同一项不重复、正文命中不带标题下标、大小写不敏感；只命中正文时列表第二行换成命中片段（`snippetAround` 的前推/截断/省略号/折叠换行）；`highlightTerm` 不改动文本                                                                                                                           |
+| `internal/clipboard/clipboard_test.go`     | 原生成功时不再发 OSC52、失败时回落并逐字节检查 OSC52 序列（base64 + `ESC \\` 结尾）、stdout 非终端不写序列、超 100 KiB 拒绝、`ExplainFailure` 文案                                                                                                                                                                                          |
 | `internal/daemon/state_test.go`            | `note.json` 往返、`0600`（Windows 跳过）、临时文件 + rename 原子覆盖、损坏 JSON 与非存在文件的错误区分、`StatePath`/`LogPath` 推导、`RemoveIfPid` 只在 pid 匹配时删除、令牌 32 字节且每次不同                                                                                                                                               |
 | `internal/daemon/control_test.go`          | 通配地址映射（`0.0.0.0`→`127.0.0.1`、`::`→`::1`）、空地址与不可解析地址原样返回                                                                                                                                                                                                                                                             |
 | `internal/daemon/pid_test.go`（+windows）  | 自身 pid 存活、不存在的 pid 判死、pid ≤ 0 判死；Windows 专有：已退出但对象未回收的 pid 必须判死（回归 `os.FindProcess` 假阳性）                                                                                                                                                                                                             |
@@ -1447,9 +1466,11 @@ Referrer-Policy: no-referrer
   - `lib/info.test.ts`：`buildRows` 的 14 行中文键、缺失值统一「未知」、字节数与运行时长格式化、`allow_remote` 的是/否；
   - `lib/onboarding.test.ts`：`decideStep(nameSet, masterConfigured)` 的四个组合；
   - `lib/settings.test.ts`：并行读两个端点、主密码端点失败必须整体进 `error` 态（这条先用旧实现跑出 RED——引导判据不能建立在半套数据上）；
+  - `lib/clipboard.test.ts`：异步剪贴板 API 直通、抛错时回落 `execCommand`、两条都失败返回 `false`、临时 textarea 用完必删（含失败路径）；
+  - `views/NoteDetailView.test.ts`（全仓唯一的视图用例）：明文笔记渲染「复制原文」图标且复制的是原文 Markdown、复制失败 toast 提示、加密笔记解锁前不渲染该按钮；
   - `lib/notes.test.ts` 另含密文清单与单条替换的载荷与错误映射、回收站的 `deleted=1` 查询串与 `purge=1`/`restore` 的载荷；`lib/stats.test.ts` 另含 `note_purge` 折进「删除笔记」、`note_restore` 单列；`router/router.test.ts` 另含 `/info` 与 `/info?x=1`。
 - `just check` 跑 `svelte-check --tsconfig ./tsconfig.app.json` 与 `tsc -p tsconfig.node.json`，构建脚本 `npm run build` 会先跑同一套检查。
-- 视图组件不在单测里渲染，由 12.4 的端到端脚本覆盖（含回收站的恢复/彻底删除与多视口排版）。
+- 视图组件基本不在单测里渲染（例外：`views/NoteDetailView.test.ts` 锁住「复制原文」按钮的可见性与复制内容），其余由 12.4 的端到端脚本覆盖（含回收站的恢复/彻底删除与多视口排版）。
 
 ### 12.3 端到端验证
 
@@ -1541,6 +1562,7 @@ note web -p 9090           # 指定端口；host 沿用配置文件或 --addr
 note web start -p 9090     # 后台启动并指定端口（--db/--addr/-p 写在 web 之后）
 note web --remote --addr 0.0.0.0:8080    # 监听局域网（须配 TLS 与认证）
 note info                  # 输出软件与运行信息（含日志路径）
+note status                # 使用统计：累计事件 / 活跃天数 / 事件构成 / Top 查询词
 note -c /path/note.yaml web             # 全局 -c 指定配置文件
 ```
 
