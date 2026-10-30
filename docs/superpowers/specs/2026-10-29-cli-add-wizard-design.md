@@ -1,5 +1,7 @@
 # CLI 改造：`note` 打印帮助 + `note add` 交互式新建笔记
 
+> 后续变更：本文 §3.2（分类步的输入即过滤、子串高亮、`j`/`k` 当导航键）与 §3.3（新建分类后的定位）已被 `docs/superpowers/specs/2026-10-29-cli-list-show-design.md` §9 取代——分类步改用 `bubbles/list` 包出的共用 `picker`（fuzzy 匹配、`j`/`k` 是过滤字符、过滤框只在过滤态出现）。其余章节仍然有效。
+
 - 日期：2026-10-29
 - 状态：待实施（设计已与需求方确认方向：分类步允许当场新建分类）
 - 相关：`docs/PRD.md`（CLI 一节）、`docs/TECH_DESIGN.md`（CLI 一节）、`internal/cli`

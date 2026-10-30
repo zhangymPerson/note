@@ -39,11 +39,13 @@
 ### Task 1: 依赖落地与 `internal/markdown` 渲染包
 
 **Files:**
+
 - Modify: `go.mod`、`go.sum`
 - Create: `internal/markdown/render.go`
 - Test: `internal/markdown/render_test.go`
 
 **Interfaces:**
+
 - Consumes: 无
 - Produces: `markdown.Options{Width int; Style string}`、`markdown.Render(src string, opts Options) (string, error)`
 
@@ -60,7 +62,7 @@ Expected: 全部 PASS。`go.mod` 里 `github.com/charmbracelet/lipgloss` 变成 
 
 - [ ] **Step 2: 写失败的测试**
 
-```go
+````go
 package markdown
 
 import (
@@ -106,7 +108,7 @@ func TestRenderTrimsTrailingNewlines(t *testing.T) {
 		t.Fatalf("Render 返回的文本不该带结尾换行（由调用方决定怎么打印）：%q", out)
 	}
 }
-```
+````
 
 - [ ] **Step 3: 运行测试确认失败**
 
@@ -139,10 +141,12 @@ git commit -m "feat(cli): 引入 glow 的渲染内核 glamour 并提供 markdown
 ### Task 2: `store.ListNotesAll`（共用查询构造 + 全量读取）
 
 **Files:**
+
 - Modify: `internal/store/note.go`
 - Test: `internal/store/note_test.go`
 
 **Interfaces:**
+
 - Consumes: 既有 `NoteFilter`、`NoteListItem`、`listSelectSQL`、`truncateRunes`、`summaryRunes`
 - Produces: `func (s *Store) ListNotesAll(ctx context.Context, deleted bool) ([]NoteListItem, error)`；内部 `buildNoteQuery(filter NoteFilter) (clause, orderBy string, args []any)`、`scanNoteItems(rows *sql.Rows) ([]NoteListItem, error)`
 
@@ -217,10 +221,12 @@ git commit -m "feat(store): 增加不分页的笔记全量查询，供 CLI 列�
 ### Task 3: `picker`：`bubbles/list` 的 gum 化封装
 
 **Files:**
+
 - Create: `internal/cli/pick.go`
 - Test: `internal/cli/pick_test.go`
 
 **Interfaces:**
+
 - Consumes: `github.com/charmbracelet/bubbles/list`、`internal/cli/add_style.go` 的 `styleMatch`/`styleCursor`/`styleSelected`/`styleMuted`
 - Produces:
   - `type pickItem interface { list.Item; Title() string; Description() string }`（`list.Item` 要求 `FilterValue() string`）
@@ -314,9 +320,11 @@ git commit -m "feat(cli): 抽出共用选择器，给 bubbles/list 补上 gum fi
 ### Task 4: 命令面：`note list` / `note show` 的参数解析与帮助
 
 **Files:**
+
 - Modify: `internal/cli/parse.go`、`internal/cli/parse_test.go`、`internal/cli/usage.go`、`internal/cli/usage_test.go`
 
 **Interfaces:**
+
 - Consumes: 既有 `Parse`、`valueFlags`、`addConfigFlags`、`containsHelpFlag`、`Usage`、`UsageFor`
 - Produces:
   - `CommandList`、`CommandShow`（加到 `Command` 枚举）
@@ -376,10 +384,12 @@ git commit -m "feat(cli): 增加 note list 与 note show 的参数解析与帮�
 ### Task 5: `note list`：纯文本输出与交互列表
 
 **Files:**
+
 - Create: `internal/cli/list.go`
 - Test: `internal/cli/list_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 3 的 `picker`、`newPicker`、`pinnedLastFilter`、`highlightMatches`；Task 4 的 `ListOptions`；`internal/cli/add.go` 的 `isTerminal`、`header`、`help`
 - Produces:
   - `type ListItem struct { ID, Title, CategoryName, Summary string; Encrypted, Trashed bool; UpdatedAt string }`
@@ -462,10 +472,12 @@ git commit -m "feat(cli): note list 支持模糊筛选列表与非交互纯文�
 ### Task 6: `note show`：渲染、头部与风格/宽度解析
 
 **Files:**
+
 - Create: `internal/cli/show.go`
 - Test: `internal/cli/show_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 1 的 `markdown.Render`/`markdown.Options`；Task 4 的 `ShowOptions`；`internal/cli/add_style.go` 的样式变量
 - Produces:
   - `type NoteDetail struct { ID, Title, CategoryName, UpdatedAt, Content string; Encrypted, Trashed bool }`
@@ -535,10 +547,12 @@ git commit -m "feat(cli): note show 用 glamour 渲染单条笔记，加密笔�
 ### Task 7: `cmd/note` 接线
 
 **Files:**
+
 - Create: `cmd/note/list.go`、`cmd/note/show.go`、`cmd/note/show_test.go`
 - Modify: `cmd/note/main.go`
 
 **Interfaces:**
+
 - Consumes: Task 5 的 `cli.RunList`/`ListResult`/`ListItem`、Task 6 的 `cli.BuildShow`/`ShowOptions`/`ShowResult`/`ErrNoteEncrypted`、既有 `loadConfig`、`store.Open`、`store.GetNote`、`exitError`
 - Produces:
   - `func runList(globalConfigPath string, args []string) error`
@@ -604,9 +618,11 @@ git commit -m "feat(cli): 接线 note list 与 note show"
 ### Task 8: `note add` 分类步换成 `picker`
 
 **Files:**
+
 - Modify: `internal/cli/add.go`、`internal/cli/add_test.go`、`internal/cli/usage.go`（核对键位文案）
 
 **Interfaces:**
+
 - Consumes: Task 3 的 `picker`/`newPicker`/`pinnedLastFilter`/`highlightMatches`
 - Produces: `addModel` 用 `picker` 替换 `filter`/`filtered`/`filterInput`/`applyFilter`；`Category` 与 `AddDeps` 的对外形状不变
 
@@ -674,9 +690,11 @@ git commit -m "refactor(cli): note add 分类步改用与 note list 相同的选
 ### Task 9: 文档与 CHANGELOG
 
 **Files:**
+
 - Modify: `docs/PRD.md`、`docs/TECH_DESIGN.md`、`README.md`、`CHANGELOG.md`、`docs/superpowers/specs/2026-10-29-cli-add-wizard-design.md`
 
 **Interfaces:**
+
 - Consumes: 前面所有任务的最终行为
 - Produces: 无代码接口
 

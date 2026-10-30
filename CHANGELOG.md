@@ -8,6 +8,13 @@
 
 ### Added
 
+- `note list` 与 `note show`：CLI 终于能读笔记（实现过程与关键逻辑）：
+  - **`note list`**：`internal/cli/list.go` 用 `bubbles/list` 做一个可模糊筛选的列表（输入即筛选、`↑/↓` 选择、`Enter` 预览、`Esc` 退出）；`Enter` 之后**退出 TUI 再打印预览**，与 `note show` 共用同一条渲染路径。stdin 或 stdout 不是终端时（管道、重定向、CI）自动降级为 `text/tabwriter` 对齐的纯文本（`id  标题  分类  updated_at`，时间原样输出 UTC 秒级文本），结果为空时**一个字节都不输出**，因此 `note list --plain | wc -l` 是 0 行。
+  - **`note list` 的数据来源**：新增的 `store.ListNotesAll`（与既有 `ListNotes` 共用 WHERE/ORDER 组装与行扫描，但不分页、不做 COUNT、不写活动表）。列表一次性读进内存而不是逐键查库，理由很实在：`ListNotes` 在查询词非空时会 `RecordSearch`，逐键查库会把搜索历史刷爆。
+  - **`note show <id>`**：`internal/cli/show.go` 加新增的 `internal/markdown` 包（全项目唯一 import glamour 的地方）渲染单条笔记。真终端下先打印三行头部（标题、`分类 · 本机时间 · id`、分隔线）再渲染正文；非终端不打印头部、默认 `notty` 风格（无 ANSI），只有显式 `--style` 才按显式值走。`--width` 取 20–1000，默认按终端宽度（上限 120），取不到时 80。
+  - **加密笔记如实拒绝**：CLI 没有主密码，`note show`（以及 `note list` 里选中它）打印元信息与「请在 note web 里解锁查看」的提示并以退出码 4 结束——不是故障，但让脚本能区分「看不了」与「没找到」。
+  - **共用选择器**：`internal/cli/pick.go` 给 `bubbles/list` 补上 gum filter 的键位语义（可见字符即进过滤态、过滤态里方向键仍能移动、`Enter` 立即确认、`Esc` 两段式：先清过滤再退出），并重绑掉默认绑定里会抢字母的导航键（`j`/`k`/`h`/`l`/`b`/`u`/`f`/`d`/`g`/`G`）、禁掉 list 自己的退出键、吞掉会破坏 `Esc` 不变式的 `tab`。`note list` 与 `note add` 的分类步都用它，项目里不再有两套选择器。
+
 - `note add`：终端里的三步交互向导，新建一条明文笔记（实现过程与关键逻辑）：
   - **模型与分层**：`internal/cli/add.go` 是单进程 `tea.Program`，用 `step` 字段在三步之间切换、切步不清屏（`gum sequence` 同思路，避免"每步退出再起一个程序"造成错误提示无处回显）。向导只通过 `AddDeps` 的三个函数（`Categories` / `CreateCategory` / `CreateNote`）接触外部，`internal/cli` 因而**不 import `internal/store`**——交互逻辑可以用假实现直接喂 `tea.KeyMsg` 测，不必起 TTY；`cmd/note/add.go` 用 store 实现这三个函数，`store.DefaultCategoryID` 为「未分类」的判断提供单一来源（落库仍是 `category_id = NULL`，与 Web 端一致）。
   - **分类步**：列表来自 `store.ListCategories`（含各分类篇数），输入任意字符即按名字做不区分大小写的子串过滤，`↑/↓`（以及 `ctrl+k`/`ctrl+j`，给 `j`/`k` 让位给过滤）移动；列表末尾常驻「+ 新建分类…」且不受过滤影响，选中后进「新建分类」子流程：1–30 码点校验（与 Web 端 `maxCategoryNameRunes` 同口径）、重名与其它错误原地回显且不退出该步、成功后新分类进入列表并被选中，`Esc` 只回上一步而非放弃整个向导。
@@ -22,6 +29,9 @@
 
 ### Changed
 
+- **`note add` 的分类步改用与 `note list` 同一个选择器**：过滤从「不区分大小写的子串匹配」升级为 fuzzy 匹配；行渲染与 `note list` 同一套（游标 + 名字 + 右对齐篇数，`ansi.Truncate` 夹到列表宽度）；`j`/`k` 不再是导航键（它们是过滤字符）；过滤框只在开始输入后出现（旧版一直显示一个「过滤分类…」占位框）。旧的 `filterCategories` / `matchRange` / `highlight` / `cursorMark` 一并删除。
+- **依赖**：新增 `github.com/charmbracelet/glamour`（glow 的渲染内核；glow 本体是 `package main`，无法当库引用）与 `github.com/charmbracelet/x/term`；`github.com/charmbracelet/lipgloss` 被 glamour 抬到 `v1.1.1-0.20250404203927-76690c660834`。新依赖全是纯 Go，`CGO_ENABLED=0` 不变。
+- **退出码**：`note list` / `note show` 引入 `4`（命中加密笔记，不是故障）；`note web status` 的 `3` 不变，两者语义不同。
 - **裸 `note` 从交互菜单改为打印帮助**（等价 `note help`，退出 0），`internal/cli/menu.go` 与 `menu_test.go` 删除。这是破坏性变更：原先靠菜单「启动 Web 服务（后台）」的用户改用 `note web start`，菜单里的「系统信息」改用 `note info`。理由是只有三个选项的菜单把"到底有哪些命令"藏了起来，而帮助文本能直接列全。
 - `note help` / `-h` 的命令表新增 `add` 一行；`usage.go` 新增 `addUsage()` 主题帮助（`note add -h` 与 `note help add` 输出同一份，三步与键位照抄设计文档）。
 - `README.md` 的快速开始与前端开发命令改为 `note web`（原来写的是裸 `./note`，本就与「裸 `note` 进菜单」对不上），并补一句 `note add` 的入口说明。

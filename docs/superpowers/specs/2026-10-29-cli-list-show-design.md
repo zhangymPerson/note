@@ -32,28 +32,28 @@ v1.9 起 CLI 只能**写**不能**读**：`note add` 能把笔记写进库，但
 
 ### 决定 1：过滤组件
 
-| 方案                                            | 观感与能力                                                                              | 代价                                                                                                         | 结论     |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------- |
-| **A. `bubbles/list`**                           | 自带 fuzzy 匹配（`sahilm/fuzzy`）、分页、状态栏与帮助栏，就是 `gum filter` 那类观感      | 与 `note add` 里手写的过滤列表观感不一致，项目里会同时存在两种选择器；`bubbles` 已是对接依赖，只多用一个子包 | **采用** |
-| B. 把 `note add` 的 `filterCategories` 抽成组件 | 观感统一、零新组件                                                                      | 子串匹配（非 fuzzy）；要泛化已稳定的向导代码，回归面更大                                                     | 否       |
-| C. 直接用 `sahilm/fuzzy` 手写模型（gum 的做法） | 完全可控                                                                                | 等于重写分页、状态栏、窗口尺寸、窄终端处理                                                                   | 否       |
+| 方案                                            | 观感与能力                                                                          | 代价                                                                                                         | 结论     |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------- |
+| **A. `bubbles/list`**                           | 自带 fuzzy 匹配（`sahilm/fuzzy`）、分页、状态栏与帮助栏，就是 `gum filter` 那类观感 | 与 `note add` 里手写的过滤列表观感不一致，项目里会同时存在两种选择器；`bubbles` 已是对接依赖，只多用一个子包 | **采用** |
+| B. 把 `note add` 的 `filterCategories` 抽成组件 | 观感统一、零新组件                                                                  | 子串匹配（非 fuzzy）；要泛化已稳定的向导代码，回归面更大                                                     | 否       |
+| C. 直接用 `sahilm/fuzzy` 手写模型（gum 的做法） | 完全可控                                                                            | 等于重写分页、状态栏、窗口尺寸、窄终端处理                                                                   | 否       |
 
 采用 A，并在模型里补一个 `gum filter` 的细节：**任意可见字符即进过滤态**（等价于先按 `/`），不必先敲 `/`。这条对 `note list` 与 `note add` 分类步都成立，两处共用同一个封装（见 §9）。
 
 ### 决定 2：数据来源
 
-| 方案                                    | 代价                                                                                                                       | 结论     |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------- |
-| **A. 进列表时一次性读进内存，本地过滤** | 内存占用与库大小成正比（个人库量级：几千条 × 几百字节 ≈ MB 以内）；换来零延迟、零额外查询                                | **采用** |
+| 方案                                      | 代价                                                                                                                                             | 结论     |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| **A. 进列表时一次性读进内存，本地过滤**   | 内存占用与库大小成正比（个人库量级：几千条 × 几百字节 ≈ MB 以内）；换来零延迟、零额外查询                                                        | **采用** |
 | B. 过滤串变化时查库（`ListNotes` 的 `Q`） | **会污染搜索历史**：`store.ListNotes` 在 `Q` 非空时调 `RecordSearch` 写 `activities` 表，逐键查库等于把每次按键记成一次搜索；且拿不到 fuzzy 排序 | 否       |
 
 ### 决定 3：渲染内核
 
-| 方案                                   | 代价                                                                                                                                                                    | 结论     |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| **A. 内嵌 `glamour` v1.0.0**           | 新增 goldmark / chroma / bluemonday / reflow 等纯 Go 依赖，并把 lipgloss 从 v1.1.0 抬到伪版本（见 §5）；换来自带样式、代码高亮、表格与 emoji，`note show` 与列表共用一套观感 | **采用** |
-| B. 调外部 `glow` 可执行文件            | 零依赖，但要求用户自己装 glow（Windows 上未必有）、每次落临时文件再 exec、错误与分页行为都不受控                                                                         | 否       |
-| C. 用 lipgloss 手写极简 Markdown 渲染  | 零新依赖，但标题/列表/代码块/表格全要自己实现，Markdown 覆盖度注定残缺                                                                                                  | 否       |
+| 方案                                  | 代价                                                                                                                                                                         | 结论     |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| **A. 内嵌 `glamour` v1.0.0**          | 新增 goldmark / chroma / bluemonday / reflow 等纯 Go 依赖，并把 lipgloss 从 v1.1.0 抬到伪版本（见 §5）；换来自带样式、代码高亮、表格与 emoji，`note show` 与列表共用一套观感 | **采用** |
+| B. 调外部 `glow` 可执行文件           | 零依赖，但要求用户自己装 glow（Windows 上未必有）、每次落临时文件再 exec、错误与分页行为都不受控                                                                             | 否       |
+| C. 用 lipgloss 手写极简 Markdown 渲染 | 零新依赖，但标题/列表/代码块/表格全要自己实现，Markdown 覆盖度注定残缺                                                                                                       | 否       |
 
 **glow 本体不能当库用**：`github.com/charmbracelet/glow@v1.5.1` 的仓库根包是 `package main`（cobra 子命令 + `charm` 云同步依赖），Go 无法 import。可复用的只有它用的渲染内核 `github.com/charmbracelet/glamour`。因此「引入 glow」在本项目里的正确落点是 **glamour**。
 
@@ -139,10 +139,10 @@ TTY（真终端）：
 
 ### 3.4 参数
 
-| 命令              | 参数                                                                                                                       |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `note list`       | `-c, --config <路径>`、`--db <路径>`、`--trash`（只列回收站）、`--plain`（强制纯文本输出）、`--limit <N>`（非交互输出条数，0=全部）、`-h/--help` |
-| `note show <id>`  | `<id>`（必填）、`-c, --config <路径>`、`--db <路径>`、`--style <名>`、`--width <N>`、`--raw`、`-h/--help`                     |
+| 命令             | 参数                                                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `note list`      | `-c, --config <路径>`、`--db <路径>`、`--trash`（只列回收站）、`--plain`（强制纯文本输出）、`--limit <N>`（非交互输出条数，0=全部）、`-h/--help` |
+| `note show <id>` | `<id>`（必填）、`-c, --config <路径>`、`--db <路径>`、`--style <名>`、`--width <N>`、`--raw`、`-h/--help`                                        |
 
 - `--style` 取值限定为 glamour 内置风格名：`auto`（默认）、`dark`、`light`、`notty`、`ascii`、`pink`、`dracula`、`tokyo-night`。其它值报错退出 2（项目惯例：非法参数不静默忽略）。
 - `--width` 取值 `20..1000`，越界或非数字报错退出 2；默认 0 = 自动（终端宽，上限 120，取不到时 80）。
@@ -151,38 +151,38 @@ TTY（真终端）：
 
 ### 3.5 退出码
 
-| 码  | 场景                                                                                          |
-| --- | --------------------------------------------------------------------------------------------- |
-| 0   | 正常结束，包含 `note list` 里用户按 `Esc` 未选择就退出                                          |
-| 1   | 运行时失败：开库失败、`note show` 的 id 不存在、渲染失败、写 stdout 失败                      |
-| 2   | 参数错误：未知参数、`show` 缺 id、`--style`/`--width`/`--limit` 取值非法（沿用现有惯例）       |
+| 码  | 场景                                                                                                                   |
+| --- | ---------------------------------------------------------------------------------------------------------------------- |
+| 0   | 正常结束，包含 `note list` 里用户按 `Esc` 未选择就退出                                                                 |
+| 1   | 运行时失败：开库失败、`note show` 的 id 不存在、渲染失败、写 stdout 失败                                               |
+| 2   | 参数错误：未知参数、`show` 缺 id、`--style`/`--width`/`--limit` 取值非法（沿用现有惯例）                               |
 | 4   | 命中加密笔记：`note show <id>` 或 `note list` 里选中的是加密笔记。不是故障，单独编码让脚本能区分「看不了」与「没找到」 |
 
 （3 已被 `note web status` 占用，表示「未运行」。）
 
 ## 4. 结构变更
 
-| 文件                          | 动作 | 说明                                                                                       |
-| ----------------------------- | ---- | ------------------------------------------------------------------------------------------ |
-| `internal/markdown/render.go` | 新增 | `Render(src string, opts Options) (string, error)`：唯一的 glamour 触点，纯函数、可单测     |
-| `internal/cli/list.go`        | 新增 | `ListItem`/`ListDeps`/`RunList`/`FormatListPlain`，bubbletea 模型与 delegate               |
-| `internal/cli/show.go`        | 新增 | `NoteDetail`/`ShowDeps`/`BuildShow`/`resolveStyle`/`resolveWidth`/`ErrNoteEncrypted`        |
-| `internal/cli/pick.go`        | 新增 | 共用选择器：包一层 `bubbles/list`，补 gum 键位语义与 fuzzy 高亮（`note list` 与 `note add` 分类步都用它，见 §9） |
-| `internal/cli/add.go`         | 改   | 分类步换成 `picker`；删掉手写的过滤/高亮/游标逻辑（见 §9.5）                                 |
-| `internal/cli/add_test.go`    | 改   | 分类步用例重写（键位与模型结构都变了）                                                      |
-| `internal/cli/list_test.go`   | 新增 | 模型级用例（喂 `tea.KeyMsg`、喂窗口尺寸）、`FormatListPlain` 对齐、fuzzy 目标                |
-| `internal/cli/show_test.go`   | 新增 | `resolveStyle`/`resolveWidth` 全组合、头部拼接、加密笔记路径、`--raw`                       |
-| `internal/markdown/render_test.go` | 新增 | `notty` 风格下的确定性输出（标题、列表、代码块各一例）                                  |
-| `internal/cli/parse.go`       | 改   | 新增 `CommandList`/`CommandShow`、`ListOptions`/`ShowOptions`、两条命令的参数解析与校验      |
-| `internal/cli/parse_test.go`  | 改   | 两条命令的正常/非法参数用例（未知参数、缺 id、`--style` 非法、`--limit` 非法）               |
-| `internal/cli/usage.go`       | 改   | 总帮助命令表加 `list`/`show`；新增 `listUsage()`、`showUsage()` 与 `UsageFor` 分支           |
-| `internal/cli/usage_test.go`  | 改   | 两条命令在总帮助与主题帮助里都出现                                                          |
-| `internal/store/note.go`      | 改   | 抽出共用的 WHERE/ORDER 构造与行扫描；新增 `ListNotesAll(ctx, deleted bool)`                 |
-| `internal/store/note_test.go` | 改   | `ListNotesAll` 的顺序、回收站过滤、加密笔记无摘要、不写活动表                                |
-| `cmd/note/list.go`            | 新增 | `runList`：装配 `ListDeps`；选中后复用 `previewNote`                                        |
-| `cmd/note/show.go`            | 新增 | `runShow` 与 `previewNote`（`note list` 选中后也走它）                                       |
-| `cmd/note/main.go`            | 改   | `run` 里分发 `CommandList`/`CommandShow`                                                     |
-| `go.mod` / `go.sum`           | 改   | 新增 `glamour`、`golang.org/x/term`；lipgloss 升到伪版本                                     |
+| 文件                               | 动作 | 说明                                                                                                             |
+| ---------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------- |
+| `internal/markdown/render.go`      | 新增 | `Render(src string, opts Options) (string, error)`：唯一的 glamour 触点，纯函数、可单测                          |
+| `internal/cli/list.go`             | 新增 | `ListItem`/`ListDeps`/`RunList`/`FormatListPlain`，bubbletea 模型与 delegate                                     |
+| `internal/cli/show.go`             | 新增 | `NoteDetail`/`ShowDeps`/`BuildShow`/`resolveStyle`/`resolveWidth`/`ErrNoteEncrypted`                             |
+| `internal/cli/pick.go`             | 新增 | 共用选择器：包一层 `bubbles/list`，补 gum 键位语义与 fuzzy 高亮（`note list` 与 `note add` 分类步都用它，见 §9） |
+| `internal/cli/add.go`              | 改   | 分类步换成 `picker`；删掉手写的过滤/高亮/游标逻辑（见 §9.5）                                                     |
+| `internal/cli/add_test.go`         | 改   | 分类步用例重写（键位与模型结构都变了）                                                                           |
+| `internal/cli/list_test.go`        | 新增 | 模型级用例（喂 `tea.KeyMsg`、喂窗口尺寸）、`FormatListPlain` 对齐、fuzzy 目标                                    |
+| `internal/cli/show_test.go`        | 新增 | `resolveStyle`/`resolveWidth` 全组合、头部拼接、加密笔记路径、`--raw`                                            |
+| `internal/markdown/render_test.go` | 新增 | `notty` 风格下的确定性输出（标题、列表、代码块各一例）                                                           |
+| `internal/cli/parse.go`            | 改   | 新增 `CommandList`/`CommandShow`、`ListOptions`/`ShowOptions`、两条命令的参数解析与校验                          |
+| `internal/cli/parse_test.go`       | 改   | 两条命令的正常/非法参数用例（未知参数、缺 id、`--style` 非法、`--limit` 非法）                                   |
+| `internal/cli/usage.go`            | 改   | 总帮助命令表加 `list`/`show`；新增 `listUsage()`、`showUsage()` 与 `UsageFor` 分支                               |
+| `internal/cli/usage_test.go`       | 改   | 两条命令在总帮助与主题帮助里都出现                                                                               |
+| `internal/store/note.go`           | 改   | 抽出共用的 WHERE/ORDER 构造与行扫描；新增 `ListNotesAll(ctx, deleted bool)`                                      |
+| `internal/store/note_test.go`      | 改   | `ListNotesAll` 的顺序、回收站过滤、加密笔记无摘要、不写活动表                                                    |
+| `cmd/note/list.go`                 | 新增 | `runList`：装配 `ListDeps`；选中后复用 `previewNote`                                                             |
+| `cmd/note/show.go`                 | 新增 | `runShow` 与 `previewNote`（`note list` 选中后也走它）                                                           |
+| `cmd/note/main.go`                 | 改   | `run` 里分发 `CommandList`/`CommandShow`                                                                         |
+| `go.mod` / `go.sum`                | 改   | 新增 `glamour`、`golang.org/x/term`；lipgloss 升到伪版本                                                         |
 
 `internal/cli` 仍然**不** import `internal/store`：两条命令都走依赖注入（`ListDeps` / `ShowDeps`），与 `AddDeps` 同一套路，`cmd/note` 用 store 实现、测试注入假实现。
 
@@ -285,12 +285,12 @@ func (s *Store) ListNotesAll(ctx context.Context, deleted bool) ([]NoteListItem,
 
 ## 5. 依赖变更
 
-| 依赖                                | 变化                    | 说明                                                                                                       |
-| ----------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `github.com/charmbracelet/glamour`  | 新增 `v1.0.0`（直接）   | glow 的渲染内核；纯 Go、无 CGO，`CGO_ENABLED=0` 不受影响                                                    |
-| `github.com/charmbracelet/bubbles`  | 已依赖，新增用 `list`   | `list` 的 fuzzy 来自 `sahilm/fuzzy v0.1.1`，随 `bubbles` 的 go.mod 进来                                      |
-| `github.com/charmbracelet/x/term`   | 已依赖（间接转直接）    | `note show` 探测终端宽度；bubbletea 已经把它带进图里，不再另引 `golang.org/x/term`（后者随 glamour 间接进来，不直接 import） |
-| `github.com/charmbracelet/lipgloss` | `v1.1.0` → 伪版本       | glamour 的 `ansi/table.go` 要求 `v1.1.1-0.20250404203927-76690c660834`；`note add` 的观感必须重跑用例 + 手工确认 |
+| 依赖                                | 变化                  | 说明                                                                                                                         |
+| ----------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `github.com/charmbracelet/glamour`  | 新增 `v1.0.0`（直接） | glow 的渲染内核；纯 Go、无 CGO，`CGO_ENABLED=0` 不受影响                                                                     |
+| `github.com/charmbracelet/bubbles`  | 已依赖，新增用 `list` | `list` 的 fuzzy 来自 `sahilm/fuzzy v0.1.1`，随 `bubbles` 的 go.mod 进来                                                      |
+| `github.com/charmbracelet/x/term`   | 已依赖（间接转直接）  | `note show` 探测终端宽度；bubbletea 已经把它带进图里，不再另引 `golang.org/x/term`（后者随 glamour 间接进来，不直接 import） |
+| `github.com/charmbracelet/lipgloss` | `v1.1.0` → 伪版本     | glamour 的 `ansi/table.go` 要求 `v1.1.1-0.20250404203927-76690c660834`；`note add` 的观感必须重跑用例 + 手工确认             |
 
 传递依赖（全部纯 Go）：`goldmark`、`goldmark-emoji`、`chroma/v2`、`bluemonday`、`douceur`、`gorilla/css`、`regexp2`、`reflow`、`termenv`、`x/net`、`x/text`。
 
@@ -298,20 +298,20 @@ func (s *Store) ListNotesAll(ctx context.Context, deleted bool) ([]NoteListItem,
 
 ## 6. 边界与错误
 
-| 场景                       | 行为                                                                                                                     |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| 库为空（0 条笔记）         | 交互路径：不进 TUI，stdout 打印「还没有笔记，用 note add 新建一条」，退出 0；非交互路径（非 TTY 或 `--plain`）：**不输出任何内容**，退出 0 |
-| `--trash` 且回收站为空     | 同上，交互路径文案改为「回收站是空的」                                                                                    |
-| 摘要含换行或宽字符         | 列表行里的摘要折叠空白为单个空格、按显示宽度截断，保证每项恒为两行高（见 §3.1）                                           |
-| 加密笔记                   | 列表里照常出现（右对齐信息追加 `· 加密`，无摘要行）；`note show` 或列表里选中它都打印元信息 + 解密提示，退出 4             |
-| 回收站笔记                 | `note list` 默认不含；`--trash` 只列回收站；`note show` 照常渲染并在头部标注 `· 回收站`                                   |
-| stdin 或 stdout 非 TTY     | `note list` → 纯文本一行一条；`note show` → `notty` 风格、不打印头部。两者都不报错                                       |
-| `note show` 的 id 不存在   | stderr 打印 `找不到笔记 <id>`，退出 1（`store.ErrNoteNotFound`）                                                          |
-| 终端过窄（< 40 列）        | 列表交给 `bubbles/list` 自行处理；`note show` 宽度取 `max(20, 终端宽)`                                                    |
-| 正文为空                   | 渲染出空正文，头部照常打印，不报错                                                                                        |
-| 上万条笔记                 | 一次性读进内存（见 §2 决定 2），不设上限；个人库量级在 MB 以内                                                            |
-| 正文含 ANSI 转义序列       | 原样输出，终端自行解释；不净化（数据源是本机用户自己的笔记）。记录为已知行为，见 §8                                       |
-| 活动统计                   | CLI 两条命令都**不**写 `activities`（不记 `search`、不记 `note_view`）：`note list` 是本地过滤没有查询词可记，`note show` 的翻看不该刷屏 Web 端的查看统计 |
+| 场景                     | 行为                                                                                                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 库为空（0 条笔记）       | 交互路径：不进 TUI，stdout 打印「还没有笔记，用 note add 新建一条」，退出 0；非交互路径（非 TTY 或 `--plain`）：**不输出任何内容**，退出 0                |
+| `--trash` 且回收站为空   | 同上，交互路径文案改为「回收站是空的」                                                                                                                    |
+| 摘要含换行或宽字符       | 列表行里的摘要折叠空白为单个空格、按显示宽度截断，保证每项恒为两行高（见 §3.1）                                                                           |
+| 加密笔记                 | 列表里照常出现（右对齐信息追加 `· 加密`，无摘要行）；`note show` 或列表里选中它都打印元信息 + 解密提示，退出 4                                            |
+| 回收站笔记               | `note list` 默认不含；`--trash` 只列回收站；`note show` 照常渲染并在头部标注 `· 回收站`                                                                   |
+| stdin 或 stdout 非 TTY   | `note list` → 纯文本一行一条；`note show` → `notty` 风格、不打印头部。两者都不报错                                                                        |
+| `note show` 的 id 不存在 | stderr 打印 `找不到笔记 <id>`，退出 1（`store.ErrNoteNotFound`）                                                                                          |
+| 终端过窄（< 40 列）      | 列表交给 `bubbles/list` 自行处理；`note show` 宽度取 `max(20, 终端宽)`                                                                                    |
+| 正文为空                 | 渲染出空正文，头部照常打印，不报错                                                                                                                        |
+| 上万条笔记               | 一次性读进内存（见 §2 决定 2），不设上限；个人库量级在 MB 以内                                                                                            |
+| 正文含 ANSI 转义序列     | 原样输出，终端自行解释；不净化（数据源是本机用户自己的笔记）。记录为已知行为，见 §8                                                                       |
+| 活动统计                 | CLI 两条命令都**不**写 `activities`（不记 `search`、不记 `note_view`）：`note list` 是本地过滤没有查询词可记，`note show` 的翻看不该刷屏 Web 端的查看统计 |
 
 安全不变量不受影响：本次只读库，不解密、不落盘、不新增任何输出面（打印的都是用户自己的明文正文），`{@html}`、CSRF、`/api/shutdown` 等约定一概不动。
 
@@ -359,16 +359,16 @@ func (s *Store) ListNotesAll(ctx context.Context, deleted bool) ([]NoteListItem,
 
 **重绑（构造时做一次，`updateKeybindings` 不会覆盖）**：
 
-| 绑定              | 改成                                                     |
-| ----------------- | -------------------------------------------------------- |
-| `CursorUp`        | `up`、`ctrl+k`（去掉 `k`）                                |
-| `CursorDown`      | `down`、`ctrl+j`（去掉 `j`）                              |
-| `PrevPage`        | `pgup`（去掉 `left`/`h`/`b`/`u`）                         |
-| `NextPage`        | `pgdown`（去掉 `right`/`l`/`f`/`d`）                      |
-| `GoToStart`       | `home`（去掉 `g`）                                        |
-| `GoToEnd`         | `end`（去掉 `G`）                                         |
-| `Quit`            | 禁用：退出由外层模型决定                                  |
-| `ForceQuit`       | 禁用：`ctrl+c` 由外层模型自己处理                         |
+| 绑定         | 改成                                 |
+| ------------ | ------------------------------------ |
+| `CursorUp`   | `up`、`ctrl+k`（去掉 `k`）           |
+| `CursorDown` | `down`、`ctrl+j`（去掉 `j`）         |
+| `PrevPage`   | `pgup`（去掉 `left`/`h`/`b`/`u`）    |
+| `NextPage`   | `pgdown`（去掉 `right`/`l`/`f`/`d`） |
+| `GoToStart`  | `home`（去掉 `g`）                   |
+| `GoToEnd`    | `end`（去掉 `G`）                    |
+| `Quit`       | 禁用：退出由外层模型决定             |
+| `ForceQuit`  | 禁用：`ctrl+c` 由外层模型自己处理    |
 
 重绑的理由：只要还有一个字母键被绑成导航，它就无法作为过滤字符输入（`j`/`k`/`h`/`l`/`b`/`u`/`f`/`d`/`g`/`G` 都在默认绑定里）。这一改的副作用是 `note add` 分类步**不再有「过滤为空时 `j`/`k` 当上下移动」**的行为，但该行为从未写进帮助文案（帮助一直只写 `↑/↓ 选择`），且 `gum filter` 本来就没有它。
 
@@ -404,13 +404,13 @@ note add · 选择分类（1/3）
 
 ### 9.5 要删/要留
 
-| 位置                                                       | 处置                                                                     |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `addModel.filter`/`filtered`/`filterInput`/`applyFilter`   | 删：过滤串与结果都归 `picker`                                            |
-| `filterCategories`                                         | 删（连同用例）：fuzzy 由 `list.DefaultFilter` 提供                        |
-| `matchRange`/`highlight`                                   | 删：改用 `MatchesForItem` 的下标 + `styleMatch`                          |
-| `cursorMark`                                               | 删：游标由 delegate 自己画                                               |
-| `indexOfCategory`                                          | 留：新建分类后定位光标仍要用它                                           |
-| `styleMatch`/`styleCursor`/`styleSelected`/`styleMuted`/`help`/`header` | 留：delegate 与向导其余步继续用                             |
-| `add_test.go` 里走分类步的用例                             | 改：键位与模型结构都变了，断言改为对 `picker` 的可见项与选中项            |
-| `addUsage()` 的键位行（`usage.go`）                        | 核对：仍是 `↑/↓ 选择 · 输入过滤 · Enter 确认 · Esc 放弃`，不含 `j`/`k`    |
+| 位置                                                                    | 处置                                                                   |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `addModel.filter`/`filtered`/`filterInput`/`applyFilter`                | 删：过滤串与结果都归 `picker`                                          |
+| `filterCategories`                                                      | 删（连同用例）：fuzzy 由 `list.DefaultFilter` 提供                     |
+| `matchRange`/`highlight`                                                | 删：改用 `MatchesForItem` 的下标 + `styleMatch`                        |
+| `cursorMark`                                                            | 删：游标由 delegate 自己画                                             |
+| `indexOfCategory`                                                       | 留：新建分类后定位光标仍要用它                                         |
+| `styleMatch`/`styleCursor`/`styleSelected`/`styleMuted`/`help`/`header` | 留：delegate 与向导其余步继续用                                        |
+| `add_test.go` 里走分类步的用例                                          | 改：键位与模型结构都变了，断言改为对 `picker` 的可见项与选中项         |
+| `addUsage()` 的键位行（`usage.go`）                                     | 核对：仍是 `↑/↓ 选择 · 输入过滤 · Enter 确认 · Esc 放弃`，不含 `j`/`k` |
