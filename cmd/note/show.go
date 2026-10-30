@@ -104,9 +104,10 @@ func showDeps(st *store.Store) cli.ShowDeps {
 	}
 }
 
-// stdoutIsTerminal 判断 stdout 是不是终端：非终端时 note show 走纯文本、不打印头部。
+// stdoutIsTerminal 走 internal/cli 的同一套判定：两边口径必须一致，
+// 否则可能进了 TUI 却不打印头部（Cygwin/msys 伪终端是最容易踩的例子）。
 func stdoutIsTerminal() bool {
-	return term.IsTerminal(uintptr(os.Stdout.Fd()))
+	return cli.IsTerminal(os.Stdout)
 }
 
 // stdoutWidth 返回渲染用的终端宽度；非终端或取不到时返回 0（由 cli 层回落到默认值）。

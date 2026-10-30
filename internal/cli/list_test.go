@@ -109,13 +109,18 @@ func TestListModelViewFitsTerminal(t *testing.T) {
 		t.Fatalf("列表视图占 %d 行，超过终端 24 行：\n%s", got, view)
 	}
 
-	lines := strings.Split(model.picker.view(), "\n")
+	// 用整个视图（头部 + 空行 + 列表）定位，行号才对得上用户看到的东西
+	lines := strings.Split(view, "\n")
 	first, second := lineOf(lines, "笔记 00"), lineOf(lines, "笔记 01")
 	if first < 0 || second < 0 {
 		t.Fatalf("可见项里找不到前两条笔记：\n%s", model.picker.view())
 	}
 	if second-first != 2 {
 		t.Fatalf("相邻两项应当紧挨着（各自两行），得到 %d..%d：\n%s", first, second, model.picker.view())
+	}
+	// 头部一行 + 一个空行之后就是第一项：没把未过滤时的空标题区剪掉的话这里会是 3
+	if first != 2 {
+		t.Fatalf("第一项应当紧跟在头部与空行之后（第 2 行），得到第 %d 行：\n%s", first, view)
 	}
 }
 
@@ -127,6 +132,7 @@ func lineOf(lines []string, sub string) int {
 	}
 	return -1
 }
+
 func TestListDelegateRendersTwoLinesWithinWidth(t *testing.T) {
 	long := plainItem("a", strings.Repeat("很长的标题", 12), "工作", "2026-10-29T00:00:00Z")
 	// 摘要里带换行：不折叠的话这一项会多于两行

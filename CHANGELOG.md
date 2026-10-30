@@ -17,12 +17,12 @@
 
 - `note add`：终端里的三步交互向导，新建一条明文笔记（实现过程与关键逻辑）：
   - **模型与分层**：`internal/cli/add.go` 是单进程 `tea.Program`，用 `step` 字段在三步之间切换、切步不清屏（`gum sequence` 同思路，避免"每步退出再起一个程序"造成错误提示无处回显）。向导只通过 `AddDeps` 的三个函数（`Categories` / `CreateCategory` / `CreateNote`）接触外部，`internal/cli` 因而**不 import `internal/store`**——交互逻辑可以用假实现直接喂 `tea.KeyMsg` 测，不必起 TTY；`cmd/note/add.go` 用 store 实现这三个函数，`store.DefaultCategoryID` 为「未分类」的判断提供单一来源（落库仍是 `category_id = NULL`，与 Web 端一致）。
-  - **分类步**（v1.10 起已改为共用选择器，见下）列表来自 `store.ListCategories`（含各分类篇数），输入任意字符即筛选（现为 fuzzy 匹配）；`↑/↓` 移动；列表末尾常驻「+ 新建分类…」且不受过滤影响，选中后进「新建分类」子流程：1–30 码点校验（与 Web 端 `maxCategoryNameRunes` 同口径）、重名与其它错误原地回显且不退出该步、成功后新分类进入列表并被选中，`Esc` 只回上一步而非放弃整个向导。
+  - **分类步**（v1.10 起已改为共用选择器，见下）——列表来自 `store.ListCategories`（含各分类篇数），输入任意字符即筛选（现为 fuzzy 匹配）；`↑/↓` 移动；列表末尾常驻「+ 新建分类…」且不受过滤影响，选中后进「新建分类」子流程：1–30 码点校验（与 Web 端 `maxCategoryNameRunes` 同口径）、重名与其它错误原地回显且不退出该步、成功后新分类进入列表并被选中，`Esc` 只回上一步而非放弃整个向导。
   - **标题步**：`textinput`，`CharLimit` 200，`Enter` 时 trim 后为空则原地回显「标题不能为空」。
   - **正文步**：照 `gum write` 用 `bubbles/textarea`——`Enter` 换行、`Ctrl+D` 完成、`Ctrl+E` 用 `$EDITOR`/`$VISUAL` 打开（临时文件 + `tea.ExecProcess`，未设置变量时只回显提示）、`Esc` 放弃；实时显示码点数，超过 2000 码点时 `Ctrl+D` 被拒并提示，可继续删改（与 `store.maxContentRunes` 同一 `utf8.RuneCountInString` 口径）。
   - **结果与退出码**：成功打印标题、分类、ID 与 `http://<addr>/notes/<id>` 链接（地址取自配置，需 `note web` 在跑）；用户放弃（`Esc`/`Ctrl+C`）打印「已放弃，未新建笔记」并以 130 退出；stdin 不是终端时立刻报错退出 1，**不**读管道当正文；`note add` 的其它参数与多余参数退出 2。
   - **视觉（gum 同款观感）**：命中过滤词的片段用强调色加粗高亮（现为 `highlightMatches`，按 fuzzy 给的命中下标染色；旧版的 `matchRange` 子串高亮已删）；选中行 `> ` 洋红 + 名字加粗；篇数、计数器、底部帮助、步骤号统一用灰色 `AdaptiveColor` 压暗，错误回显用红色；标题/正文档同样换成洋红提示符，正文的 `textarea` 去掉默认的 `┃ ` 前缀，外面套一层 gum write 那样的圆角细边框（边框色同灰色辅助文字，左右各留一列内边距，边框宽度固定不随内容长短跳动），正文框上方加一行 header：加粗的「新建笔记」+ 压暗的分类与已填标题上下文。配色随终端亮/暗主题切换（`lipgloss.AdaptiveColor`），非终端环境自动退化为无色纯文本。
-  - **分类步的按键约定**（v1.10 起已改为共用选择器，见下）过滤框只在过滤态可见；当时 `j`/`k` 在过滤为空时当上下移动（`gum filter` 的习惯），已输入过滤词后则如实进入过滤串；`↑/↓` 与 `ctrl+k/j`（以及 `ctrl+p/n`）始终用于移动。
+  - **分类步的按键约定**（v1.10 起已改为共用选择器，见下）——过滤框只在过滤态可见；当时 `j`/`k` 在过滤为空时当上下移动（`gum filter` 的习惯），已输入过滤词后则如实进入过滤串；`↑/↓` 与 `ctrl+k/j`（以及 `ctrl+p/n`）始终用于移动。
   - **依赖**：新增 `github.com/charmbracelet/bubbles`（`textarea`/`textinput`）与 `github.com/charmbracelet/lipgloss`（配色；纯 Go、CGO 仍关闭；`go mod tidy` 解析到 bubbles v1.0.0 / lipgloss v1.1.0，并与 `bubbletea v1.3.10` 编译通过）。
   - **测试**：`internal/cli` 侧 27 项新用例覆盖过滤与匹配高亮区间、过滤框接管输入、30/200/2000 码点边界、空标题、重名与非重名回显、`Esc` 不落库、保存失败停在正文步、非终端拒跑、`-c/--db` 放行与缺值报错；`go vet` 与 `go test ./...`（9 包、顶层 175 个用例、含子测试 182 项，0 失败）全绿。
   - **已验证 / 未验证的边界**：真二进制验证了裸 `note` 打印帮助退出 0、`note add -h` 与 `note help add` 输出一致、`note add foo` 退出 2、管道与 `/dev/null` 喂 stdin 立刻报错退出 1 且不挂起、`--db` 指向新路径会自动建库迁移。**交互三步（含 `Ctrl+E` 外接编辑器）没做自动化**：`go test` 的 stdin 不是终端、`winpty` 在本机无 TTY 环境同样拒绝（`stdin is not a tty`），与 ADR-20 记录的限制相同，仍需真终端人工验收。

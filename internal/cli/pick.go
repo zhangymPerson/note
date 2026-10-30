@@ -133,8 +133,16 @@ func (p picker) selected() list.Item {
 	return p.list.SelectedItem()
 }
 
+// view 返回选择器视图。bubbles 在未过滤时也会渲染一个空的标题区，
+// 于是视图开头多一行空白（过滤态下那里是过滤框，不能被剪掉），
+// 外层的头部再拼上一个空行就会连出两行空白，所以这里把它去掉。
 func (p picker) view() string {
-	return p.list.View()
+	view := p.list.View()
+	// 那一行空白会被 lipgloss 补成整行空格，所以按“整行空白”判断而不是比前缀
+	if head, rest, ok := strings.Cut(view, "\n"); ok && strings.TrimSpace(head) == "" {
+		return rest
+	}
+	return view
 }
 
 // pinnedLastFilter 让第 pinnedIndex 项不受过滤影响、永远钉在最后一行。

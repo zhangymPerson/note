@@ -574,6 +574,11 @@ func TestCategoryStepViewFitsTerminal(t *testing.T) {
 	if second-first != 1 {
 		t.Fatalf("相邻两行分类应当紧挨着（各自一行），得到 %d..%d：\n%s", first, second, m.picker.view())
 	}
+	// 选择器视图的第一行就是第一个分类：未过滤时的空标题区必须已被剪掉，
+	// 否则分类步会多出两行空白
+	if first != 0 {
+		t.Fatalf("第一行分类应当在视图首行，得到第 %d 行：\n%s", first, m.picker.view())
+	}
 }
 
 func TestCategoryStepViewShowsCountsAndNoCountForCreateRow(t *testing.T) {

@@ -400,14 +400,16 @@ func buildAddNote(m addModel) AddNote {
 	return note
 }
 
-// isTerminal 判断文件描述符是否连接着终端。
-func isTerminal(f *os.File) bool {
+// IsTerminal 判断文件是不是终端；note add 的向导与 note show/list 的探测都走它。
+// 用 isatty 而不是 x/term，是为了把 Cygwin/msys 的伪终端也算作终端（两边口径必须一致，
+// 否则可能进了 TUI 却不打印头部）。
+func IsTerminal(f *os.File) bool {
 	return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
 }
 
 // RunAdd 加载分类后跑完整向导；saved=false 表示用户放弃（Esc/Ctrl+C）。
 func RunAdd(ctx context.Context, deps AddDeps) (NoteRef, bool, error) {
-	return runAddWizard(ctx, deps, isTerminal(os.Stdin))
+	return runAddWizard(ctx, deps, IsTerminal(os.Stdin))
 }
 
 // runAddWizard 是 RunAdd 的可测内核：interactive=false 时立刻返回 ErrNotTerminal。

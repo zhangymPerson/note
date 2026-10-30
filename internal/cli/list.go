@@ -56,7 +56,7 @@ type ListResult struct {
 
 // RunList 跑 note list：stdout 与 stdin 都是终端且未给 --plain 时进 TUI，否则输出纯文本。
 func RunList(ctx context.Context, deps ListDeps, opts ListOptions) (ListResult, error) {
-	interactive := !opts.Plain && isTerminal(os.Stdout) && isTerminal(os.Stdin)
+	interactive := !opts.Plain && IsTerminal(os.Stdout) && IsTerminal(os.Stdin)
 	return runList(ctx, deps, opts, interactive)
 }
 
