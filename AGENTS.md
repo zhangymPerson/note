@@ -8,7 +8,7 @@
 
 - **后端**：Go 单二进制（`net/http` + `ServeMux`，无框架），SQLite 持久化（纯 Go 驱动 `modernc.org/sqlite`，全程 CGO 关闭）。
 - **前端**：Vite + Svelte 5 + TypeScript 的 History 路由 SPA，构建产物输出到 `internal/web/dist`，由 `go:embed` 内嵌；不使用 SvelteKit、UI 组件库、CSS 框架或状态管理库。
-- **部署形态**：运行时只有一个可执行文件 + 一个 SQLite 数据文件 + 一个 YAML 配置（默认在用户配置/数据目录，`note -c` 可指定）；入口是 CLI 子命令——裸 `note` 等价于 `note --help`（打印帮助），`note add` 走 bubbletea 向导（选分类 → 标题 → 正文）新建明文笔记，`note list` 筛选并预览（标题/分类 fuzzy + 正文子串），`note show` 渲染一条笔记并把原文复制到剪贴板（不给 id 时先进选择器），`note web` 才启动服务（默认只监听 `127.0.0.1:8080`），`note info` 输出运行信息，`note status` 输出使用统计（事件构成 / 累计事件 / 活跃天数，与网页概览页同源）。v1.6 起 `note web` 还有 `start`/`stop`/`status` 三个子命令做后台运行；后台实例的日志 `note.log` 与状态文件 `note.json` 与数据库同目录，不带子命令的 `note web` 仍是前台（日志进终端，不建日志文件）。
+- **部署形态**：运行时只有一个可执行文件 + 一个 SQLite 数据文件 + 一个 YAML 配置（默认在用户配置/数据目录，`note -c` 可指定）；入口是 CLI 子命令——裸 `note` 等价于 `note --help`（打印帮助），`note add` 走 bubbletea 向导（选分类 → 标题 → 正文）新建明文笔记，`note list` 筛选并预览（标题/分类 fuzzy + 正文子串），`note show` 渲染一条笔记并把原文复制到剪贴板（不给 id 时先进选择器），`note web` 才启动服务（默认只监听 `127.0.0.1:8080`），`note info` 输出运行信息，`note status` 输出使用统计（事件构成 / 累计事件 / 活跃天数，与网页概览页同源），`note config list|set` 读写 `note.yaml` 的 AI 三项（`ai.base_url` / `ai.api_key` / `ai.prompt`，密钥只显示掩码）。v1.6 起 `note web` 还有 `start`/`stop`/`status` 三个子命令做后台运行；后台实例的日志 `note.log` 与状态文件 `note.json` 与数据库同目录，不带子命令的 `note web` 仍是前台（日志进终端，不建日志文件）。
 
 需求与架构细节以 `docs/PRD.md` 与 `docs/TECH_DESIGN.md` 为准，改动行为前先读这两份文档。
 
@@ -49,6 +49,9 @@ docs/              PRD、技术方案、构建指南
 - `GET /api/info` 与其它 API 一样 `Cache-Control: no-store`，响应只能是标准库运行时与配置值，不得含正文、密文、盐、密码或令牌；`just build` 用 `-ldflags -X` 注入 `internal/build` 的四个变量，git 不可用时必须退化为空值而不是让构建失败。
 - 引导完成判据是纯函数 `decideStep(nameSet, masterConfigured)`（`web/src/lib/onboarding.ts`），`App.svelte` 的门槛与 `document.title` 必须共用它；引导页第二步在库中已有主密码时只解锁、绝不重复 `POST /api/master-password`（重复提交会 409，会把用户永久卡在第二步）。
 - 配置文件写入必须原子（临时文件 + rename），且保持 YAML 严格解析（未知键报错）。
+- `note.yaml` 的 `ai` 三项（`base_url` / `api_key` / `prompt`）只有一个写入口：`internal/config.SetValues`（`yaml.Node` 级改写以保留其它键与注释 → 编码 → 再用严格 `decode` 复核 → 临时文件 + rename，文件 `0600` / 目录 `0700`）。不要在别处另写一套 YAML 序列化，也不要直接 `os.WriteFile` 覆盖配置文件。
+- `api_key` 明文只允许存在于 `note.yaml`：`GET/PUT /api/ai-config` 只回 `api_key_masked` + `api_key_set`，`/api/info`、网页与日志一律不得出现明文。`PUT /api/ai-config` 的 `api_key` 语义是「省略 = 不改动、空串 = 清除」，不是「空 = 清除」。
+- `note config` 与 `PUT /api/ai-config` 必须共用 `config.ValidateBaseURL` / `ValidateAPIKey` / `ValidatePrompt`（以及 `config.Normalize`），禁止在 web 层另写一套规则；`config.ValueError` 表示用法错误（命令行退出 2 / 网页 400），`config.ErrUnknownKey` 表示配置文件里已有未知键（网页 409，让用户先手改）。
 - CLI「打开笔记」只有一个含义：`note show <id>`、`note show`（无 id 进选择器）与 `note list` 的 `Enter` 预览共走 `cmd/note` 的 `openNote`——渲染到 stdout + 把 `ShowResult.Source`（库里的原始 Markdown，不是渲染结果）复制到剪贴板。复制只在 stdout 是终端时发生（管道/脚本不该被偷改剪贴板），提示写 stderr，失败不改变退出码；加密笔记没有可复制的原文，仍是退出码 4。网页详情页的「复制原文」按钮是同一语义（加密未解锁时不渲染）。
 - `note list` 的筛选：标题 + 分类用 fuzzy（bubbles `DefaultFilter`），正文用子串（`internal/cli/list.go#noteFilter`）——fuzzy 套在长正文上等于不筛。正文来自 `store.ListNotesAll` 的 `NoteListItem.FullContent`（`json:"-"`），网页列表走的 `ListNotes` 不得带回全文。
 

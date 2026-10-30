@@ -8,6 +8,15 @@
 
 ### Added
 
+- `note config` 与信息页「AI 配置」：OpenAI 兼容的三项配置终于能看能改（实现过程与关键逻辑）：
+  - **配置结构**：`note.yaml` 新增 `ai` 段三项——`ai.base_url`（http(s) 绝对地址，≤500 字节，不带查询串/锚点）、`ai.api_key`（≤512 字节，不含空白与控制字符）、`ai.prompt`（≤2000 码点，可多行）。空串一律表示「未设置」。启动加载时就会校验（坏地址当场报错，而不是等真去调接口才发现），校验函数 `ValidateBaseURL` / `ValidateAPIKey` / `ValidatePrompt` 与 `Normalize` 由命令行、网页、启动三处共用，不存在「命令行写得进去、网页却报错」的分叉。
+  - **唯一写入口**：`internal/config/ai.go` 的 `SetValues(path, []KeyValue)`（`SetValue` 是它的单元素包装）：值归一化 → 逐项校验 → 用 `yaml.Node` 读现有文档、只改目标节点（**保留其它键与用户注释**）→ 编码 → **再按严格规则 `decode` 一遍**确认服务仍能加载 → 同目录临时文件 + rename 原子替换（文件 `0600`、目录 `0700`）。全部通过才落盘，中途失败文件一字不动；多行提示词写成 `prompt: |` 字面量块，手改 YAML 时也读得懂。
+  - **两类拒绝分得清**：`config.ValueError`（键未知或值非法）在命令行是「一行提示 + 退出 2」、网页是 400 字段级错误；`config.ErrUnknownKey`（配置文件里已经有严格解析不认识的键，写回会把它们带出去）网页返回 409 并指向 `note.yaml`，让用户先手改。
+  - **命令行**：`internal/cli/parse.go` 新增 `CommandConfig`（`list` / `set <键>=<值>`，子命令里的 `-c` 优先于全局 `-c`；未知键、缺等号、值没加引号都在解析层拦下并退出 2），`internal/cli/config.go` 只做渲染（密钥掩码、提示词折成单行截到 60 列、列对齐），`cmd/note/config.go` 负责选路径与写盘。`note config list` 在文件不存在时如实说「还没创建」，**不**顺手建文件。
+  - **网页**：`GET /api/ai-config` 每次从磁盘现读（手改 YAML 后刷新即生效），只回 `{base_url, prompt, api_key_set, api_key_masked, path}`——明文密钥不进响应、不进网页、不进日志；`PUT /api/ai-config` 需 CSRF，三项一次原子写入，`api_key` 用指针区分「省略 = 不改动」与「空串 = 清除」。信息页新增第五张卡：地址 + 密钥 + 提示词三个输入框、字数提示与配置文件路径；密钥框留空表示沿用已有密钥，要清除必须显式点「清除密钥」再保存，保存成功后清空密钥输入框。卡片单独加载——配置文件坏了也只影响这张卡，页其余部分照常可用。
+  - **测试**：`internal/config/ai_test.go`（从零建文件、保留其它键与注释、未知键/非法值拒绝且不建文件、已有未知键时拒绝写入、空串清空、多行提示词逐字往返、`0600` 与不留临时文件、`SetValues` 三项一次写入且部分失败不留痕、`ReadAI` 缺文件不算错、启动校验坏地址、`MaskSecret` 四档）、`internal/cli/config_test.go` 与 `parse_test.go`/`usage_test.go` 的新用例、`internal/web/handlers_ai_test.go`（首读不建文件、响应 `no-store`、GET/PUT 都不含明文密钥、省略与清空密钥、四项字段级 400、未知键 409、无 CSRF 403）、`web/src/lib/ai-config.test.ts` 与 `web/src/views/InfoView.test.ts`（掩码展示、留空不带 `api_key`、清除发空串、字段级标红、加载失败只坏一张卡）。
+  - **验证**：`go test ./...` 299 项、`npm --prefix web test` 159 项、`svelte-check` 0 错 0 警；真实二进制冒烟：缺文件时 `list` 不建文件、三次 `set` 后 `list` 掩码正确、未知键退出 2、非法地址退出 2 且文件不变、`GET/PUT /api/ai-config` 的响应与 `note.yaml` 都不漏明文密钥、多行提示词写成字面量块并按字节往返一致。
+
 - `just install-win`：一条命令把构建产物装进系统（实现过程与关键逻辑）：
   - **前置**：食谱依赖 `just build`（`npm ci` → 前端构建 → Go 编译），用 `[windows]` 属性限定平台，非 Windows 下 just 直接跳过。
   - **脚本**：新增 `scripts/install-win.ps1`（UTF-8 BOM，与 `scripts/dev.ps1` 一致，否则 PowerShell 5.1 会按 cp936 读坏中文），顺序固定：确认构建产物 → `note web status` 探测后台实例（0 运行中 / 1 进程在但不响应 / 3 未运行）→ 运行则 `note web stop` 并轮询到状态变 3 才算退干净 → 删旧版本 → 拷新版本 → 就地 `--help` 校验 → 写用户 PATH。

@@ -33,6 +33,9 @@ func NewWithControl(cfg config.Config, st *store.Store, dist fs.FS, ctl Control)
 	// 新建笔记的 markdown 骨架：文件在 note.yaml 同目录，GET 只读、PUT 需 CSRF。
 	mux.HandleFunc("GET /api/template", app.handleGetTemplate)
 	mux.HandleFunc("PUT /api/template", app.handlePutTemplate)
+	// OpenAI 兼容接口的三项配置：GET 只回密钥掩码，PUT 原子写入 note.yaml。
+	mux.HandleFunc("GET /api/ai-config", app.handleGetAIConfig)
+	mux.HandleFunc("PUT /api/ai-config", app.handlePutAIConfig)
 	mux.HandleFunc("GET /api/notes", app.handleListNotes)
 	mux.HandleFunc("POST /api/notes", app.handleCreateNote)
 	mux.HandleFunc("GET /api/notes/encrypted", app.handleListEncryptedCiphers)

@@ -372,3 +372,92 @@ func TestParseAddAcceptsConfigFlags(t *testing.T) {
 		t.Fatal("note add 只接受 -c/--config/--db，--addr 应被拒绝")
 	}
 }
+
+func TestParseConfigList(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		path string
+	}{
+		{"plain", []string{"config", "list"}, ""},
+		{"with config flag", []string{"config", "list", "-c", "x.yaml"}, "x.yaml"},
+		{"with --config flag", []string{"config", "list", "--config", "x.yaml"}, "x.yaml"},
+	}
+	for _, tc := range cases {
+		cmd, opts, err := Parse(tc.args)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if cmd != CommandConfig {
+			t.Fatalf("%s: cmd = %v, want CommandConfig", tc.name, cmd)
+		}
+		if !opts.Config.List || opts.Config.Key != "" {
+			t.Fatalf("%s: 应当解析成 list，得到 %+v", tc.name, opts.Config)
+		}
+		if opts.Config.ConfigPath != tc.path {
+			t.Fatalf("%s: config path = %q, want %q", tc.name, opts.Config.ConfigPath, tc.path)
+		}
+	}
+}
+
+func TestParseConfigSet(t *testing.T) {
+	cmd, opts, err := Parse([]string{"config", "set", "ai.api_key=sk-abc=def"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cmd != CommandConfig {
+		t.Fatalf("cmd = %v, want CommandConfig", cmd)
+	}
+	if opts.Config.List {
+		t.Fatal("set 不该被解析成 list")
+	}
+	// 只按第一个 = 拆：密钥里带 = 时不该被截断
+	if opts.Config.Key != "ai.api_key" || opts.Config.Value != "sk-abc=def" {
+		t.Fatalf("key/value = %q/%q", opts.Config.Key, opts.Config.Value)
+	}
+
+	// 空值表示清空
+	_, opts, err = Parse([]string{"config", "set", "ai.base_url="})
+	if err != nil {
+		t.Fatalf("parse empty value: %v", err)
+	}
+	if opts.Config.Value != "" {
+		t.Fatalf("空值应当保留为空串，得到 %q", opts.Config.Value)
+	}
+}
+
+func TestParseConfigErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"没有子命令", []string{"config"}, "需要一个子命令"},
+		{"未知子命令", []string{"config", "show"}, "无法识别的 config 子命令 show"},
+		{"list 多给参数", []string{"config", "list", "extra"}, "不接受额外参数"},
+		{"set 缺键值", []string{"config", "set"}, "需要一个 <键>=<值>"},
+		{"set 少等号", []string{"config", "set", "ai.api_key"}, "<键>=<值>"},
+		{"set 未知键", []string{"config", "set", "ai.model=gpt"}, "未知配置项"},
+		{"set 值没加引号", []string{"config", "set", "ai.prompt=hello", "world"}, "引号"},
+		{"未知开关", []string{"config", "list", "--all"}, "无法识别的参数"},
+	}
+	for _, tc := range cases {
+		_, _, err := Parse(tc.args)
+		if err == nil {
+			t.Fatalf("%s：应当报错", tc.name)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s：错误信息应当含 %q，得到 %v", tc.name, tc.want, err)
+		}
+	}
+}
+
+func TestParseConfigHelp(t *testing.T) {
+	cmd, opts, err := Parse([]string{"config", "--help"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cmd != CommandHelp || !reflect.DeepEqual(opts.Args, []string{"config"}) {
+		t.Fatalf("cmd=%v opts=%+v", cmd, opts)
+	}
+}

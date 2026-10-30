@@ -104,3 +104,22 @@ func TestUsageForShowDescribesStylesAndEncryptedExit(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageListsConfigCommand(t *testing.T) {
+	if !strings.Contains(Usage(), "note config") {
+		t.Fatalf("总帮助应把 note config 摆出来：\n%s", Usage())
+	}
+}
+
+func TestUsageForConfigDescribesKeysAndMasking(t *testing.T) {
+	text := UsageFor("config")
+	for _, want := range []string{
+		"note config list", "note config set",
+		"ai.base_url", "ai.api_key", "ai.prompt",
+		"掩码", "0600", "原子", "<键>=<值>",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("configUsage 缺少 %q:\n%s", want, text)
+		}
+	}
+}

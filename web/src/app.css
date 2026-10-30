@@ -1087,7 +1087,9 @@ input {
 }
 
 .stack-form input[type="password"],
-.stack-form input[type="text"] {
+.stack-form input[type="text"],
+.stack-form input[type="url"],
+.stack-form textarea {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -1097,9 +1099,17 @@ input {
   font: inherit;
 }
 
-.stack-form input:focus-visible {
+.stack-form input:focus-visible,
+.stack-form textarea:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* 提示词可能是多行 Markdown，等宽字体更容易看出缩进 */
+.stack-form textarea {
+  resize: vertical;
+  font-family: var(--font-mono);
+  line-height: 1.7;
 }
 
 .ack {
@@ -1455,6 +1465,7 @@ input {
   .search-input,
   .unlock-form input,
   .stack-form input,
+  .stack-form textarea,
   .cat-rename input,
   .cat-create input,
   .name-input {

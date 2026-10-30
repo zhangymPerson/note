@@ -1,5 +1,14 @@
 <script lang="ts">
   import { ApiRequestError } from '../lib/api'
+  import {
+    AI_PROMPT_MAX_RUNES,
+    countRunes,
+    getAIConfig,
+    keyHint,
+    saveAIConfig,
+    type AIConfig,
+    type AIConfigPayload,
+  } from '../lib/ai-config'
   import { KDF_PARAMS, decryptNoteContent, deriveKey, encryptNoteContent } from '../lib/crypto'
   import { buildRows, getInfo, type ServerInfo } from '../lib/info'
   import {
@@ -63,6 +72,67 @@
       nameBusy = false
     }
   }
+
+  // AI 配置（OpenAI 兼容接口三项）：单独加载，配置文件坏了也只影响这张卡片
+  let aiPath = $state('')
+  let aiLoaded = $state(false)
+  let aiLoadError = $state('')
+  let aiBaseURL = $state('')
+  let aiPrompt = $state('')
+  let aiKey = $state('')
+  let aiKeySet = $state(false)
+  let aiKeyMasked = $state('')
+  let aiKeyClear = $state(false)
+  let aiBusy = $state(false)
+  let aiFields = $state<Record<string, string>>({})
+  let aiError = $state('')
+  const aiPromptRunes = $derived(countRunes(aiPrompt))
+  const aiKeyHint = $derived(keyHint({ api_key_set: aiKeySet, api_key_masked: aiKeyMasked }, aiKeyClear))
+
+  // 服务端只回密钥掩码，所以每次保存成功后都用响应重置输入框（清空 = 不改动）
+  function applyAIConfig(config: AIConfig): void {
+    aiPath = config.path
+    aiBaseURL = config.base_url
+    aiPrompt = config.prompt
+    aiKeySet = config.api_key_set
+    aiKeyMasked = config.api_key_masked
+    aiKey = ''
+    aiKeyClear = false
+    aiLoaded = true
+  }
+
+  async function submitAI(event: SubmitEvent): Promise<void> {
+    event.preventDefault()
+    aiFields = {}
+    aiError = ''
+    aiBusy = true
+    try {
+      const payload: AIConfigPayload = { base_url: aiBaseURL.trim(), prompt: aiPrompt }
+      // 输入框留空 ≠ 清空：只有点过「清除密钥」才发空串
+      if (aiKey !== '') payload.api_key = aiKey
+      else if (aiKeyClear) payload.api_key = ''
+      applyAIConfig(await saveAIConfig(payload))
+      toast('AI 配置已保存')
+    } catch (cause) {
+      if (cause instanceof ApiRequestError && cause.fields !== undefined) {
+        aiFields = cause.fields
+      } else {
+        aiError = message(cause)
+      }
+    } finally {
+      aiBusy = false
+    }
+  }
+
+  $effect(() => {
+    (async () => {
+      try {
+        applyAIConfig(await getAIConfig())
+      } catch (cause) {
+        aiLoadError = message(cause)
+      }
+    })()
+  })
 
   // 主密码
   let configured = $state(false)
@@ -270,6 +340,79 @@
         </div>
         <button class="button" type="submit" disabled={nameBusy || name.trim() === ''}>保存用户名</button>
       </form>
+    </div>
+
+    <div class="card info-card">
+      <h2>AI 配置</h2>
+      <p class="muted">
+        供 OpenAI 兼容接口使用；三项都存在 note.yaml 里，与 <code>note config list</code> 读的是同一份。
+      </p>
+      {#if aiLoadError !== ''}
+        <p class="form-error" role="alert">{aiLoadError}</p>
+      {:else if !aiLoaded}
+        <p class="muted">载入中…</p>
+      {:else}
+        <form class="stack-form" onsubmit={submitAI}>
+          <div>
+            <label for="ai-base-url">接口地址</label>
+            <input
+              id="ai-base-url"
+              type="url"
+              inputmode="url"
+              autocomplete="off"
+              placeholder="https://api.openai.com/v1"
+              bind:value={aiBaseURL}
+            />
+            <p class="muted">必须是 http(s) 绝对地址，路径写到接口版本为止（如 /v1）。</p>
+            {#if aiFields.base_url}
+              <p class="field-error" role="alert">{aiFields.base_url}</p>
+            {/if}
+          </div>
+          <div>
+            <label for="ai-api-key">API 密钥</label>
+            <input
+              id="ai-api-key"
+              type="password"
+              autocomplete="off"
+              placeholder={aiKeySet ? aiKeyMasked : 'sk-…'}
+              bind:value={aiKey}
+              oninput={() => (aiKeyClear = false)}
+            />
+            <p class="muted">{aiKeyHint}保存后不会让明文密钥留在页面上。</p>
+            {#if aiFields.api_key}
+              <p class="field-error" role="alert">{aiFields.api_key}</p>
+            {/if}
+          </div>
+          <div>
+            <label for="ai-prompt">提示词</label>
+            <textarea id="ai-prompt" rows="4" bind:value={aiPrompt}></textarea>
+            <p class="muted">可留空，最多 {AI_PROMPT_MAX_RUNES} 字。当前 {aiPromptRunes} 字。</p>
+            {#if aiFields.prompt}
+              <p class="field-error" role="alert">{aiFields.prompt}</p>
+            {/if}
+          </div>
+          <div class="actions">
+            <button class="button" type="submit" disabled={aiBusy}>
+              {aiBusy ? '保存中…' : '保存 AI 配置'}
+            </button>
+            {#if aiKeySet && !aiKeyClear}
+              <button
+                class="button button-quiet"
+                type="button"
+                disabled={aiBusy}
+                onclick={() => {
+                  aiKey = ''
+                  aiKeyClear = true
+                }}>清除密钥</button
+              >
+            {/if}
+          </div>
+          <p class="muted">配置文件：<code>{aiPath}</code></p>
+          {#if aiError !== ''}
+            <p class="form-error" role="alert">{aiError}</p>
+          {/if}
+        </form>
+      {/if}
     </div>
 
     <div class="card info-card">

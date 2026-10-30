@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"note/internal/config"
 )
 
 // Command 是一次命令行解析得到的子命令。
@@ -26,6 +28,8 @@ const (
 	CommandShow
 	// CommandStatus 输出使用统计（事件构成、累计事件、活跃天数）。
 	CommandStatus
+	// CommandConfig 读写配置文件里的 AI 三项（list / set）。
+	CommandConfig
 	// CommandHelp 显示帮助。
 	CommandHelp
 )
@@ -64,6 +68,8 @@ type Options struct {
 	List ListOptions
 	// Show 仅对 CommandShow 有意义。
 	Show ShowOptions
+	// Config 仅对 CommandConfig 有意义。
+	Config ConfigOptions
 }
 
 // ListOptions 是 note list 自己的开关。
@@ -78,7 +84,7 @@ type ListOptions struct {
 
 // ShowOptions 是 note show 自己的开关。
 type ShowOptions struct {
-	// ID 是要渲染的笔记 id，必填。
+	// ID 是要渲染的笔记 id；空串表示先进交互选择器。
 	ID string
 	// Style 是 glamour 风格名；空串表示 auto。
 	Style string
@@ -86,6 +92,17 @@ type ShowOptions struct {
 	Width int
 	// Raw 表示只输出原始 Markdown，不渲染。
 	Raw bool
+}
+
+// ConfigOptions 是 note config 自己的参数。
+type ConfigOptions struct {
+	// List 为 true 表示 note config list；否则是 note config set。
+	List bool
+	// Key/Value 是 set 的键与值（已按第一个 = 拆开，值里可以再含 =）。
+	Key   string
+	Value string
+	// ConfigPath 是子命令里出现的 -c/--config，比全局 -c 优先。
+	ConfigPath string
 }
 
 // showStyles 是 note show 允许的风格名（glamour 的内置风格）。
@@ -120,6 +137,7 @@ var valueFlags = map[string]bool{
 //	note add                → CommandAdd（交互向导）
 //	note -c <路径> web …    → CommandWeb（全局 -c 记入 Options.ConfigPath）
 //	note web -p 9000 …      → CommandWeb（参数留在 Options.Args）
+//	note config set a.b=c   → CommandConfig（key/value 已拆好）
 //	note info / note status / note help / note -h … → 其余命令
 func Parse(args []string) (Command, Options, error) {
 	var opts Options
@@ -185,6 +203,18 @@ func Parse(args []string) (Command, Options, error) {
 			opts.Show = showOpts
 			opts.Args = configArgs
 			return CommandShow, opts, nil
+		case arg == "config":
+			rest := args[i+1:]
+			if containsHelpFlag(rest) {
+				opts.Args = []string{"config"}
+				return CommandHelp, opts, nil
+			}
+			configOpts, err := parseConfigArgs(rest)
+			if err != nil {
+				return CommandMenu, Options{}, err
+			}
+			opts.Config = configOpts
+			return CommandConfig, opts, nil
 		case arg == "web" || arg == "info":
 			rest := args[i+1:]
 			if arg == "web" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
@@ -318,6 +348,63 @@ func parseShowArgs(args []string) (ShowOptions, []string, error) {
 	// 没给 id 不是错误：交互终端里进选择器（gum filter 那套）。
 	// 是不是终端由 cmd/note 判定并给出可读错误，解析层不探测。
 	return opts, configArgs, nil
+}
+
+// parseConfigArgs 拆 note config 的参数：list 只带配置参数，set 另需 key=value。
+// 键必须在 config.KnownKeys() 白名单里，值合不合法由 config.SetValue 判定
+// （解析层没必要重复一套 URL/长度规则）。
+func parseConfigArgs(args []string) (ConfigOptions, error) {
+	var opts ConfigOptions
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-c" || arg == "--config":
+			if i+1 >= len(args) {
+				return ConfigOptions{}, fmt.Errorf("%s 需要一个值", arg)
+			}
+			opts.ConfigPath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "-"):
+			return ConfigOptions{}, fmt.Errorf("note config 无法识别的参数 %s（用 note config --help 查看用法）", arg)
+		default:
+			positional = append(positional, arg)
+		}
+	}
+
+	if len(positional) == 0 {
+		return ConfigOptions{}, fmt.Errorf("note config 需要一个子命令：note config list 或 note config set <键>=<值>")
+	}
+
+	switch positional[0] {
+	case "list":
+		if len(positional) > 1 {
+			return ConfigOptions{}, fmt.Errorf("note config list 不接受额外参数 %s", positional[1])
+		}
+		opts.List = true
+		return opts, nil
+	case "set":
+		if len(positional) < 2 {
+			return ConfigOptions{}, fmt.Errorf("note config set 需要一个 <键>=<值> 参数（可用键: %s）", strings.Join(config.KnownKeys(), ", "))
+		}
+		if len(positional) > 2 {
+			// 值里有空格时 shell 会拆成多个参数，这里直接点明要加引号
+			return ConfigOptions{}, fmt.Errorf("note config set 只接受一个 <键>=<值> 参数，值里有空格请用引号括起来")
+		}
+		key, value, ok := strings.Cut(positional[1], "=")
+		if !ok {
+			return ConfigOptions{}, fmt.Errorf("note config set 的参数要写成 <键>=<值>，得到 %q", positional[1])
+		}
+		key = strings.TrimSpace(key)
+		if !config.IsKnownKey(key) {
+			return ConfigOptions{}, fmt.Errorf("未知配置项 %q（可用: %s）", key, strings.Join(config.KnownKeys(), ", "))
+		}
+		opts.Key = key
+		opts.Value = value
+		return opts, nil
+	default:
+		return ConfigOptions{}, fmt.Errorf("无法识别的 config 子命令 %s（可用: list, set）", positional[0])
+	}
 }
 
 // containsHelpFlag 判断参数列表里是否出现独立的 -h/--help。

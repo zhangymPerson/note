@@ -94,6 +94,8 @@ go run ./cmd/note web
 看笔记也可以不开浏览器：`./note list` 进一个可筛选的列表（输入即筛选标题、分类与**正文**，`Enter` 预览，`Esc` 退出），`./note show <id>` 直接渲染一条；`./note show` 不给 id 会先进选择器挑一条。打开笔记的同时会把原文（库里的 Markdown，不是渲染结果）复制到剪贴板，粘到编辑器里就能继续改；管道里自动降级成纯文本且不碰剪贴板，`./note list --plain | grep ...` 可以拼脚本。加密笔记只能在 Web 端解锁后查看。
 看使用统计也不用开浏览器：`./note status` 打印累计事件、活跃天数、事件构成与 Top 查询词——埋点在数据库读写层，网页与 CLI 的操作都计入同一本账簿。
 
+AI 配置（OpenAI 兼容的 `base_url` / `api_key` / `prompt`）也能在终端改：`./note config list` 查看（密钥只显示掩码），`./note config set ai.api_key=sk-…` 写入 `note.yaml`；网页信息页的「AI 配置」卡片改的是同一份文件。写入是原子的，值留空表示清空。
+
 ### 前端开发
 
 Go 需要已存在一次构建好的 `internal/web/dist` 才能编译。之后开两个终端：
@@ -158,6 +160,14 @@ npm --prefix web run check
 | `--addr`         | `127.0.0.1:8080`     | 监听地址                               |
 | `--db`           | `./data/notes.db`    | SQLite 文件路径                        |
 | `--allow-remote` | `false`              | 允许绑定非回环地址；启动时打印安全警告 |
+
+写在 `note.yaml` 里、只能通过 `note config` 或信息页「AI 配置」卡片修改的三项（都允许为空）：
+
+| 键            | 说明                                                       |
+| ------------- | ---------------------------------------------------------- |
+| `ai.base_url` | OpenAI 兼容接口地址，必须是 http(s) 绝对地址，如 `…/v1`    |
+| `ai.api_key`  | API 密钥；命令行与网页里都只显示掩码，明文只存在这个文件里 |
+| `ai.prompt`   | 自定义提示词，≤2000 字，可多行                             |
 
 ```bash
 go run ./cmd/note --addr 127.0.0.1:9000 --db ./data/notes.db

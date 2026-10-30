@@ -19,6 +19,7 @@ func Usage() string {
 	b.WriteString("  list     列出笔记并筛选（输入即筛选标题/分类/正文；Enter 预览；非终端时输出纯文本）\n")
 	b.WriteString("  show     渲染一条笔记并把原文复制到剪贴板（不给 id 时先选后看）\n")
 	b.WriteString("  status   输出使用统计（事件构成、累计事件、活跃天数、Top 查询词）\n")
+	b.WriteString("  config   读写配置文件里的 AI 三项（list 查看、set <键>=<值> 写入）\n")
 	b.WriteString("  help     显示帮助；help <命令> 显示该命令的参数\n\n")
 	b.WriteString("全局参数:\n")
 	b.WriteString("  -c, --config <路径>    配置文件路径\n")
@@ -36,7 +37,9 @@ func Usage() string {
 	b.WriteString("  note list                   筛选并预览笔记\n")
 	b.WriteString("  note show                   交互选一条，渲染并复制原文\n")
 	b.WriteString("  note show 9f2c1a3b-…       按 id 渲染并复制原文\n")
-	b.WriteString("  note status                 查看使用统计（与网页概览页同源）\n\n")
+	b.WriteString("  note status                 查看使用统计（与网页概览页同源）\n")
+	b.WriteString("  note config list            查看 AI 三项（密钥只显示掩码）\n")
+	b.WriteString("  note config set ai.api_key=sk-…    写入密钥（值留空就是清空）\n\n")
 	b.WriteString("配置文件默认位置（与其他常见开源项目一致，跟随用户配置目录）:\n")
 	b.WriteString("  Windows  %AppData%\\note\\note.yaml\n")
 	b.WriteString("  macOS    ~/Library/Application Support/note/note.yaml\n")
@@ -54,7 +57,7 @@ func Usage() string {
 	return b.String()
 }
 
-// UsageFor 返回指定主题（web/info/add/list/show/status）的帮助文本；未知主题回退为总帮助。
+// UsageFor 返回指定主题（web/info/add/list/show/status/config）的帮助文本；未知主题回退为总帮助。
 func UsageFor(topic string) string {
 	switch strings.TrimSpace(topic) {
 	case "web":
@@ -69,6 +72,8 @@ func UsageFor(topic string) string {
 		return showUsage()
 	case "status":
 		return statusUsage()
+	case "config":
+		return configUsage()
 	default:
 		return Usage()
 	}

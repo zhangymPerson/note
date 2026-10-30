@@ -31,7 +31,8 @@
 6. `{@html}` 只允许出现在 `components/Markdown.svelte`，其输入必须先经 `DOMPurify.sanitize`；标题、摘要、分类名、助记问题只通过文本插值渲染。
 7. 日志不包含正文、密文、密码、助记问题、完整查询串、Cookie 或请求体。
 8. 服务端不参与加解密：`cipher` 对服务端是不透明字节，因此不存在解密端点，也没有服务端解锁会话。
-9. 主密码可修改，但仍不可找回。「旧密码是否正确」只由浏览器试解已有密文的 GCM 认证标签判定，服务端永远不具备验证口令的能力；改密全程密码与派生密钥都不落盘、不进任何浏览器存储，`PUT /api/notes/{id}/cipher` 的密文请求体也不入日志（`accessLog` 从不记 body）。
+9. AI 配置里的 `api_key` 是唯一以明文存放在磁盘上的凭据：它只存在 `note.yaml`（文件 `0600`、目录 `0700`），任何 API 响应（含 `GET /api/ai-config` 与 `/api/info`）、网页与日志都只能看到掩码；`GET /api/ai-config` 与其它 API 一样 `Cache-Control: no-store`。
+10. 主密码可修改，但仍不可找回。「旧密码是否正确」只由浏览器试解已有密文的 GCM 认证标签判定，服务端永远不具备验证口令的能力；改密全程密码与派生密钥都不落盘、不进任何浏览器存储，`PUT /api/notes/{id}/cipher` 的密文请求体也不入日志（`accessLog` 从不记 body）。
 
 ### 1.3 非目标
 
@@ -97,6 +98,7 @@ note/
 ├── cmd/note/main.go             # 子命令分发（note 菜单 / web / info / status）、runWeb、runInfo
 ├── cmd/note/web_service.go      # web start / stop / status 三命令实现
 ├── cmd/note/status.go           # note status：只读采集 activities 统计并交给 internal/cli 渲染
+├── cmd/note/config.go           # note config：list 读三项 / set 原子写入 note.yaml
 ├── config/
 │   └── note.yaml                 # 示例配置（原始默认值；运行时读用户配置目录，不自动加载）
 ├── sql/
@@ -118,6 +120,7 @@ note/
 │   │   ├── info.go               # note info 渲染（uniseg CJK 对齐、缺库占位、日志行）
 │   │   ├── status.go             # note web status 三态渲染与 uptime/文件大小文案
 │   │   ├── stats.go              # note status 使用统计渲染：事件分组合并、uniseg 对齐、缺库占位
+│   │   ├── config.go             # note config list/set 渲染（密钥掩码、单行折叠、CJK 列对齐）
 │   │   └── usage.go              # 总帮助与子命令帮助（动态带出本机默认路径）
 │   ├── clipboard/                # 把文本写进剪贴板：原生实现（clip.exe/pbcopy/xclip）+ OSC52 兜底
 │   │   └── clipboard.go          # Copy / writeOSC52 / ExplainFailure（失败只返回错误，从不 panic）
@@ -133,6 +136,7 @@ note/
 │   │   └── pid_unix.go/pid_windows.go # 存活判定（Windows 用等待句柄）
 │   ├── config/
 │   │   ├── config.go             # 加载、合并、校验 note.yaml（-c/-p/--remote 等参数）
+│   │   ├── ai.go                 # AI 三项：ReadAI、SetValue/SetValues（Node 级改写 + 原子写 + 复核）、校验与掩码
 │   │   ├── paths.go              # 默认配置/数据目录解析（用户目录，XDG 惯例）
 │   │   └── urls.go               # 启动访问地址推导
 │   ├── store/
@@ -154,6 +158,7 @@ note/
 │       ├── handlers_info.go      # GET /api/info
 │       ├── handlers_settings.go
 │       ├── handlers_template.go  # GET/PUT /api/template（新建笔记骨架）
+│       ├── handlers_ai.go        # GET/PUT /api/ai-config（密钥只回掩码，写入原子）
 │       ├── handlers_stats.go
 │       ├── handlers_csrf.go
 │       ├── errors.go
@@ -171,6 +176,7 @@ note/
 │   │   │   ├── session-key.ts    # 页面内存密钥、unlockKey/lockSession
 │   │   │   ├── draft.ts          # 编辑器内存草稿
 │   │   │   ├── template.ts       # 新建笔记骨架客户端（/api/template）
+│   │   │   ├── ai-config.ts      # AI 三项客户端：读取掩码、保存（省略/清空密钥）、字数与提示文案
 │   │   │   ├── markdown.ts       # marked + DOMPurify 净化
 │   │   │   ├── stats.ts / theme.ts / toast.ts / settings.ts
 │   │   ├── components/           # Layout、Markdown、CategoryTree、ActivityHeatmap、ThemeSwitch
@@ -322,6 +328,12 @@ server:
 
 database:
   path: ./data/notes.db
+
+ai:
+  base_url: https://api.openai.com/v1
+  api_key: sk-...
+  prompt: |
+    把下面的内容整理成 Markdown 笔记，保留标题层级。
 ```
 
 | 参数                       | YAML 键               | 默认值                          | 说明                                             |
@@ -345,6 +357,17 @@ database:
 - 新建笔记骨架位置（v1.7）：纯函数 `template.Path(configPath) = dir(configPath)/note-example.md`，与 `note.yaml` 同目录，不读环境变量、不引入新配置项；`note web` 启动时（前台与后台子进程共用 `serve`）只在文件缺失时写入 `go:embed` 的内置默认骨架，**已存在的文件绝不覆盖**，配置目录不可写只记 `slog.Warn`、不影响启动；写入走临时文件 + rename，权限 `0644`（内容不含正文与密码，配置目录本身是 `0700`）。`GET/PUT /api/template` 返回的 `path` 与 `/api/info` 的 `db_path` 属同一尺度的路径信息公开。
 - 数据目录不存在时自动创建，权限 `0700`。
 - 数据库文件创建后，在 POSIX 上尽力设置为 `0600`。
+
+#### AI 三项（v1.13）
+
+`ai.base_url` / `ai.api_key` / `ai.prompt` 存在同一个 `note.yaml` 里，不引入第二份配置文件、不读环境变量。本轮只做存储与读写，**不发起任何 AI 调用**。
+
+- **单一写入口**：`internal/config/ai.go` 的 `SetValues(path, []KeyValue)` 是唯一写路径（`SetValue` 是它的单元素包装）。流程是：值归一化（地址与密钥 trim 首尾空白，提示词原样）→ 逐项校验（`ValidateBaseURL` / `ValidateAPIKey` / `ValidatePrompt`）→ 用 `yaml.Node` 读现有文档、只改目标节点（**保留其它键与注释**）→ 编码 → **再 `decode` 一遍**确认服务仍能严格解析 → 同目录临时文件 + rename 原子替换（文件 `0600`、目录 `0700`）。全部校验通过才落盘，中途失败文件保持原样。
+- **两类拒绝**：`ValueError`（键未知或值非法）→ 命令行退出 2、网页 400 字段级提示；`ErrUnknownKey`（配置文件里已有严格解析不认识的键，写回会把它们带出去）→ 网页 409 `config_invalid`、命令行直接报错，提示用户先手改 YAML。
+- **读**：`ReadAI(path)` 只读文件本身（`found=false` 表示文件还没创建），供 `note config list` 与 `GET /api/ai-config` 使用；两者都不建文件。启动时 `Load` 会把三项读进 `Config.AI` 并用 `ValidateAI` 校验，坏地址在启动阶段就报错。
+- **密钥只出掩码**：`MaskSecret` 输出「前 3 + `…` + 后 4」（不足 12 字符给 8 个 `*`）。`GET/PUT /api/ai-config` 的响应体只有 `{base_url, prompt, api_key_set, api_key_masked, path}`，明文密钥不进响应、不进网页、不进日志（`slog` 只记键名与失败原因）。
+- **网页的「留空≠清空」**：`PUT` 的 `api_key` 是 `*string`——省略表示沿用已有密钥，空串表示清除，非空表示替换。这样页面每次保存都不需要把密钥回填到输入框里。
+- 校验口径（与启动加载、命令行共用）：`base_url` 必须 http(s) 绝对地址、带 host、不带查询串或锚点、≤500 字节；`api_key` ≤512 字节且不含空白/控制字符；`prompt` ≤2000 码点（与正文上限一致，因为它最终会拼进正文一起用）。
 
 ### 4.3 路由与中间件
 
@@ -398,28 +421,29 @@ GET    /*                     # 非 API GET → index.html
 
 ### 4.4 处理器职责与校验
 
-| 处理器                                         | 职责                                                                             | 关键校验                                                                                                                                       |
-| ---------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/csrf`                                | 签发/复用 CSRF Token                                                             | 无                                                                                                                                             |
-| `GET /api/notes`                               | 列表、搜索与分类筛选；`deleted=1` 改为回收站视图                                 | `q` ≤ 200 字符；`page` ≥ 1；`category` 可选；`deleted` 仅接受 `1`；页大小固定 20                                                               |
-| `POST /api/notes`                              | 创建明文笔记或写入浏览器密文                                                     | 标题、正文或密文二选一、`kdf_params`、`category_id`、可选客户端 `id`                                                                           |
-| `GET /api/notes/{id}`                          | 详情；加密笔记返回元数据 + base64 密文，永不含 `content`                         | UUID 合法；否则 404                                                                                                                            |
-| `PUT /api/notes/{id}`                          | 更新标题/正文或提交新密文                                                        | 同 POST；加密笔记不允许改回明文                                                                                                                |
-| `PUT /api/notes/{id}/cipher`                   | 改密迁移：只替换单条笔记的密文与派生参数                                         | 只接受 `cipher_b64` + `kdf_params`，其余字段不接受；长度与 base64 语义同 POST（共用 `decodeCipher`）；明文笔记 409 `not_encrypted`，不存在 404 |
-| `GET /api/notes/encrypted`                     | 全部加密笔记的 `{id, cipher_b64, kdf_params}` 清单，按 `created_at, id` 稳定排序 | 无；不含标题与正文，空清单序列化为 `[]`                                                                                                        |
-| `DELETE /api/notes/{id}`                       | 默认软删除（记 `note_delete`）；`?purge=1` 彻底删除（记 `note_purge`）           | UUID 合法；`purge` 仅接受 `1`；笔记不在回收站时 purge 返回 409 `not_in_trash`                                                                  |
-| `POST /api/notes/{id}/restore`                 | 从回收站恢复，返回完整笔记（含分类）                                             | UUID 合法；不在回收站返回 409 `not_in_trash`，不存在 404                                                                                       |
-| `GET /api/master-password`                     | 返回 `{configured, salt_b64, question}`                                          | 无；盐是公开 KDF 参数                                                                                                                          |
-| `POST /api/master-password`                    | 首次设置盐与助记问题（引导页步骤 2）                                             | `salt_b64` 解码后恰好 16 字节；`question` 1–100 字符；已存在返回 409                                                                           |
-| `PUT /api/master-password/question`            | 只改助记问题，不换盐                                                             | `question` 去空白后 1–100 码点；未配置主密码返回 409 `master_password_missing`                                                                 |
-| `GET /api/info`                                | 运行信息与构建版本（见 8.6）                                                     | 无；只读标准库运行时与配置，失败时仅 `PRAGMA user_version` 读错会 500                                                                          |
-| `GET /api/categories`                          | 分类列表 + 每类笔记数                                                            | 无                                                                                                                                             |
-| `POST /api/categories`                         | 新增分类                                                                         | 名称 1–30 字符、忽略大小写唯一                                                                                                                 |
-| `PUT /api/categories/{id}`                     | 改名                                                                             | `id=1` 返回 409；重名 400 字段错误                                                                                                             |
-| `DELETE /api/categories/{id}`                  | 删除空分类                                                                       | `id=1` 返回 409；仍有笔记返回 409 + `fields.note_count`                                                                                        |
-| `GET /api/stats`                               | 概览页统计与热力图数据                                                           | 无                                                                                                                                             |
-| `GET /api/settings` / `PUT /api/settings/name` | 应用命名                                                                         | 名称长度与字符合法                                                                                                                             |
-| `GET /api/template` / `PUT /api/template`      | 新建笔记骨架：读写 `<配置目录>/note-example.md`（见 4.2）                        | `content` ≤ 2000 码点；写请求需 CSRF；文件不可读时 GET 回退内置默认并标 `source=default`                                                       |
+| 处理器                                         | 职责                                                                             | 关键校验                                                                                                                                                   |
+| ---------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/csrf`                                | 签发/复用 CSRF Token                                                             | 无                                                                                                                                                         |
+| `GET /api/notes`                               | 列表、搜索与分类筛选；`deleted=1` 改为回收站视图                                 | `q` ≤ 200 字符；`page` ≥ 1；`category` 可选；`deleted` 仅接受 `1`；页大小固定 20                                                                           |
+| `POST /api/notes`                              | 创建明文笔记或写入浏览器密文                                                     | 标题、正文或密文二选一、`kdf_params`、`category_id`、可选客户端 `id`                                                                                       |
+| `GET /api/notes/{id}`                          | 详情；加密笔记返回元数据 + base64 密文，永不含 `content`                         | UUID 合法；否则 404                                                                                                                                        |
+| `PUT /api/notes/{id}`                          | 更新标题/正文或提交新密文                                                        | 同 POST；加密笔记不允许改回明文                                                                                                                            |
+| `PUT /api/notes/{id}/cipher`                   | 改密迁移：只替换单条笔记的密文与派生参数                                         | 只接受 `cipher_b64` + `kdf_params`，其余字段不接受；长度与 base64 语义同 POST（共用 `decodeCipher`）；明文笔记 409 `not_encrypted`，不存在 404             |
+| `GET /api/notes/encrypted`                     | 全部加密笔记的 `{id, cipher_b64, kdf_params}` 清单，按 `created_at, id` 稳定排序 | 无；不含标题与正文，空清单序列化为 `[]`                                                                                                                    |
+| `DELETE /api/notes/{id}`                       | 默认软删除（记 `note_delete`）；`?purge=1` 彻底删除（记 `note_purge`）           | UUID 合法；`purge` 仅接受 `1`；笔记不在回收站时 purge 返回 409 `not_in_trash`                                                                              |
+| `POST /api/notes/{id}/restore`                 | 从回收站恢复，返回完整笔记（含分类）                                             | UUID 合法；不在回收站返回 409 `not_in_trash`，不存在 404                                                                                                   |
+| `GET /api/master-password`                     | 返回 `{configured, salt_b64, question}`                                          | 无；盐是公开 KDF 参数                                                                                                                                      |
+| `POST /api/master-password`                    | 首次设置盐与助记问题（引导页步骤 2）                                             | `salt_b64` 解码后恰好 16 字节；`question` 1–100 字符；已存在返回 409                                                                                       |
+| `PUT /api/master-password/question`            | 只改助记问题，不换盐                                                             | `question` 去空白后 1–100 码点；未配置主密码返回 409 `master_password_missing`                                                                             |
+| `GET /api/info`                                | 运行信息与构建版本（见 8.6）                                                     | 无；只读标准库运行时与配置，失败时仅 `PRAGMA user_version` 读错会 500                                                                                      |
+| `GET /api/categories`                          | 分类列表 + 每类笔记数                                                            | 无                                                                                                                                                         |
+| `POST /api/categories`                         | 新增分类                                                                         | 名称 1–30 字符、忽略大小写唯一                                                                                                                             |
+| `PUT /api/categories/{id}`                     | 改名                                                                             | `id=1` 返回 409；重名 400 字段错误                                                                                                                         |
+| `DELETE /api/categories/{id}`                  | 删除空分类                                                                       | `id=1` 返回 409；仍有笔记返回 409 + `fields.note_count`                                                                                                    |
+| `GET /api/stats`                               | 概览页统计与热力图数据                                                           | 无                                                                                                                                                         |
+| `GET /api/settings` / `PUT /api/settings/name` | 应用命名                                                                         | 名称长度与字符合法                                                                                                                                         |
+| `GET /api/template` / `PUT /api/template`      | 新建笔记骨架：读写 `<配置目录>/note-example.md`（见 4.2）                        | `content` ≤ 2000 码点；写请求需 CSRF；文件不可读时 GET 回退内置默认并标 `source=default`                                                                   |
+| `GET /api/ai-config` / `PUT /api/ai-config`    | AI 三项配置：读 `note.yaml` 并回掩码 / 原子写入三项（见 4.2「AI 三项」）         | `base_url` http(s) 绝对地址、`api_key` 无空白且 ≤512 字节、`prompt` ≤2000 码点；省略 `api_key` 表示不改、空串表示清除；文件已有未知键 409 `config_invalid` |
 
 通用校验：
 
@@ -1126,7 +1150,7 @@ web/src/
 └── main.ts
 ```
 
-纯函数与管道（`crypto`、`markdown`、`draft`、`notes`、`stats`、`theme`、`toast`、`router`、`settings`、`reencrypt`、`info`、`onboarding`）都有同名 Vitest 用例；`session-key.ts` 的用例并在 `crypto.test.ts` 里（它断言的是密钥与口令派生的同一套语义）。改密迁移引擎之所以必须是纯函数 + 依赖注入，是因为它的五类落定（6.9）要在没有浏览器和没有服务端的情况下穷尽；视图组件基本不写单测、靠端到端验证覆盖，例外是 `views/NoteDetailView.test.ts`——「复制原文按钮在有明文时出现、加密未解锁时不出现」属于安全相关的可见性，值得锁在用例里。
+纯函数与管道（`crypto`、`markdown`、`draft`、`notes`、`stats`、`theme`、`toast`、`router`、`settings`、`reencrypt`、`info`、`onboarding`、`ai-config`）都有同名 Vitest 用例；`session-key.ts` 的用例并在 `crypto.test.ts` 里（它断言的是密钥与口令派生的同一套语义）。改密迁移引擎之所以必须是纯函数 + 依赖注入，是因为它的五类落定（6.9）要在没有浏览器和没有服务端的情况下穷尽；视图组件基本不写单测、靠端到端验证覆盖，例外是 `views/NoteDetailView.test.ts`——「复制原文按钮在有明文时出现、加密未解锁时不出现」属于安全相关的可见性，值得锁在用例里。
 
 ### 9.3 路由
 
@@ -1181,18 +1205,18 @@ sendJSON(method, path, payload)
 
 ### 9.6 页面行为
 
-| 视图       | 行为                                                                                                                                                                                                                                                                                           |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 首页       | 拉取统计渲染热力图与「事件构成」（查询、查看与增删改都计入）；搜索框就地列出命中并计入一次查询                                                                                                                                                                                                 |
-| 引导页     | 两步：步骤 1 只填称呼（`PUT /api/settings/name`，成功后本地推进、不重读设置）；步骤 2 收**必填**的初始主密码（口令 + 确认 + 助记问题 + 不可逆勾选，生成盐 → `POST` → `unlockKey`），没有「暂时跳过」。挂载时先 `GET /api/master-password`：已配置则变成「输入口令解锁」单输入框，绝不重复 POST |
-| 信息页     | 四张卡：运行信息（`GET /api/info` 摊成只读键值行，缺失显示「未知」）、用户名（`PUT /api/settings/name`）、主密码（当前助记问题 + 内联改问题 + 改密表单）、迁移状态（`remaining > 0` 时列出未迁移条目与原因并给「继续迁移」）；全部文本插值                                                     |
-| 列表       | 解析 `q`/`category`/`page`，右侧分类树带各级笔记数（根节点「全部笔记」+「未分类」+ 各分类）；行内显示明文摘要或「密文内容不在列表展示」；删除有二次确认                                                                                                                                        |
-| 详情       | 明文直接渲染 Markdown；标题旁有「复制原文」图标按钮（`lib/clipboard.ts#copyText` 写入库里的原始 Markdown，失败用 toast 提示手动选中；加密笔记解锁前不渲染该按钮）；加密且无密钥时显示口令框与助记问题入口；解密成功后可编辑、删除、锁定                                                        |     |
-| 编辑器     | 标题、分类（含「未分类」）、正文与防抖预览；勾选加密时若无会话密钥先就地解锁或跳 `/master-password?next=…`，跳转前把内容存进内存草稿；离开时有未保存提醒                                                                                                                                       |
-| 主密码     | 未配置：口令 + 确认 + 助记问题 + 不可逆勾选，成功后派生密钥并回跳 `next`；已配置：只读展示助记问题并给一个去 `/info` 的按钮，改密与改问题都在信息页，本页不再重复表单                                                                                                                          |
-| 忘记主密码 | 展示助记问题与「无法找回」说明；唯一出路是确认删除这条加密笔记，不要求口令                                                                                                                                                                                                                     |
-| 分类树     | 列表页右侧：根节点筛选 + 分类筛选；新增（树底输入框）、改名（行内，Enter 保存 / Esc 取消）、删除（二次确认），非空时把服务端返回的笔记数显示在对应行下                                                                                                                                         |
-| 404        | 说明路径不存在，给返回列表链接                                                                                                                                                                                                                                                                 |
+| 视图       | 行为                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 首页       | 拉取统计渲染热力图与「事件构成」（查询、查看与增删改都计入）；搜索框就地列出命中并计入一次查询                                                                                                                                                                                                                                                                                                                                     |
+| 引导页     | 两步：步骤 1 只填称呼（`PUT /api/settings/name`，成功后本地推进、不重读设置）；步骤 2 收**必填**的初始主密码（口令 + 确认 + 助记问题 + 不可逆勾选，生成盐 → `POST` → `unlockKey`），没有「暂时跳过」。挂载时先 `GET /api/master-password`：已配置则变成「输入口令解锁」单输入框，绝不重复 POST                                                                                                                                     |
+| 信息页     | 五张卡：运行信息（`GET /api/info` 摊成只读键值行，缺失显示「未知」）、用户名（`PUT /api/settings/name`）、**AI 配置**（`GET/PUT /api/ai-config`：地址 + 密钥 + 提示词，密钥框留空=不改动、点「清除密钥」才清空，保存后清空密钥输入框并只显示掩码，卡片里给出配置文件路径；加载失败只影响这张卡）、主密码（当前助记问题 + 内联改问题 + 改密表单）、迁移状态（`remaining > 0` 时列出未迁移条目与原因并给「继续迁移」）；全部文本插值 |
+| 列表       | 解析 `q`/`category`/`page`，右侧分类树带各级笔记数（根节点「全部笔记」+「未分类」+ 各分类）；行内显示明文摘要或「密文内容不在列表展示」；删除有二次确认                                                                                                                                                                                                                                                                            |
+| 详情       | 明文直接渲染 Markdown；标题旁有「复制原文」图标按钮（`lib/clipboard.ts#copyText` 写入库里的原始 Markdown，失败用 toast 提示手动选中；加密笔记解锁前不渲染该按钮）；加密且无密钥时显示口令框与助记问题入口；解密成功后可编辑、删除、锁定                                                                                                                                                                                            |     |
+| 编辑器     | 标题、分类（含「未分类」）、正文与防抖预览；勾选加密时若无会话密钥先就地解锁或跳 `/master-password?next=…`，跳转前把内容存进内存草稿；离开时有未保存提醒                                                                                                                                                                                                                                                                           |
+| 主密码     | 未配置：口令 + 确认 + 助记问题 + 不可逆勾选，成功后派生密钥并回跳 `next`；已配置：只读展示助记问题并给一个去 `/info` 的按钮，改密与改问题都在信息页，本页不再重复表单                                                                                                                                                                                                                                                              |
+| 忘记主密码 | 展示助记问题与「无法找回」说明；唯一出路是确认删除这条加密笔记，不要求口令                                                                                                                                                                                                                                                                                                                                                         |
+| 分类树     | 列表页右侧：根节点筛选 + 分类筛选；新增（树底输入框）、改名（行内，Enter 保存 / Esc 取消）、删除（二次确认），非空时把服务端返回的笔记数显示在对应行下                                                                                                                                                                                                                                                                             |
+| 404        | 说明路径不存在，给返回列表链接                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 `App.svelte` 在最外层把关：设置载入中显示 `role="status"` 提示，载入失败给出「重新载入」按钮；引导完成的判据是纯函数 `decideStep(nameSet, masterConfigured)`（返回 0 才渲染 `Layout`，否则渲染引导页并按这两个布尔决定从哪一步开始），`document.title` 用同一判定，避免出现「还在引导却显示『XX的笔记』」。只按 `nameSet` 判断会漏掉「名字存好、主密码还没设就刷新」这个半态，用户会绕过必填进主界面。
 
@@ -1425,6 +1449,7 @@ Referrer-Policy: no-referrer
 | 文件                                       | 覆盖                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `internal/config/config_test.go`           | 内置默认值、YAML 解析、命令行覆盖、未知键拒绝、非回环绑定需 `--allow-remote`、缺失显式配置报错、用户段读写往返、`-c` 短参数、`-p/--port` 只覆盖端口（含 IPv6）、`--remote` 别名、默认路径解析与 `ConfigFound`                                                                                                                               |
+| `internal/config/ai_test.go`               | `SetValue` 从零建文件、保留其它键与注释、未知键/非法值拒绝且不建文件、已有未知键时拒绝写入、空串清空、多行提示词写字面量块且逐字往返、`0600` 与不留临时文件（Windows 跳过）、`SetValues` 三项一次写入且部分失败不留痕、`ReadAI` 缺文件不算错、启动校验坏 `base_url`、`MaskSecret` 四档                                                      |
 | `internal/config/paths_test.go`            | 默认配置/数据目录解析（环境变量隔离，各平台期望路径；Linux 的 `XDG_DATA_HOME` 缺省回退 `~/.local/share`）                                                                                                                                                                                                                                   |
 | `internal/cli/parse_test.go`               | 子命令分发（菜单/web/info）、全局 `-c`、帮助变体（`-h`/`--help`/`help`/`help web`/`web -h`）、带值参数的 `-h` 预扫描（`--config -h` 不是帮助）、未知命令/参数与缺值报错                                                                                                                                                                     |
 | `internal/cli/menu_test.go`                | 菜单模型：光标上下移动与越界保持、回车选中当前项、q/Esc 保持零值退出、视图含全部菜单项；非终端环境 `RunMenu` 返回回退动作                                                                                                                                                                                                                   |
@@ -1439,6 +1464,7 @@ Referrer-Policy: no-referrer
 | `internal/daemon/pid_test.go`（+windows）  | 自身 pid 存活、不存在的 pid 判死、pid ≤ 0 判死；Windows 专有：已退出但对象未回收的 pid 必须判死（回归 `os.FindProcess` 假阳性）                                                                                                                                                                                                             |
 | `internal/daemon/probe_test.go`            | `Probe` 解析 `addr`/`started_at`/`build_label`、非 200 与超时返回错误；`RequestStop` 的路径/方法/令牌头、202 成功、403 映射为「关停令牌无效」                                                                                                                                                                                               |
 | `internal/daemon/spawn_test.go`            | 分离进程启动后父进程立即返回、子进程经日志 fd 写入 `note.log`、环境变量 `NOTE_DAEMON_STATE` 传递                                                                                                                                                                                                                                            |
+| `internal/web/handlers_ai_test.go`         | 首读全空且不建文件、响应 `no-store`、PUT 与 GET 都不含明文密钥（只有掩码与 `api_key_set`）、省略 `api_key` 保持旧值、空串清除、四项字段级 400 且不落盘、文件已有未知键 409、无 CSRF 令牌 403 且不写文件                                                                                                                                     |
 | `internal/web/shutdown_api_test.go`        | 正确令牌 → 202 且回调只调用一次；错误/缺失令牌 → 403；未启用（Token 为空）→ 403 `shutdown_disabled`；GET → 405 带 `Allow`；不带 CSRF Cookie 也能通过；非法 Host 仍被 `hostGuard` 拦下                                                                                                                                                       |
 | `internal/store/store_test.go`             | 空库自动建表并跑完 6 个迁移、重复打开幂等、`user_version` 高于程序时拒绝启动、非法文件拒绝启动、0004 对象存在、0005 的 kind 枚举与索引重建、0006 的 `deleted_at` 为可空 TEXT 且存量行为 `NULL` + 两个部分索引存在、0003 扩展列默认值与 CHECK                                                                                                |
 | `internal/store/activity_test.go`          | 笔记与分类的增删改各写一条对应事件、`RecordActivity` 只接受已知 kind、失败的写操作（不存在/非空分类/默认分类）不留事件、`GetStats` 的总量/活跃天数/按天计数覆盖全部事件而 Top 查询只算 `search`                                                                                                                                             |

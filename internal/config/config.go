@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -27,6 +26,8 @@ type Config struct {
 	ConfigFound bool
 	UserName    string
 	NameSet     bool
+	// AI 是 OpenAI 兼容接口的三项配置；空串表示未设置。
+	AI AI
 }
 
 type fileConfig struct {
@@ -41,6 +42,11 @@ type fileConfig struct {
 		Name    string `yaml:"name"`
 		NameSet bool   `yaml:"name_set"`
 	} `yaml:"user"`
+	AI struct {
+		BaseURL string `yaml:"base_url"`
+		APIKey  string `yaml:"api_key"`
+		Prompt  string `yaml:"prompt"`
+	} `yaml:"ai"`
 }
 
 func Load(args []string) (Config, []string, error) {
@@ -101,6 +107,11 @@ func Load(args []string) (Config, []string, error) {
 		}
 		cfg.UserName = fileCfg.User.Name
 		cfg.NameSet = fileCfg.User.NameSet
+		cfg.AI = AI{
+			BaseURL: fileCfg.AI.BaseURL,
+			APIKey:  fileCfg.AI.APIKey,
+			Prompt:  fileCfg.AI.Prompt,
+		}
 	case errors.Is(err, os.ErrNotExist):
 		if visitContains(flags, "config", "c") {
 			return Config{}, nil, fmt.Errorf("config file not found: %s", cfg.ConfigPath)
@@ -191,6 +202,9 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.DBPath) == "" {
 		return fmt.Errorf("database path is empty")
 	}
+	if err := ValidateAI(cfg.AI); err != nil {
+		return fmt.Errorf("parse config %s: %w", cfg.ConfigPath, err)
+	}
 
 	return nil
 }
@@ -223,30 +237,5 @@ func (c Config) SaveUserName(name string) error {
 		return fmt.Errorf("encode config: %w", err)
 	}
 
-	dir := filepath.Dir(c.ConfigPath)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create config directory: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".note-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create temp config: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write temp config: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("chmod temp config: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp config: %w", err)
-	}
-	if err := os.Rename(tmpName, c.ConfigPath); err != nil {
-		return fmt.Errorf("replace config %s: %w", c.ConfigPath, err)
-	}
-	return nil
+	return writeAtomic(c.ConfigPath, buf.Bytes())
 }

@@ -4,3 +4,10 @@ server:
 
 database:
   path: ./data/notes.db
+
+# AI 三项：推荐用 `note config set <键>=<值>` 写入（会做校验与原子替换），
+# 也可以直接改这里；三项都允许为空（表示未设置）。
+ai:
+  base_url: ""
+  api_key: ""
+  prompt: ""
