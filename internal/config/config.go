@@ -43,9 +43,10 @@ type fileConfig struct {
 		NameSet bool   `yaml:"name_set"`
 	} `yaml:"user"`
 	AI struct {
-		BaseURL string `yaml:"base_url"`
-		APIKey  string `yaml:"api_key"`
-		Prompt  string `yaml:"prompt"`
+		BaseURL string   `yaml:"base_url"`
+		APIKey  string   `yaml:"api_key"`
+		Models  []string `yaml:"models"`
+		Prompt  string   `yaml:"prompt"`
 	} `yaml:"ai"`
 }
 
@@ -110,6 +111,7 @@ func Load(args []string) (Config, []string, error) {
 		cfg.AI = AI{
 			BaseURL: fileCfg.AI.BaseURL,
 			APIKey:  fileCfg.AI.APIKey,
+			Models:  fileCfg.AI.Models,
 			Prompt:  fileCfg.AI.Prompt,
 		}
 	case errors.Is(err, os.ErrNotExist):

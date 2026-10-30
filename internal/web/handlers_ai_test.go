@@ -55,7 +55,7 @@ func TestAIConfigAPINeverReturnsPlaintextKey(t *testing.T) {
 
 	rec := apiRequest(t, handler, http.MethodPut, "/api/ai-config", token, `{
 		"base_url":"https://api.openai.com/v1",
-		"prompt":"整理成笔记",
+		"prompt":"整理成笔记 :: {{content}}",
 		"api_key":"`+secret+`"
 	}`)
 	if rec.Code != http.StatusOK {
@@ -98,14 +98,14 @@ func TestAIConfigAPIKeepsKeyWhenFieldOmitted(t *testing.T) {
 	token := csrfTokenFor(t, handler)
 
 	rec := apiRequest(t, handler, http.MethodPut, "/api/ai-config", token,
-		`{"base_url":"https://a.example.com/v1","prompt":"p","api_key":"sk-firstversion1234567890"}`)
+		`{"base_url":"https://a.example.com/v1","prompt":"p :: {{content}}","api_key":"sk-firstversion1234567890"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("首次 PUT = %d: %s", rec.Code, rec.Body)
 	}
 
 	// 省略 api_key：地址改了，密钥原样保留
 	rec = apiRequest(t, handler, http.MethodPut, "/api/ai-config", token,
-		`{"base_url":"https://b.example.com/v1","prompt":"p2"}`)
+		`{"base_url":"https://b.example.com/v1","prompt":"p2 :: {{content}}"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("二次 PUT = %d: %s", rec.Code, rec.Body)
 	}
@@ -117,7 +117,7 @@ func TestAIConfigAPIKeepsKeyWhenFieldOmitted(t *testing.T) {
 	if ai.APIKey != "sk-firstversion1234567890" {
 		t.Fatalf("省略 api_key 时不该改动密钥，得到 %q", ai.APIKey)
 	}
-	if ai.BaseURL != "https://b.example.com/v1" || ai.Prompt != "p2" {
+	if ai.BaseURL != "https://b.example.com/v1" || ai.Prompt != "p2 :: {{content}}" {
 		t.Fatalf("其余两项应当更新: %+v", ai)
 	}
 }

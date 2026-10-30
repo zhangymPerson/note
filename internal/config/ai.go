@@ -14,10 +14,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AI 是配置文件里的 AI 三项（OpenAI 兼容接口）。空串表示未设置。
+// AI 是配置文件里的 AI 四项（OpenAI 兼容接口）。空串/空列表表示未设置。
 type AI struct {
 	BaseURL string
 	APIKey  string
+	Models  []string
 	Prompt  string
 }
 
@@ -28,7 +29,27 @@ const (
 	MaxAIKeyLen = 512
 	// MaxAIPromptRunes 与正文同口径（2000 码点）：提示词最终会拼进正文一起用。
 	MaxAIPromptRunes = 2000
+	// MaxAIModels 是 ai.models 的项数上限：列表是「可选的模型」，不是模型仓库。
+	MaxAIModels = 10
+	// MaxAIModelLen 是单个模型名的字节上限。
+	MaxAIModelLen = 200
+	// PromptVariable 是提示词模板里代表用户笔记的变量名。
+	PromptVariable = "{{content}}"
 )
+
+// DefaultAIPrompt 是「用 AI 美化笔记」的内置提示词模板：ai.prompt 留空时用它，
+// note.yaml 里不必存一份副本（配置文件保持干净，改默认值只改这一处）。
+const DefaultAIPrompt = `你是 Markdown 笔记专家。请美化下面这段笔记的 Markdown 格式，让它更好读、更有条理。
+
+【笔记原文】
+{{content}}
+【笔记原文结束】
+
+要求：
+1. 不改变核心内容：不删减要点、不编造事实、不改动原意与结论。
+2. 可以调整：标题层级、段落划分、列表与表格、代码块语言标注、加粗与斜体、标点与全半角、以及描述性的措辞。
+3. 目标是「扫一眼就能读懂」：每个小节有说清主题的标题，并列的信息改成列表，结论与关键事实放在前面。
+4. 只输出优化后的 Markdown 正文：不要解释、不要前言或结语，也不要用代码块把整篇包起来。`
 
 // ValueError 是某个配置项的值不合法（未知键、地址或密钥不合规）。
 // 调用方据此按「用法错误」而不是「服务故障」处理：命令行退出码 2、
@@ -45,7 +66,7 @@ var ErrUnknownKey = errors.New("config file has unknown keys")
 // aiKeys 是允许通过 note config set 写入的键（点分形式）与它在 YAML 里的层级。
 // 只有这几项能从命令行改：配置文件里的其它键要么由安装流程写入，
 // 要么由服务自己维护，手改比命令行更安全。
-var aiKeys = []string{"ai.base_url", "ai.api_key", "ai.prompt"}
+var aiKeys = []string{"ai.base_url", "ai.api_key", "ai.models", "ai.prompt"}
 
 // KnownKeys 返回可写的配置键，供帮助与错误提示使用。
 func KnownKeys() []string {
@@ -86,6 +107,7 @@ func ReadAI(path string) (AI, bool, error) {
 	return AI{
 		BaseURL: fileCfg.AI.BaseURL,
 		APIKey:  fileCfg.AI.APIKey,
+		Models:  fileCfg.AI.Models,
 		Prompt:  fileCfg.AI.Prompt,
 	}, true, nil
 }
@@ -131,7 +153,14 @@ func SetValues(path string, values []KeyValue) error {
 	}
 
 	for _, item := range normalized {
-		if err := setNode(doc, item.Key, item.Value); err != nil {
+		// 模型列表写成 YAML 序列，其余三项是标量：两者的节点构造不同。
+		var err error
+		if item.Key == "ai.models" {
+			err = setModelsNode(doc, SplitModels(item.Value))
+		} else {
+			err = setNode(doc, item.Key, item.Value)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -177,6 +206,8 @@ func validateValue(key, value string) error {
 		return ValidateBaseURL(value)
 	case "ai.api_key":
 		return ValidateAPIKey(value)
+	case "ai.models":
+		return ValidateModels(SplitModels(value))
 	case "ai.prompt":
 		return ValidatePrompt(value)
 	}
@@ -190,6 +221,9 @@ func ValidateAI(ai AI) error {
 		return err
 	}
 	if err := ValidateAPIKey(ai.APIKey); err != nil {
+		return err
+	}
+	if err := ValidateModels(ai.Models); err != nil {
 		return err
 	}
 	return validateValue("ai.prompt", ai.Prompt)
@@ -215,10 +249,92 @@ func ValidateBaseURL(raw string) error {
 	return nil
 }
 
-// ValidatePrompt 校验 ai.prompt：空串表示「不追加提示词」。
+// SplitModels 把「逗号或换行分隔」的模型串拆成列表：trim、丢空项、按首现顺序去重。
+// 命令行与网页共用它，免得两个入口对同一个值给出不同理解。
+func SplitModels(text string) []string {
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r'
+	})
+	seen := make(map[string]bool, len(fields))
+	var models []string
+	for _, field := range fields {
+		model := strings.TrimSpace(field)
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		models = append(models, model)
+	}
+	return models
+}
+
+// JoinModels 是 SplitModels 的反向操作，供展示使用。
+func JoinModels(models []string) string {
+	return strings.Join(models, ", ")
+}
+
+// ValidateModel 校验单个模型名：空串是合法的「未设置」。
+func ValidateModel(model string) error {
+	if len(model) > MaxAIModelLen {
+		return fmt.Errorf("模型名太长了，请控制在 %d 字节以内", MaxAIModelLen)
+	}
+	if model == "" {
+		return nil
+	}
+	if strings.IndexFunc(model, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return fmt.Errorf("模型名不能包含空白或控制字符（多半是粘贴时混进了换行）")
+	}
+	return nil
+}
+
+// ValidateModels 校验模型列表：空列表是合法的「未配置」。
+func ValidateModels(models []string) error {
+	if len(models) > MaxAIModels {
+		return fmt.Errorf("ai.models 最多 %d 个模型，当前 %d 个", MaxAIModels, len(models))
+	}
+	for i, model := range models {
+		if model == "" {
+			return fmt.Errorf("ai.models 第 %d 项不能为空", i+1)
+		}
+		if err := ValidateModel(model); err != nil {
+			return fmt.Errorf("ai.models 第 %d 项：%w", i+1, err)
+		}
+	}
+	return nil
+}
+
+// PromptOrDefault 返回真正会发出去的提示词模板：空串回落到内置默认模板。
+func PromptOrDefault(prompt string) string {
+	if prompt == "" {
+		return DefaultAIPrompt
+	}
+	return prompt
+}
+
+// PromptDisplay 是 note config list 的展示形态：空串显示成「使用默认提示词」。
+func PromptDisplay(prompt string) string {
+	if prompt == "" {
+		return "（默认提示词）"
+	}
+	return prompt
+}
+
+// ModelsDisplay 是 note config list 的展示形态：空列表显示成「未配置」。
+func ModelsDisplay(models []string) string {
+	if len(models) == 0 {
+		return "（未配置）"
+	}
+	return JoinModels(models)
+}
+
+// ValidatePrompt 校验 ai.prompt：空串表示「使用默认提示词」，非空则必须是模板
+// （必须含 PromptVariable，否则正文没地方代入）。
 func ValidatePrompt(prompt string) error {
 	if n := utf8.RuneCountInString(prompt); n > MaxAIPromptRunes {
 		return fmt.Errorf("ai.prompt 请控制在 %d 字以内，当前 %d 字", MaxAIPromptRunes, n)
+	}
+	if prompt != "" && !strings.Contains(prompt, PromptVariable) {
+		return fmt.Errorf("ai.prompt 里必须包含 %s（用户的笔记在这里代入）；要恢复默认提示词，把值留空", PromptVariable)
 	}
 	return nil
 }
@@ -251,7 +367,9 @@ func MaskSecret(secret string) string {
 }
 
 // setNode 在 YAML 文档里按点分路径写入一个字符串值，沿途缺的映射自动创建。
-func setNode(doc *yaml.Node, key, value string) error {
+// ensureMapping 按点分路径走到叶子所在的父映射，沿途缺的映射自动创建。
+// 返回父映射节点与叶子键名。
+func ensureMapping(doc *yaml.Node, key string) (*yaml.Node, string, error) {
 	parts := strings.Split(key, ".")
 	if doc.Kind == 0 {
 		doc.Kind = yaml.DocumentNode
@@ -262,7 +380,7 @@ func setNode(doc *yaml.Node, key, value string) error {
 
 	node := doc.Content[0]
 	if node.Kind != yaml.MappingNode {
-		return fmt.Errorf("配置文件的顶层不是映射，无法写入 %s", key)
+		return nil, "", fmt.Errorf("配置文件的顶层不是映射，无法写入 %s", key)
 	}
 	for _, part := range parts[:len(parts)-1] {
 		child := mappingValue(node, part)
@@ -271,9 +389,18 @@ func setNode(doc *yaml.Node, key, value string) error {
 			child = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 			node.Content = append(node.Content, stringNode(part), child)
 		case child.Kind != yaml.MappingNode:
-			return fmt.Errorf("配置项 %q 不是映射，无法写入 %s", part, key)
+			return nil, "", fmt.Errorf("配置项 %q 不是映射，无法写入 %s", part, key)
 		}
 		node = child
+	}
+	return node, parts[len(parts)-1], nil
+}
+
+// setNode 在 YAML 文档里按点分路径写入一个字符串值。
+func setNode(doc *yaml.Node, key, value string) error {
+	node, leafKey, err := ensureMapping(doc, key)
+	if err != nil {
+		return err
 	}
 
 	leaf := stringNode(value)
@@ -281,7 +408,21 @@ func setNode(doc *yaml.Node, key, value string) error {
 		// 多行提示词用字面量块，手改 YAML 时也能读
 		leaf.Style = yaml.LiteralStyle
 	}
-	setMappingEntry(node, parts[len(parts)-1], leaf)
+	setMappingEntry(node, leafKey, leaf)
+	return nil
+}
+
+// setModelsNode 把模型列表写成 YAML 序列（models: [] 表示清空）。
+func setModelsNode(doc *yaml.Node, models []string) error {
+	node, leafKey, err := ensureMapping(doc, "ai.models")
+	if err != nil {
+		return err
+	}
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, model := range models {
+		seq.Content = append(seq.Content, stringNode(model))
+	}
+	setMappingEntry(node, leafKey, seq)
 	return nil
 }
 
