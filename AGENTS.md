@@ -49,8 +49,11 @@ docs/              PRD、技术方案、构建指南
 - `GET /api/info` 与其它 API 一样 `Cache-Control: no-store`，响应只能是标准库运行时与配置值，不得含正文、密文、盐、密码或令牌；`just build` 用 `-ldflags -X` 注入 `internal/build` 的四个变量，git 不可用时必须退化为空值而不是让构建失败。
 - 引导完成判据是纯函数 `decideStep(nameSet, masterConfigured)`（`web/src/lib/onboarding.ts`），`App.svelte` 的门槛与 `document.title` 必须共用它；引导页第二步在库中已有主密码时只解锁、绝不重复 `POST /api/master-password`（重复提交会 409，会把用户永久卡在第二步）。
 - 配置文件写入必须原子（临时文件 + rename），且保持 YAML 严格解析（未知键报错）。
-- `note.yaml` 的 `ai` 三项（`base_url` / `api_key` / `prompt`）只有一个写入口：`internal/config.SetValues`（`yaml.Node` 级改写以保留其它键与注释 → 编码 → 再用严格 `decode` 复核 → 临时文件 + rename，文件 `0600` / 目录 `0700`）。不要在别处另写一套 YAML 序列化，也不要直接 `os.WriteFile` 覆盖配置文件。
+- `note.yaml` 的 `ai` 四项（`base_url` / `api_key` / `models` / `prompt`）只有一个写入口：`internal/config.SetValues`（`yaml.Node` 级改写以保留其它键与注释 → 编码 → 再用严格 `decode` 复核 → 临时文件 + rename，文件 `0600` / 目录 `0700`）。不要在别处另写一套 YAML 序列化，也不要直接 `os.WriteFile` 覆盖配置文件。
 - `api_key` 明文只允许存在于 `note.yaml`：`GET/PUT /api/ai-config` 只回 `api_key_masked` + `api_key_set`，`/api/info`、网页与日志一律不得出现明文。`PUT /api/ai-config` 的 `api_key` 语义是「省略 = 不改动、空串 = 清除」，不是「空 = 清除」。
+- `internal/ai` 是全项目**唯一**发起对外 HTTP 请求的地方：网页走 `POST /api/ai/optimize`（服务端代发），`note add` 的 `Ctrl+O` 直接调同一份实现；不要在 handler、`cmd/note` 或前端另写一套请求。调用只在用户显式点击/按键时发生，不后台轮询、不自动重试、不自动换模型。
+- AI 调用的日志只能记 `host` / `model` / 状态与截断后的错误摘要：不得出现笔记正文、渲染后的提示词（`{{content}}` 代入后的结果）与 `api_key`；`POST /api/ai/optimize` 含正文，和其它 API 一样 `Cache-Control: no-store`。优化结果只是建议——网页与 CLI 都必须先预览、用户确认后才替换，超 2000 码点禁止替换而不截断。
+- `ai.prompt` 空串 = 内置默认提示词（`config.DefaultAIPrompt`），非空必须含 `config.PromptVariable`（`{{content}}`）：启动加载、`note config set`、`PUT /api/ai-config` 三处同一口径硬失败，不要为了「好写」放宽成可选；`ai.models` 的拆分/校验/展示同样共用 `config.SplitModels` / `ValidateModels` / `ModelsDisplay`。
 - `note config` 与 `PUT /api/ai-config` 必须共用 `config.ValidateBaseURL` / `ValidateAPIKey` / `ValidatePrompt`（以及 `config.Normalize`），禁止在 web 层另写一套规则；`config.ValueError` 表示用法错误（命令行退出 2 / 网页 400），`config.ErrUnknownKey` 表示配置文件里已有未知键（网页 409，让用户先手改）。
 - CLI「打开笔记」只有一个含义：`note show <id>`、`note show`（无 id 进选择器）与 `note list` 的 `Enter` 预览共走 `cmd/note` 的 `openNote`——渲染到 stdout + 把 `ShowResult.Source`（库里的原始 Markdown，不是渲染结果）复制到剪贴板。复制只在 stdout 是终端时发生（管道/脚本不该被偷改剪贴板），提示写 stderr，失败不改变退出码；加密笔记没有可复制的原文，仍是退出码 4。网页详情页的「复制原文」按钮是同一语义（加密未解锁时不渲染）。
 - `note list` 的筛选：标题 + 分类用 fuzzy（bubbles `DefaultFilter`），正文用子串（`internal/cli/list.go#noteFilter`）——fuzzy 套在长正文上等于不筛。正文来自 `store.ListNotesAll` 的 `NoteListItem.FullContent`（`json:"-"`），网页列表走的 `ListNotes` 不得带回全文。
