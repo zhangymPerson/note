@@ -23,8 +23,7 @@ vi.mock("../lib/ai-config", async () => {
   return { ...actual, getAIConfig: mocks.getAIConfig };
 });
 vi.mock("../lib/ai", async () => {
-  const actual =
-    await vi.importActual<typeof import("../lib/ai")>("../lib/ai");
+  const actual = await vi.importActual<typeof import("../lib/ai")>("../lib/ai");
   return { ...actual, optimizeNote: mocks.optimizeNote };
 });
 // 保留真实的码点计数与上限：优化结果的超限判断必须与保存时同一口径。
@@ -156,11 +155,15 @@ describe("NoteEditorView 的 AI 优化", () => {
     typeInto(contentBox(element), "原始正文");
 
     // 等配置真的读进来：jsdom 里 disabled 按钮的 click 监听仍会被触发
-    await vi.waitFor(() => expect(element.textContent).toContain("正文会发送到"));
+    await vi.waitFor(() =>
+      expect(element.textContent).toContain("正文会发送到"),
+    );
     click(aiButton(element));
     // 预览走 Markdown 渲染，所以看到的是标题而不是字面的 "# 优化后"
     await vi.waitFor(() =>
-      expect(element.querySelector(".ai-result h1")?.textContent).toBe("优化后"),
+      expect(element.querySelector(".ai-result h1")?.textContent).toBe(
+        "优化后",
+      ),
     );
     expect(element.textContent).toContain("AI 优化结果 · m1");
     expect(mocks.optimizeNote).toHaveBeenCalledWith("原始正文", "m1");

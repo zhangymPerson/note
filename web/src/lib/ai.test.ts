@@ -29,9 +29,13 @@ describe("ai", () => {
     const result = await optimizeNote("正文");
     expect(result).toEqual({ content: "# 优化后", model: "m1" });
 
-    const optimize = requests.find((request) => request.url === "/api/ai/optimize");
+    const optimize = requests.find(
+      (request) => request.url === "/api/ai/optimize",
+    );
     expect(optimize?.init.method).toBe("POST");
-    expect(JSON.parse(String(optimize?.init.body))).toEqual({ content: "正文" });
+    expect(JSON.parse(String(optimize?.init.body))).toEqual({
+      content: "正文",
+    });
   });
 
   it("optimizeNote 传入模型时带上 model 字段", async () => {
@@ -39,7 +43,9 @@ describe("ai", () => {
 
     await optimizeNote("正文", "m2");
 
-    const optimize = requests.find((request) => request.url === "/api/ai/optimize");
+    const optimize = requests.find(
+      (request) => request.url === "/api/ai/optimize",
+    );
     expect(JSON.parse(String(optimize?.init.body))).toEqual({
       content: "正文",
       model: "m2",

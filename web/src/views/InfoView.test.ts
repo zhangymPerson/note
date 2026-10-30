@@ -122,20 +122,22 @@ function submit(node: Element): void {
 beforeEach(() => {
   mocks.getAIConfig.mockResolvedValue({ ...CONFIGURED });
   // 服务端把逗号串存成序列再回数组，这里照做，免得组件拿到 string 去 join。
-  mocks.saveAIConfig.mockImplementation(async (payload: Record<string, unknown>) => ({
-    ...CONFIGURED,
-    base_url: (payload.base_url as string) ?? CONFIGURED.base_url,
-    prompt: (payload.prompt as string) ?? CONFIGURED.prompt,
-    models:
-      typeof payload.models === "string"
-        ? payload.models
-            .split(",")
-            .map((model) => model.trim())
-            .filter((model) => model !== "")
-        : CONFIGURED.models,
-    api_key_set: true,
-    api_key_masked: "sk-…new1",
-  }));
+  mocks.saveAIConfig.mockImplementation(
+    async (payload: Record<string, unknown>) => ({
+      ...CONFIGURED,
+      base_url: (payload.base_url as string) ?? CONFIGURED.base_url,
+      prompt: (payload.prompt as string) ?? CONFIGURED.prompt,
+      models:
+        typeof payload.models === "string"
+          ? payload.models
+              .split(",")
+              .map((model) => model.trim())
+              .filter((model) => model !== "")
+          : CONFIGURED.models,
+      api_key_set: true,
+      api_key_masked: "sk-…new1",
+    }),
+  );
 });
 
 afterEach(() => {
