@@ -60,7 +60,7 @@ func runGet(globalConfigPath string, args []string, opts cli.GetOptions) error {
 	case opts.List:
 		text, readErr = cli.RunGetCategories(ctx, deps)
 	case opts.Ref.CategoryOnly:
-		text, readErr = cli.RunGetCategory(ctx, deps, opts.Ref)
+		text, readErr = cli.RunGetCategory(ctx, deps, opts.Ref, opts.Detail)
 	default:
 		text, readErr = cli.RunGet(ctx, deps, opts.Ref)
 	}
@@ -211,8 +211,13 @@ func quickDeps(st *store.Store) cli.QuickDeps {
 			}
 			out := make([]cli.QuickNote, 0, len(list))
 			for _, item := range list {
+				content := ""
+				if item.Content != nil {
+					content = *item.Content
+				}
 				out = append(out, cli.QuickNote{
 					Title:     item.Title,
+					Content:   content,
 					Encrypted: item.Encrypted,
 					UpdatedAt: item.UpdatedAt,
 				})

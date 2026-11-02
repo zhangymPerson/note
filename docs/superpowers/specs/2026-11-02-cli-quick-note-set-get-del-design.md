@@ -346,5 +346,5 @@ EnsureCategory(ctx, name string) (Category, error)
 3. 标题比较用 `NOCASE`（与分类名一致）；`README` 与 `readme` 在 CLI 眼里是同一条。
 4. 存量重名按「活的优先 → 新的优先」保留原名，其余追加 ` (2)` 序号；迁移里不留「静默丢失」。
 5. `set` 的成功提示走 stderr，stdout 保持空——`note get` 是这套命令里唯一的 stdout 使用者（除 `get @分类`/`--list`）。
-6. `get @分类` 的列为 `标题` + `updated_at`，不带 id：`del`/`get` 都按标题寻址，id 在这里没有用处。
+6. `get @分类` 默认只给标题（v1.15 修订：时间与正文挪到 `--detail` 表格里），不带 id：`del`/`get` 都按标题寻址，id 在这里没有用处。
 7. 「速记」是否出现在网页分类树：出现（它是普通分类，只是固定）；不做「只给 CLI 用」的隐藏分类。

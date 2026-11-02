@@ -8,6 +8,16 @@
 
 ### Added
 
+- `note get @分类 --detail`：分类清单默认只给标题，时间与正文改成按需的表格（实现过程与关键逻辑）：
+  - **默认输出收敛**：`note get @<分类>` 原先每行 `标题<TAB>updated_at`，现在每行只写标题——时间是 `--detail` 才需要的噪音，管道里 `note get @工作 | wc -l` / `grep` 也不该被多一列干扰；排序仍是更新时间倒序。
+  - **`internal/cli/quick.go`**：`RunGetCategory` 增加 `detail bool`，为真时输出表头 `标题 / 更新时间 / 正文`。正文取 `NoteListItem.Content`（库里已有的 140 码点摘要），用 `foldForTable` 把换行折成空格、超过 60 码点截断加省略号；加密笔记写 `（加密）`（没有可展示的明文），空正文写 `（空）`。完整正文仍旧只走 `note get <标题>`。
+  - **表格实现**：新增 `renderTable(header, rows)` 手工对齐——`text/tabwriter` 按码点算列宽，中文列必然错位，所以用已有的 `displayWidth` / `padRight`（uniseg）按显示宽度补空格，最后一列不补齐以避免行尾空格；`note get --list` 同一函数，顺带修好原来「分类」列的中文错位。
+  - **`internal/cli/parse.go`**：`GetOptions.Detail`、`--detail` 开关；与 `--list` 互斥，配 `get <标题>` 也是用法错误（退出 2，提示改用 `note get <标题>`）。
+  - **`cmd/note/quick.go`**：`quickDeps.Notes` 现在把列表摘要填进 `cli.QuickNote.Content`（加密笔记的摘要本就是空，正好落进「（加密）」）。
+  - **帮助与文档**：`note get --help` 补 `--detail` 与两种输出、示例各一条；`AGENTS.md`、PRD（FR-1.14、8.9 命令表与参数表、AC-61）、TECH_DESIGN（4.1 启动表、11 测试表）、设计文档第 7 节同步为「默认只列标题 + `--detail` 表格」。
+  - **测试**：`internal/cli/quick_test.go` 改两例并新增 `TestRunGetCategoryDetailPrintsTable`（表头三列、时间出现、正文折行、加密与空正文占位）；`parse_test.go` 新增 `TestParseGetDetail`（`@分类` 接受、配标题或 `--list` 拒绝）；`cmd/note/quick_test.go` 增加 `--detail` 断言（正文来自摘要）。
+  - **验证**：`go test ./...` 402 项全绿；`go vet ./...` 无输出；手工跑二进制确认中文列对齐、`get @工作` 只出标题、`get 周报 --detail` 退出 2。
+
 - 文档与验收同步（实现过程与关键逻辑）：
   - **`docs/PRD.md`**：版本推到 v1.15 并写明修订说明；5.1.2 新增 FR-1.13（同分类标题唯一：409 `title_conflict` / `title_in_trash`、迁移保留规则）与 FR-1.14（`note set/get/del` 的三种形态与 stdout/stderr 分流）；5.5 改写 FR-4.1 / FR-4.5（「速记」为第二个固定分类、前端只认 `reserved`）并新增 FR-4.8（`set` 顺带建分类）；8.9 的命令表补 6 行、参数表补 `--type` / `--yes` 并把 `--db` 说明改成各子命令均可用；第 9 节新增 AC-61（CLI 全链路，含 stdout 干净与退出码）与 AC-62（网页撞名/回收站同名/老库升级），第 10 节新增 M14。
   - **`docs/TECH_DESIGN.md`**：目录树补 `cmd/note/quick.go`、`internal/cli/ref.go`、`internal/cli/quick.go`、`sql/0007`；4.1 启动表补三条命令；5.1 schema 版本 6 → 7 并补 0007 的 SQL 形状与两条字段约定（`categories.id=2` 固定分类、标题唯一与 `COLLATE NOCASE` 查询口径）；5.3 迁移补 0007 条目；4.5 错误码表与 8.5 状态映射表补 409 两码；8.2 分类结构加 `reserved`；第 11 节测试表补 5 个新测试文件并把迁移数、schema 版本改成 7。

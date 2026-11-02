@@ -120,10 +120,12 @@ type SetOptions struct {
 	Content string
 }
 
-// GetOptions 是 note get 自己的参数：List 对应 note get --list。
+// GetOptions 是 note get 自己的参数：List 对应 note get --list，
+// Detail 对应 note get @分类 --detail（带时间与正文摘要的表格）。
 type GetOptions struct {
-	Ref  Ref
-	List bool
+	Ref    Ref
+	List   bool
+	Detail bool
 }
 
 // DelOptions 是 note del 自己的参数：Yes 是整分类删除的确认（note del @分类 必须显式加）。
@@ -503,6 +505,8 @@ func parseGetArgs(args []string) (GetOptions, []string, error) {
 			i++
 		case arg == "--list":
 			opts.List = true
+		case arg == "--detail":
+			opts.Detail = true
 		case strings.HasPrefix(arg, "-"):
 			return GetOptions{}, nil, fmt.Errorf("note get 无法识别的参数 %s（用 note get --help 查看用法）", arg)
 		default:
@@ -517,6 +521,9 @@ func parseGetArgs(args []string) (GetOptions, []string, error) {
 		if hasTarget || typeFlag != "" {
 			return GetOptions{}, nil, fmt.Errorf("note get --list 不接受引用或 --type（列的是全部分类）")
 		}
+		if opts.Detail {
+			return GetOptions{}, nil, fmt.Errorf("note get --list 不接受 --detail（分类本身没有时间与正文）")
+		}
 		return opts, configArgs, nil
 	}
 	if !hasTarget {
@@ -526,6 +533,9 @@ func parseGetArgs(args []string) (GetOptions, []string, error) {
 	ref, err := ParseRef(target, typeFlag, QuickCategoryName)
 	if err != nil {
 		return GetOptions{}, nil, fmt.Errorf("note get: %w", err)
+	}
+	if opts.Detail && !ref.CategoryOnly {
+		return GetOptions{}, nil, fmt.Errorf("note get --detail 只用于 note get @<分类>（读一条笔记用 note get <标题>）")
 	}
 	opts.Ref = ref
 	return opts, configArgs, nil

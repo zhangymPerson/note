@@ -527,6 +527,24 @@ func TestParseGetCategoryRef(t *testing.T) {
 	}
 }
 
+func TestParseGetDetail(t *testing.T) {
+	cmd, opts, err := Parse([]string{"get", "@工作", "--detail"})
+	if err != nil {
+		t.Fatalf("parse get @工作 --detail: %v", err)
+	}
+	if cmd != CommandGet || !opts.Get.Detail || !opts.Get.Ref.CategoryOnly {
+		t.Fatalf("unexpected options: %v %+v", cmd, opts.Get)
+	}
+
+	// --detail 只对「列一个分类」有意义：配上标题或 --list 都是用法错误。
+	if _, _, err := Parse([]string{"get", "周报", "--detail"}); err == nil {
+		t.Fatal("expected --detail with a title to be rejected")
+	}
+	if _, _, err := Parse([]string{"get", "--list", "--detail"}); err == nil {
+		t.Fatal("expected --detail with --list to be rejected")
+	}
+}
+
 func TestParseDelRequiresYesForCategory(t *testing.T) {
 	if _, _, err := Parse([]string{"del", "@工作"}); err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("expected a --yes hint, got %v", err)

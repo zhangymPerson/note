@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
-	"text/tabwriter"
 	"unicode/utf8"
 )
 
@@ -98,9 +98,10 @@ func RunGet(ctx context.Context, deps QuickDeps, ref Ref) (string, error) {
 	return note.Content, nil
 }
 
-// RunGetCategory 执行 note get @分类：每行「标题\tupdated_at」，按更新时间倒序。
+// RunGetCategory 执行 note get @分类：默认每行只给标题，按更新时间倒序。
+// detail 为真时改用 tabwriter 表格，多给更新时间与正文摘要（加密笔记没有可展示的正文）。
 // 空分类返回空串而不是错误：脚本里 `get @分类 | wc -l` 拿 0 就够了。
-func RunGetCategory(ctx context.Context, deps QuickDeps, ref Ref) (string, error) {
+func RunGetCategory(ctx context.Context, deps QuickDeps, ref Ref, detail bool) (string, error) {
 	category, err := deps.Category(ctx, ref.Category)
 	if err != nil {
 		return "", err
@@ -109,15 +110,46 @@ func RunGetCategory(ctx context.Context, deps QuickDeps, ref Ref) (string, error
 	if err != nil {
 		return "", err
 	}
+	if len(notes) == 0 {
+		return "", nil
+	}
 
 	var b strings.Builder
-	for _, note := range notes {
-		b.WriteString(note.Title)
-		b.WriteString("\t")
-		b.WriteString(note.UpdatedAt)
-		b.WriteString("\n")
+	if !detail {
+		for _, note := range notes {
+			b.WriteString(note.Title)
+			b.WriteString("\n")
+		}
+		return b.String(), nil
 	}
-	return b.String(), nil
+
+	rows := make([][]string, 0, len(notes))
+	for _, note := range notes {
+		body := "（加密）"
+		switch {
+		case note.Encrypted:
+		case strings.TrimSpace(note.Content) == "":
+			body = "（空）"
+		default:
+			body = foldForTable(note.Content, detailContentRunes)
+		}
+		rows = append(rows, []string{note.Title, note.UpdatedAt, body})
+	}
+	return renderTable([]string{"标题", "更新时间", "正文"}, rows), nil
+}
+
+// detailContentRunes 是 --detail 表格里正文摘要的上限：表格要能一眼看完，
+// 完整正文仍旧走 note get <标题>。
+const detailContentRunes = 60
+
+// foldForTable 把多行正文折成一行（表格里不能有换行），超长时按码点截断加省略号。
+func foldForTable(content string, limit int) string {
+	folded := strings.Join(strings.Fields(content), " ")
+	if utf8.RuneCountInString(folded) <= limit {
+		return folded
+	}
+	runes := []rune(folded)
+	return string(runes[:limit]) + "…"
 }
 
 // RunGetCategories 执行 note get --list：列出全部分类（含笔记数与固定分类标记）。
@@ -127,30 +159,53 @@ func RunGetCategories(ctx context.Context, deps QuickDeps) (string, error) {
 		return "", err
 	}
 
-	var b strings.Builder
-	writer := tabwriter.NewWriter(&b, 0, 8, 2, ' ', 0)
-	if _, err := fmt.Fprintln(writer, "ID\t分类\t笔记数\t备注"); err != nil {
-		return "", err
-	}
+	rows := make([][]string, 0, len(categories))
 	for _, category := range categories {
-		// 没有备注就不写第四列：否则 tabwriter 会把行尾补齐成一串空格，
-		// `note get --list | awk` 之类的管道会多出一个空字段。
+		row := []string{strconv.FormatInt(category.ID, 10), category.Name, strconv.Itoa(category.Count)}
+		// 没有备注就少写一列：多一个空列会让管道里多出一个空字段。
 		if category.Reserved {
-			if _, err := fmt.Fprintf(writer, "%d\t%s\t%d\t固定\n",
-				category.ID, category.Name, category.Count); err != nil {
-				return "", err
+			row = append(row, "固定")
+		}
+		rows = append(rows, row)
+	}
+	return renderTable([]string{"ID", "分类", "笔记数", "备注"}, rows), nil
+}
+
+// renderTable 用显示宽度（uniseg）对齐一张表：tabwriter 按码点算列宽，
+// 中文列会错位，所以这里按显示宽度补空格。行可以比表头短（缺的列就当没有），
+// 最后一列不补齐，避免管道里出现行尾空格。
+func renderTable(header []string, rows [][]string) string {
+	widths := make([]int, len(header))
+	for i, cell := range header {
+		widths[i] = displayWidth(cell)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			if i < len(widths) && displayWidth(cell) > widths[i] {
+				widths[i] = displayWidth(cell)
 			}
-			continue
-		}
-		if _, err := fmt.Fprintf(writer, "%d\t%s\t%d\n",
-			category.ID, category.Name, category.Count); err != nil {
-			return "", err
 		}
 	}
-	if err := writer.Flush(); err != nil {
-		return "", err
+
+	var b strings.Builder
+	writeRow := func(cells []string) {
+		for i, cell := range cells {
+			if i > 0 {
+				b.WriteString("  ")
+			}
+			if i < len(cells)-1 {
+				b.WriteString(padRight(cell, widths[i]))
+				continue
+			}
+			b.WriteString(cell)
+		}
+		b.WriteString("\n")
 	}
-	return b.String(), nil
+	writeRow(header)
+	for _, row := range rows {
+		writeRow(row)
+	}
+	return b.String()
 }
 
 // RunDel 执行 note del <标题[@分类]>：软删除一条（移入回收站）。

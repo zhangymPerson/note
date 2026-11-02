@@ -87,12 +87,21 @@ func TestQuickDepsRoundTrip(t *testing.T) {
 		}
 	}
 
-	rows, err := cli.RunGetCategory(ctx, deps, cli.Ref{Category: "工作", CategoryOnly: true})
+	rows, err := cli.RunGetCategory(ctx, deps, cli.Ref{Category: "工作", CategoryOnly: true}, false)
 	if err != nil {
 		t.Fatalf("RunGetCategory: %v", err)
 	}
-	if !strings.Contains(rows, "周报\t") {
+	if !strings.Contains(rows, "周报") {
 		t.Fatalf("分类列表应当含「周报」：%q", rows)
+	}
+
+	// --detail 走同一批数据，正文来自列表摘要（加密笔记没有摘要）。
+	detail, err := cli.RunGetCategory(ctx, deps, cli.Ref{Category: "工作", CategoryOnly: true}, true)
+	if err != nil {
+		t.Fatalf("RunGetCategory --detail: %v", err)
+	}
+	if !strings.Contains(detail, "本周结论 v2") || !strings.Contains(detail, "更新时间") {
+		t.Fatalf("详情表应当含标题、时间与正文摘要：%q", detail)
 	}
 
 	if _, err := cli.RunDel(ctx, deps, ref); err != nil {
@@ -150,11 +159,11 @@ func TestQuickDepsUncategorizedRoundTrip(t *testing.T) {
 		t.Fatalf("expected nil category_id, got %v", *note.CategoryID)
 	}
 
-	rows, err := cli.RunGetCategory(ctx, deps, cli.Ref{Category: "未分类", CategoryOnly: true})
+	rows, err := cli.RunGetCategory(ctx, deps, cli.Ref{Category: "未分类", CategoryOnly: true}, false)
 	if err != nil {
 		t.Fatalf("RunGetCategory 未分类: %v", err)
 	}
-	if !strings.Contains(rows, "随手记\t") {
+	if !strings.Contains(rows, "随手记") {
 		t.Fatalf("未分类列表应当含「随手记」：%q", rows)
 	}
 }

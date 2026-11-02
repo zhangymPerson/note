@@ -57,7 +57,7 @@ docs/              PRD、技术方案、构建指南
 - `note config` 与 `PUT /api/ai-config` 必须共用 `config.ValidateBaseURL` / `ValidateAPIKey` / `ValidatePrompt`（以及 `config.Normalize`），禁止在 web 层另写一套规则；`config.ValueError` 表示用法错误（命令行退出 2 / 网页 400），`config.ErrUnknownKey` 表示配置文件里已有未知键（网页 409，让用户先手改）。
 - CLI「打开笔记」只有一个含义：`note show <id>`、`note show`（无 id 进选择器）与 `note list` 的 `Enter` 预览共走 `cmd/note` 的 `openNote`——渲染到 stdout + 把 `ShowResult.Source`（库里的原始 Markdown，不是渲染结果）复制到剪贴板。复制只在 stdout 是终端时发生（管道/脚本不该被偷改剪贴板），提示写 stderr，失败不改变退出码；加密笔记没有可复制的原文，仍是退出码 4。网页详情页的「复制原文」按钮是同一语义（加密未解锁时不渲染）。
 - `note list` 的筛选：标题 + 分类用 fuzzy（bubbles `DefaultFilter`），正文用子串（`internal/cli/list.go#noteFilter`）——fuzzy 套在长正文上等于不筛。正文来自 `store.ListNotesAll` 的 `NoteListItem.FullContent`（`json:"-"`），网页列表走的 `ListNotes` 不得带回全文。
-- 「速记」是第二个内置固定分类（`id=2`，与「未分类」同受 `store.IsReservedCategory` 守卫，迁移 `sql/0007`）；同一分类内标题唯一（两条 partial unique index，`title COLLATE NOCASE`，**含回收站行**，因此恢复不会撞名死锁），网页撞名返回 409 `title_conflict` / `title_in_trash` 并带 `fields.title`。前端判断「能不能改名/删除」只认后端 `Category.reserved`，不得再硬编码分类 id。CLI 的 `note set/get/del` 只按 `(分类, 标题)` 寻址，`set`/`del` 提示写 stderr、`get` 正文写 stdout，退出码 0/1/2/4；`del @分类` 必须显式 `--yes`，`set` 撞上回收站同名拒绝覆盖并报出 id。
+- 「速记」是第二个内置固定分类（`id=2`，与「未分类」同受 `store.IsReservedCategory` 守卫，迁移 `sql/0007`）；同一分类内标题唯一（两条 partial unique index，`title COLLATE NOCASE`，**含回收站行**，因此恢复不会撞名死锁），网页撞名返回 409 `title_conflict` / `title_in_trash` 并带 `fields.title`。前端判断「能不能改名/删除」只认后端 `Category.reserved`，不得再硬编码分类 id。CLI 的 `note set/get/del` 只按 `(分类, 标题)` 寻址，`set`/`del` 提示写 stderr、`get` 正文写 stdout（`get @分类` 默认只列标题，`--detail` 才出「标题/更新时间/正文」表格），退出码 0/1/2/4；`del @分类` 必须显式 `--yes`，`set` 撞上回收站同名拒绝覆盖并报出 id。
 
 ## 开发流程规则
 

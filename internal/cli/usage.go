@@ -271,16 +271,19 @@ func setUsage() string {
 // getUsage 是 note get 的主题帮助。
 func getUsage() string {
 	var b strings.Builder
-	b.WriteString("用法: note get <标题[@分类]> | note get @<分类> | note get --list [参数]\n")
+	b.WriteString("用法: note get <标题[@分类]> | note get @<分类> [--detail] | note get --list [参数]\n")
 	b.WriteString("\n")
 	b.WriteString("note get <标题[@分类]>   把正文原样写到 stdout（缺结尾换行时补一个换行，便于终端与 wc -l）\n")
-	b.WriteString("note get @<分类>         列出分类下未删除笔记：每行「标题<TAB>updated_at」，按更新时间倒序\n")
+	b.WriteString("note get @<分类>         列出分类下未删除笔记：每行一个标题，按更新时间倒序\n")
+	b.WriteString("note get @<分类> --detail   改成表格：标题 / 更新时间 / 正文（折成一行、最多 60 字）\n")
+	b.WriteString("                            加密笔记的正文列写「（加密）」，空正文写「（空）」\n")
 	b.WriteString("note get --list          列出所有分类：ID / 分类 / 笔记数 / 备注（固定分类备注列写「固定」）\n")
 	b.WriteString("\n")
-	b.WriteString("--list 与引用互斥；@<分类> 与标题也不能混写。\n")
+	b.WriteString("--list 与引用互斥；@<分类> 与标题也不能混写；--detail 只用于 @<分类>。\n")
 	b.WriteString("\n")
 	b.WriteString("参数:\n")
 	b.WriteString("  --type <分类>          显式分类（标题里要写 @ 时用）\n")
+	b.WriteString("  --detail               只对 @<分类> 有效：表格里带上时间与正文摘要\n")
 	b.WriteString("  -c, --config <路径>    配置文件路径\n")
 	b.WriteString("  --db <路径>            SQLite 数据库路径\n")
 	b.WriteString("  -h, --help             显示本帮助\n")
@@ -297,7 +300,8 @@ func getUsage() string {
 	b.WriteString("示例:\n")
 	b.WriteString("  note get 部署命令            读回正文\n")
 	b.WriteString("  note get 周报@工作           读指定分类里的那条\n")
-	b.WriteString("  note get @工作               列出「工作」分类下的笔记\n")
+	b.WriteString("  note get @工作               列出「工作」分类下的笔记（只有标题）\n")
+	b.WriteString("  note get @工作 --detail      表格：标题 / 更新时间 / 正文摘要\n")
 	b.WriteString("  note get --list              列出所有分类\n")
 	return b.String()
 }

@@ -171,29 +171,69 @@ func TestRunGetRejectsCategoryOnly(t *testing.T) {
 	}
 }
 
-func TestRunGetCategoryFormatsRows(t *testing.T) {
+func TestRunGetCategoryListsTitlesOnlyByDefault(t *testing.T) {
 	deps := &fakeQuickDeps{
 		categories: []Category{{ID: 2, Name: "速记"}},
 		notes: []QuickNote{
-			{Title: "周报", UpdatedAt: "2026-11-02T08:00:00Z"},
+			{Title: "周报", UpdatedAt: "2026-11-02T08:00:00Z", Content: "本周的结论"},
 			{Title: "月报", Encrypted: true, UpdatedAt: "2026-11-01T08:00:00Z"},
 		},
 	}
 
-	text, err := RunGetCategory(context.Background(), deps.deps(), Ref{Category: "速记", CategoryOnly: true})
+	text, err := RunGetCategory(context.Background(), deps.deps(), Ref{Category: "速记", CategoryOnly: true}, false)
 	if err != nil {
 		t.Fatalf("RunGetCategory: %v", err)
 	}
-	want := "周报\t2026-11-02T08:00:00Z\n月报\t2026-11-01T08:00:00Z\n"
-	if text != want {
-		t.Fatalf("got %q, want %q", text, want)
+	// 默认只给标题：时间与正文要 --detail 才出现，管道里不该混进多余列。
+	if text != "周报\n月报\n" {
+		t.Fatalf("got %q", text)
+	}
+}
+
+func TestRunGetCategoryDetailPrintsTable(t *testing.T) {
+	deps := &fakeQuickDeps{
+		categories: []Category{{ID: 2, Name: "速记"}},
+		notes: []QuickNote{
+			{Title: "周报", UpdatedAt: "2026-11-02T08:00:00Z", Content: "本周的结论\n\n下一周的计划"},
+			{Title: "月报", Encrypted: true, UpdatedAt: "2026-11-01T08:00:00Z"},
+			{Title: "空笔记", UpdatedAt: "2026-10-31T08:00:00Z"},
+		},
+	}
+
+	text, err := RunGetCategory(context.Background(), deps.deps(), Ref{Category: "速记", CategoryOnly: true}, true)
+	if err != nil {
+		t.Fatalf("RunGetCategory --detail: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected header + 3 rows, got %q", text)
+	}
+	header := lines[0]
+	for _, want := range []string{"标题", "更新时间", "正文"} {
+		if !strings.Contains(header, want) {
+			t.Fatalf("expected header %q in %q", want, header)
+		}
+	}
+	if !strings.Contains(lines[1], "周报") || !strings.Contains(lines[1], "2026-11-02T08:00:00Z") {
+		t.Fatalf("expected title and time in %q", lines[1])
+	}
+	// 正文折成一行：表格里不该出现换行。
+	if !strings.Contains(lines[1], "本周的结论 下一周的计划") {
+		t.Fatalf("expected folded content in %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "（加密）") {
+		t.Fatalf("expected an encrypted marker in %q", lines[2])
+	}
+	if !strings.Contains(lines[3], "（空）") {
+		t.Fatalf("expected an empty-content marker in %q", lines[3])
 	}
 }
 
 func TestRunGetCategoryEmptyIsBlankNotError(t *testing.T) {
 	deps := &fakeQuickDeps{categories: []Category{{ID: 2, Name: "速记"}}}
 
-	text, err := RunGetCategory(context.Background(), deps.deps(), Ref{Category: "速记", CategoryOnly: true})
+	text, err := RunGetCategory(context.Background(), deps.deps(), Ref{Category: "速记", CategoryOnly: true}, true)
 	if err != nil {
 		t.Fatalf("RunGetCategory: %v", err)
 	}
