@@ -30,6 +30,12 @@ const (
 	CommandStatus
 	// CommandConfig 读写配置文件里的 AI 四项（list / set）。
 	CommandConfig
+	// CommandSet 新建或覆盖一条笔记（默认分类「速记」）。
+	CommandSet
+	// CommandGet 按标题读正文，或按分类列笔记/列分类。
+	CommandGet
+	// CommandDel 把笔记移进回收站（软删除）。
+	CommandDel
 	// CommandHelp 显示帮助。
 	CommandHelp
 )
@@ -70,6 +76,10 @@ type Options struct {
 	Show ShowOptions
 	// Config 仅对 CommandConfig 有意义。
 	Config ConfigOptions
+	// Set/Get/Del 仅对 CommandSet/CommandGet/CommandDel 有意义。
+	Set SetOptions
+	Get GetOptions
+	Del DelOptions
 }
 
 // ListOptions 是 note list 自己的开关。
@@ -95,14 +105,31 @@ type ShowOptions struct {
 }
 
 // ConfigOptions 是 note config 自己的参数。
-type ConfigOptions struct {
-	// List 为 true 表示 note config list；否则是 note config set。
+type ConfigOptions struct {	// List 为 true 表示 note config list；否则是 note config set。
 	List bool
 	// Key/Value 是 set 的键与值（已按第一个 = 拆开，值里可以再含 =）。
 	Key   string
 	Value string
 	// ConfigPath 是子命令里出现的 -c/--config，比全局 -c 优先。
 	ConfigPath string
+}
+
+// SetOptions 是 note set 自己的参数：Ref 已解析好，Content 是第二个位置参数。
+type SetOptions struct {
+	Ref     Ref
+	Content string
+}
+
+// GetOptions 是 note get 自己的参数：List 对应 note get --list。
+type GetOptions struct {
+	Ref  Ref
+	List bool
+}
+
+// DelOptions 是 note del 自己的参数：Yes 是整分类删除的确认（note del @分类 必须显式加）。
+type DelOptions struct {
+	Ref Ref
+	Yes bool
 }
 
 // showStyles 是 note show 允许的风格名（glamour 的内置风格）。
@@ -127,6 +154,7 @@ var valueFlags = map[string]bool{
 	"--db":     true,
 	"-p":       true,
 	"--port":   true,
+	"--type":   true,
 }
 
 // Parse 解析全局参数与子命令分发。args 不含程序名。
@@ -135,6 +163,9 @@ var valueFlags = map[string]bool{
 //
 //	note                    → CommandMenu（不带子命令：打印帮助）
 //	note add                → CommandAdd（交互向导）
+//	note set 标题 正文       → CommandSet（新建或覆盖，默认落「速记」）
+//	note get 标题 / @分类 / --list → CommandGet（读正文 / 列分类笔记 / 列分类）
+//	note del 标题 / @分类 --yes   → CommandDel（软删除）
 //	note -c <路径> web …    → CommandWeb（全局 -c 记入 Options.ConfigPath）
 //	note web -p 9000 …      → CommandWeb（参数留在 Options.Args）
 //	note config set a.b=c   → CommandConfig（key/value 已拆好）
@@ -215,6 +246,45 @@ func Parse(args []string) (Command, Options, error) {
 			}
 			opts.Config = configOpts
 			return CommandConfig, opts, nil
+		case arg == "set":
+			rest := args[i+1:]
+			if containsHelpFlag(rest) {
+				opts.Args = []string{"set"}
+				return CommandHelp, opts, nil
+			}
+			setOpts, configArgs, err := parseSetArgs(rest)
+			if err != nil {
+				return CommandMenu, Options{}, err
+			}
+			opts.Set = setOpts
+			opts.Args = configArgs
+			return CommandSet, opts, nil
+		case arg == "get":
+			rest := args[i+1:]
+			if containsHelpFlag(rest) {
+				opts.Args = []string{"get"}
+				return CommandHelp, opts, nil
+			}
+			getOpts, configArgs, err := parseGetArgs(rest)
+			if err != nil {
+				return CommandMenu, Options{}, err
+			}
+			opts.Get = getOpts
+			opts.Args = configArgs
+			return CommandGet, opts, nil
+		case arg == "del":
+			rest := args[i+1:]
+			if containsHelpFlag(rest) {
+				opts.Args = []string{"del"}
+				return CommandHelp, opts, nil
+			}
+			delOpts, configArgs, err := parseDelArgs(rest)
+			if err != nil {
+				return CommandMenu, Options{}, err
+			}
+			opts.Del = delOpts
+			opts.Args = configArgs
+			return CommandDel, opts, nil
 		case arg == "web" || arg == "info":
 			rest := args[i+1:]
 			if arg == "web" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
@@ -237,7 +307,7 @@ func Parse(args []string) (Command, Options, error) {
 		case strings.HasPrefix(arg, "-"):
 			return CommandMenu, Options{}, fmt.Errorf("无法识别的参数 %s（启动 Web 服务请用 note web）", arg)
 		default:
-			return CommandMenu, Options{}, fmt.Errorf("无法识别的命令 %s（可用命令: add, list, show, status, web, info, help）", arg)
+			return CommandMenu, Options{}, fmt.Errorf("无法识别的命令 %s（可用命令: add, set, get, del, list, show, status, web, info, config, help）", arg)
 		}
 	}
 	return CommandMenu, opts, nil
@@ -347,6 +417,170 @@ func parseShowArgs(args []string) (ShowOptions, []string, error) {
 	}
 	// 没给 id 不是错误：交互终端里进选择器（gum filter 那套）。
 	// 是不是终端由 cmd/note 判定并给出可读错误，解析层不探测。
+	return opts, configArgs, nil
+}
+
+// parseSetArgs 拆 note set 的参数：两个位置参数（目标引用、正文）加 --type。
+// 「正文」允许空串（用来清空），所以缺不缺第二个位置参数要单独记一个标记。
+func parseSetArgs(args []string) (SetOptions, []string, error) {
+	var (
+		target     string
+		content    string
+		hasTarget  bool
+		hasContent bool
+		typeFlag   string
+	)
+	var configArgs []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case addConfigFlags[arg]:
+			if i+1 >= len(args) {
+				return SetOptions{}, nil, fmt.Errorf("%s 需要一个值", arg)
+			}
+			configArgs = append(configArgs, arg, args[i+1])
+			i++
+		case arg == "--type":
+			if i+1 >= len(args) {
+				return SetOptions{}, nil, fmt.Errorf("--type 需要一个分类名")
+			}
+			typeFlag = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "-"):
+			return SetOptions{}, nil, fmt.Errorf("note set 无法识别的参数 %s（用 note set --help 查看用法）", arg)
+		default:
+			switch {
+			case !hasTarget:
+				target, hasTarget = arg, true
+			case !hasContent:
+				content, hasContent = arg, true
+			default:
+				return SetOptions{}, nil, fmt.Errorf("note set 只接受 <标题[@分类]> 与 <正文> 两个参数，多给了 %q", arg)
+			}
+		}
+	}
+
+	if !hasTarget {
+		return SetOptions{}, nil, fmt.Errorf("note set 需要 <标题[@分类]> 与 <正文>（用 note set --help 查看用法）")
+	}
+	if !hasContent {
+		return SetOptions{}, nil, fmt.Errorf("note set 缺少 <正文>（想清空正文就传空字符串）")
+	}
+
+	ref, err := ParseRef(target, typeFlag, QuickCategoryName)
+	if err != nil {
+		return SetOptions{}, nil, fmt.Errorf("note set: %w", err)
+	}
+	return SetOptions{Ref: ref, Content: content}, configArgs, nil
+}
+
+// parseGetArgs 拆 note get 的参数：可选的引用、--type 与 --list。
+// --list 与引用互斥：列分类时给标题没有意义。
+func parseGetArgs(args []string) (GetOptions, []string, error) {
+	var (
+		opts      GetOptions
+		target    string
+		hasTarget bool
+		typeFlag  string
+	)
+	var configArgs []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case addConfigFlags[arg]:
+			if i+1 >= len(args) {
+				return GetOptions{}, nil, fmt.Errorf("%s 需要一个值", arg)
+			}
+			configArgs = append(configArgs, arg, args[i+1])
+			i++
+		case arg == "--type":
+			if i+1 >= len(args) {
+				return GetOptions{}, nil, fmt.Errorf("--type 需要一个分类名")
+			}
+			typeFlag = args[i+1]
+			i++
+		case arg == "--list":
+			opts.List = true
+		case strings.HasPrefix(arg, "-"):
+			return GetOptions{}, nil, fmt.Errorf("note get 无法识别的参数 %s（用 note get --help 查看用法）", arg)
+		default:
+			if hasTarget {
+				return GetOptions{}, nil, fmt.Errorf("note get 只接受一个引用，多给了 %q", arg)
+			}
+			target, hasTarget = arg, true
+		}
+	}
+
+	if opts.List {
+		if hasTarget || typeFlag != "" {
+			return GetOptions{}, nil, fmt.Errorf("note get --list 不接受引用或 --type（列的是全部分类）")
+		}
+		return opts, configArgs, nil
+	}
+	if !hasTarget {
+		return GetOptions{}, nil, fmt.Errorf("note get 需要 <标题[@分类]> 或 @<分类>（看分类用 note get --list）")
+	}
+
+	ref, err := ParseRef(target, typeFlag, QuickCategoryName)
+	if err != nil {
+		return GetOptions{}, nil, fmt.Errorf("note get: %w", err)
+	}
+	opts.Ref = ref
+	return opts, configArgs, nil
+}
+
+// parseDelArgs 拆 note del 的参数：恰好一个引用、--type 与 --yes。
+// 整分类删除必须显式 --yes：删一条是软删除，删一整个分类也应该是用户明确要的。
+func parseDelArgs(args []string) (DelOptions, []string, error) {
+	var (
+		opts      DelOptions
+		target    string
+		hasTarget bool
+		typeFlag  string
+	)
+	var configArgs []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case addConfigFlags[arg]:
+			if i+1 >= len(args) {
+				return DelOptions{}, nil, fmt.Errorf("%s 需要一个值", arg)
+			}
+			configArgs = append(configArgs, arg, args[i+1])
+			i++
+		case arg == "--type":
+			if i+1 >= len(args) {
+				return DelOptions{}, nil, fmt.Errorf("--type 需要一个分类名")
+			}
+			typeFlag = args[i+1]
+			i++
+		case arg == "--yes":
+			opts.Yes = true
+		case strings.HasPrefix(arg, "-"):
+			return DelOptions{}, nil, fmt.Errorf("note del 无法识别的参数 %s（用 note del --help 查看用法）", arg)
+		default:
+			if hasTarget {
+				return DelOptions{}, nil, fmt.Errorf("note del 只接受一个引用，多给了 %q", arg)
+			}
+			target, hasTarget = arg, true
+		}
+	}
+
+	if !hasTarget {
+		return DelOptions{}, nil, fmt.Errorf("note del 需要 <标题[@分类]> 或 @<分类>（用 note del --help 查看用法）")
+	}
+
+	ref, err := ParseRef(target, typeFlag, QuickCategoryName)
+	if err != nil {
+		return DelOptions{}, nil, fmt.Errorf("note del: %w", err)
+	}
+	if ref.CategoryOnly && !opts.Yes {
+		return DelOptions{}, nil, fmt.Errorf("note del @%s 会把整个分类下的笔记都移入回收站，请显式加 --yes 确认", ref.Category)
+	}
+	opts.Ref = ref
 	return opts, configArgs, nil
 }
 

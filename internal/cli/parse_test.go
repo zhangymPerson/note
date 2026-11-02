@@ -461,3 +461,103 @@ func TestParseConfigHelp(t *testing.T) {
 		t.Fatalf("cmd=%v opts=%+v", cmd, opts)
 	}
 }
+
+func TestParseSetArgs(t *testing.T) {
+	cmd, opts, err := Parse([]string{"set", "周报", "正文内容"})
+	if err != nil {
+		t.Fatalf("parse set: %v", err)
+	}
+	if cmd != CommandSet {
+		t.Fatalf("cmd = %v, want CommandSet", cmd)
+	}
+	want := Ref{Title: "周报", Category: QuickCategoryName}
+	if opts.Set.Ref != want || opts.Set.Content != "正文内容" {
+		t.Fatalf("unexpected set options: %+v", opts.Set)
+	}
+}
+
+func TestParseSetRejectsExtraArgs(t *testing.T) {
+	if _, _, err := Parse([]string{"set", "周报", "正文", "多余"}); err == nil {
+		t.Fatal("expected an error for extra positional arguments")
+	}
+	if _, _, err := Parse([]string{"set", "只有标题"}); err == nil {
+		t.Fatal("expected an error when the content is missing")
+	}
+}
+
+func TestParseSetAcceptsTypeFlag(t *testing.T) {
+	cmd, opts, err := Parse([]string{"set", "--type", "工作", "周报", "正文"})
+	if err != nil {
+		t.Fatalf("parse set --type: %v", err)
+	}
+	if cmd != CommandSet {
+		t.Fatalf("cmd = %v, want CommandSet", cmd)
+	}
+	if opts.Set.Ref != (Ref{Title: "周报", Category: "工作"}) {
+		t.Fatalf("unexpected ref: %+v", opts.Set.Ref)
+	}
+}
+
+func TestParseGetList(t *testing.T) {
+	cmd, opts, err := Parse([]string{"get", "--list"})
+	if err != nil {
+		t.Fatalf("parse get --list: %v", err)
+	}
+	if cmd != CommandGet || !opts.Get.List {
+		t.Fatalf("cmd = %v opts = %+v, want CommandGet with List", cmd, opts.Get)
+	}
+	if opts.Get.Ref != (Ref{}) {
+		t.Fatalf("expected an empty ref with --list, got %+v", opts.Get.Ref)
+	}
+}
+
+func TestParseGetRejectsListWithTarget(t *testing.T) {
+	if _, _, err := Parse([]string{"get", "--list", "@工作"}); err == nil {
+		t.Fatal("expected --list and a target to be mutually exclusive")
+	}
+}
+
+func TestParseGetCategoryRef(t *testing.T) {
+	cmd, opts, err := Parse([]string{"get", "@工作"})
+	if err != nil {
+		t.Fatalf("parse get @工作: %v", err)
+	}
+	if cmd != CommandGet || opts.Get.Ref != (Ref{Category: "工作", CategoryOnly: true}) {
+		t.Fatalf("unexpected options: %v %+v", cmd, opts.Get)
+	}
+}
+
+func TestParseDelRequiresYesForCategory(t *testing.T) {
+	if _, _, err := Parse([]string{"del", "@工作"}); err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("expected a --yes hint, got %v", err)
+	}
+	cmd, opts, err := Parse([]string{"del", "@工作", "--yes"})
+	if err != nil {
+		t.Fatalf("parse del @工作 --yes: %v", err)
+	}
+	if cmd != CommandDel || !opts.Del.Yes || !opts.Del.Ref.CategoryOnly {
+		t.Fatalf("unexpected del options: %v %+v", cmd, opts.Del)
+	}
+}
+
+func TestParseQuickCommandsAcceptConfigFlags(t *testing.T) {
+	cmd, opts, err := Parse([]string{"get", "周报", "-c", "x.yaml"})
+	if err != nil {
+		t.Fatalf("parse with config flag: %v", err)
+	}
+	if cmd != CommandGet || !reflect.DeepEqual(opts.Args, []string{"-c", "x.yaml"}) {
+		t.Fatalf("cmd = %v args = %v", cmd, opts.Args)
+	}
+}
+
+func TestParseQuickCommandHelp(t *testing.T) {
+	for _, name := range []string{"set", "get", "del"} {
+		cmd, opts, err := Parse([]string{name, "--help"})
+		if err != nil {
+			t.Fatalf("parse %s --help: %v", name, err)
+		}
+		if cmd != CommandHelp || !reflect.DeepEqual(opts.Args, []string{name}) {
+			t.Fatalf("%s: cmd = %v args = %v", name, cmd, opts.Args)
+		}
+	}
+}

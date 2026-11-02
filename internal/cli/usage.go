@@ -15,7 +15,7 @@ func Usage() string {
 	b.WriteString("命令:\n")
 	b.WriteString("  web      启动 Web 服务（start/stop/status 管理后台实例，不带动作则前台运行）\n")
 	b.WriteString("  info     输出软件与运行信息\n")
-	b.WriteString("  add      新建一条笔记（交互向导：选分类 → 标题 → 正文）\n")
+	b.WriteString("  add      新建一条笔记（交互向导：选分类 → 标题 → 正文）\n  set      新建或覆盖一条笔记（note set <标题[@分类]> <正文>，默认落「速记」）\n  get      读正文或列清单（get <标题[@分类]> · get @<分类> · get --list）\n  del      把笔记移入回收站（软删除；del @<分类> 需 --yes）\n")
 	b.WriteString("  list     列出笔记并筛选（输入即筛选标题/分类/正文；Enter 预览；非终端时输出纯文本）\n")
 	b.WriteString("  show     渲染一条笔记并把原文复制到剪贴板（不给 id 时先选后看）\n")
 	b.WriteString("  status   输出使用统计（事件构成、累计事件、活跃天数、Top 查询词）\n")
@@ -34,7 +34,7 @@ func Usage() string {
 	b.WriteString("  note web start -p 9000      指定端口后台启动\n")
 	b.WriteString("  note web --remote --addr 0.0.0.0:8080    允许局域网访问\n")
 	b.WriteString("  note info                   查看软件与运行信息\n")
-	b.WriteString("  note list                   筛选并预览笔记\n")
+	b.WriteString("  note set 部署命令 \"make deploy\"     记一条速记（同名覆盖）\n  note get 部署命令           读回速记正文\n  note get @工作              列出「工作」分类下的笔记\n  note get --list             列出所有分类\n  note del 部署命令           移入回收站（软删除）\n  note list                   筛选并预览笔记\n")
 	b.WriteString("  note show                   交互选一条，渲染并复制原文\n")
 	b.WriteString("  note show 9f2c1a3b-…       按 id 渲染并复制原文\n")
 	b.WriteString("  note status                 查看使用统计（与网页概览页同源）\n")
@@ -57,7 +57,7 @@ func Usage() string {
 	return b.String()
 }
 
-// UsageFor 返回指定主题（web/info/add/list/show/status/config）的帮助文本；未知主题回退为总帮助。
+// UsageFor 返回指定主题（web/info/add/set/get/del/list/show/status/config）的帮助文本；\n// 未知主题回退为总帮助。
 func UsageFor(topic string) string {
 	switch strings.TrimSpace(topic) {
 	case "web":
@@ -74,6 +74,12 @@ func UsageFor(topic string) string {
 		return statusUsage()
 	case "config":
 		return configUsage()
+	case "set":
+		return setUsage()
+	case "get":
+		return getUsage()
+	case "del":
+		return delUsage()
 	default:
 		return Usage()
 	}
@@ -221,5 +227,106 @@ func addUsage() string {
 	b.WriteString("  -h, --help             显示本帮助\n\n")
 	b.WriteString("note add 不接受其它参数；脚本化创建笔记请用 POST /api/notes。\n")
 	b.WriteString("stdin 不是终端时报错退出，不会挂起等待输入。\n")
+	return b.String()
+}
+
+// setUsage 是 note set 的主题帮助；寻址语法与 parse/ref 层必须一致。
+func setUsage() string {
+	var b strings.Builder
+	b.WriteString("用法: note set <标题[@分类]> <正文> [参数]\n")
+	b.WriteString("\n")
+	b.WriteString("新建或覆盖一条明文笔记；不指定分类时落在内置分类「速记」。\n")
+	b.WriteString("同一个分类里标题唯一（大小写不敏感）：同名就是覆盖那一条，不会新建第二条。\n")
+	b.WriteString("分类不存在时自动创建（note set 周报@工作 正文）。\n")
+	b.WriteString("\n")
+	b.WriteString("标题寻址:\n")
+	b.WriteString("  <标题>          速记分类里的这条\n")
+	b.WriteString("  <标题>@<分类>   指定分类里的这条\n")
+	b.WriteString("  --type <分类>   显式分类（标题里要写 @ 时用）\n")
+	b.WriteString("\n")
+	b.WriteString("参数:\n")
+	b.WriteString("  <标题[@分类]>          标题 1-200 字符\n")
+	b.WriteString("  <正文>                 0-2000 字符（传空字符串即清空正文）\n")
+	b.WriteString("  --type <分类>          分类名（≤30 字符）\n")
+	b.WriteString("  -c, --config <路径>    配置文件路径\n")
+	b.WriteString("  --db <路径>            SQLite 数据库路径\n")
+	b.WriteString("  -h, --help             显示本帮助\n")
+	b.WriteString("\n")
+	b.WriteString("stdout 一个字节都不打印：成功提示写 stderr（「已保存「标题」@速记」/「已更新「标题」@速记」），\n")
+	b.WriteString("这样 note set … && note get … 这类脚本管道不会被提示文案污染。\n")
+	b.WriteString("同名笔记在回收站里时拒绝覆盖（先去网页恢复或彻底删除）；加密笔记也不能在这里覆盖。\n")
+	b.WriteString("\n")
+	b.WriteString("退出码:\n")
+	b.WriteString("  0  正常\n")
+	b.WriteString("  1  同名笔记在回收站里、命中的是加密笔记，或数据层失败\n")
+	b.WriteString("  2  参数错误（缺正文、标题/分类名不合法、正文超长）\n")
+	b.WriteString("\n")
+	b.WriteString("示例:\n")
+	b.WriteString("  note set 部署命令 \"make deploy\"        记一条速记\n")
+	b.WriteString("  note set 周报@工作 \"本周结论\"         写进「工作」分类（分类不存在时自动建）\n")
+	b.WriteString("  note set --type 工作 \"a@b\" \"正文\"   标题里要写 @ 时用 --type\n")
+	return b.String()
+}
+
+// getUsage 是 note get 的主题帮助。
+func getUsage() string {
+	var b strings.Builder
+	b.WriteString("用法: note get <标题[@分类]> | note get @<分类> | note get --list [参数]\n")
+	b.WriteString("\n")
+	b.WriteString("note get <标题[@分类]>   把正文原样写到 stdout（缺结尾换行时补一个换行，便于终端与 wc -l）\n")
+	b.WriteString("note get @<分类>         列出分类下未删除笔记：每行「标题<TAB>updated_at」，按更新时间倒序\n")
+	b.WriteString("note get --list          列出所有分类：ID / 分类 / 笔记数 / 备注（固定分类备注列写「固定」）\n")
+	b.WriteString("\n")
+	b.WriteString("--list 与引用互斥；@<分类> 与标题也不能混写。\n")
+	b.WriteString("\n")
+	b.WriteString("参数:\n")
+	b.WriteString("  --type <分类>          显式分类（标题里要写 @ 时用）\n")
+	b.WriteString("  -c, --config <路径>    配置文件路径\n")
+	b.WriteString("  --db <路径>            SQLite 数据库路径\n")
+	b.WriteString("  -h, --help             显示本帮助\n")
+	b.WriteString("\n")
+	b.WriteString("加密笔记在 CLI 里解不开（主密码只在浏览器里），退出码 4。\n")
+	b.WriteString("回收站里的笔记不算「找到」：提示后退出码 1。\n")
+	b.WriteString("\n")
+	b.WriteString("退出码:\n")
+	b.WriteString("  0  正常（含分类下没有笔记的空结果）\n")
+	b.WriteString("  1  找不到笔记或分类\n")
+	b.WriteString("  2  参数错误\n")
+	b.WriteString("  4  命中的是加密笔记\n")
+	b.WriteString("\n")
+	b.WriteString("示例:\n")
+	b.WriteString("  note get 部署命令            读回正文\n")
+	b.WriteString("  note get 周报@工作           读指定分类里的那条\n")
+	b.WriteString("  note get @工作               列出「工作」分类下的笔记\n")
+	b.WriteString("  note get --list              列出所有分类\n")
+	return b.String()
+}
+
+// delUsage 是 note del 的主题帮助。
+func delUsage() string {
+	var b strings.Builder
+	b.WriteString("用法: note del <标题[@分类]> | note del @<分类> --yes [参数]\n")
+	b.WriteString("\n")
+	b.WriteString("删除是软删除：只写 deleted_at，正文原样留在库里，可在网页回收站里恢复或彻底删除。\n")
+	b.WriteString("删整个分类必须显式加 --yes：一次删一整类是危险操作，脚本里也该看得见。\n")
+	b.WriteString("\n")
+	b.WriteString("参数:\n")
+	b.WriteString("  --type <分类>          显式分类（标题里要写 @ 时用）\n")
+	b.WriteString("  --yes                  确认删除整个分类\n")
+	b.WriteString("  -c, --config <路径>    配置文件路径\n")
+	b.WriteString("  --db <路径>            SQLite 数据库路径\n")
+	b.WriteString("  -h, --help             显示本帮助\n")
+	b.WriteString("\n")
+	b.WriteString("成功提示写 stderr，stdout 为空。加密笔记照常可删（软删除不碰正文/密文）。\n")
+	b.WriteString("\n")
+	b.WriteString("退出码:\n")
+	b.WriteString("  0  正常\n")
+	b.WriteString("  1  找不到、已在回收站里，或整分类删除没删到任何笔记\n")
+	b.WriteString("  2  参数错误（含 del @<分类> 缺 --yes）\n")
+	b.WriteString("\n")
+	b.WriteString("示例:\n")
+	b.WriteString("  note del 部署命令            移入回收站\n")
+	b.WriteString("  note del 周报@工作           删指定分类里的那条\n")
+	b.WriteString("  note del @工作 --yes         把「工作」分类下的笔记全部移入回收站\n")
 	return b.String()
 }

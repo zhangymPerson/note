@@ -8,6 +8,13 @@
 
 ### Added
 
+- CLI 子命令解析与帮助文本（实现过程与关键逻辑）：
+  - **`internal/cli/parse.go`**：新增 `CommandSet/CommandGet/CommandDel` 与 `SetOptions{Ref, Content}` / `GetOptions{Ref, List}` / `DelOptions{Ref, Yes}`；手写解析仍是主入口，`set/get/del` 只从位置参数里取引用与正文，配置类开关（`-c/--config`、`--db`）原样透传给 `opts.Args`，未知开关一律报错，`--type` 进入 `valueFlags` 以免 `--type -h` 被当成帮助。
+  - **解析规则**：`set` 恰好两个位置参数（第二个即空串也算给了，用来清空正文），`get` 最多一个引用且 `--list` 与引用互斥，`del` 恰好一个引用且 `@分类` 引用必须带 `--yes`（错误文案直接点出 `--yes`）。
+  - **`internal/cli/usage.go`**：总帮助的命令表与示例补齐 `set/get/del`，`UsageFor` 新增 `set/get/del` 三个主题，各自写明寻址语法、参数、stdout/stderr 约定与退出码表。
+  - **测试**：`internal/cli/parse_test.go` 新增 9 例（缺正文/多给参数、`--type`、`--list` 互斥、`@分类` 引用、缺 `--yes` 的提示、配置开关透传、三命令的 `--help`）。
+  - **验证**：`go test ./...` 392 项全绿；`go vet ./...` 无输出。
+
 - CLI `set / get / del` 的纯逻辑与输出格式（实现过程与关键逻辑）：
   - **`internal/cli/quick.go`**：`QuickDeps`（分类查询/按需建分类/按标题读写/按分类列与删）+ `RunSet` / `RunGet` / `RunGetCategory` / `RunGetCategories` / `RunDel` / `RunDelCategory`。cli 不依赖 store，store 的哨兵错误由 `cmd/note` 的适配层翻译成 `ErrQuickNotFound` / `ErrQuickInTrash` / `ErrQuickCategoryNotFound`（加密沿用 `ErrNoteEncrypted`）。
   - **输出约定**：`set`/`del` 只返回要写给 stderr 的提示（stdout 一个字节不写）；`get <标题>` 输出原文，缺结尾换行时补一个；`get @分类` 每行 `标题	updated_at`（空分类输出空串、退出码 0）；`get --list` 用 `text/tabwriter` 打 `ID/分类/笔记数/备注`，固定分类备注列写 `固定`。
