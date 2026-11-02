@@ -8,6 +8,14 @@
 
 ### Added
 
+- store 层按「(分类, 标题)」读写（实现过程与关键逻辑）：
+  - **新增 `internal/store/note_title.go`**：`FindNoteByTitle` / `UpsertNoteByTitle` / `SoftDeleteNoteByTitle` / `SoftDeleteCategoryNotes` / `ListNotesInCategory`。按标题的查询一律显式 `title = ? COLLATE NOCASE`（`notes.title` 列本身没有声明 COLLATE，NOCASE 只写在唯一索引上），未分类用 `category_id IS NULL`。
+  - **`note set` 的落库语义**：命中活的 → 只换正文（`rev+1`、`updated_at` 刷新，标题与分类不动）；命中回收站 → `ErrNoteTitleInTrash`（拒绝复活、拒绝覆盖，回收站里的正文原样保留）；命中加密笔记 → `ErrEncryptedImmutable`（`set` 只会写明文，加密后不可回退）；都没有 → 新建。活动事件：新建 `note_create`、覆盖 `note_update`，一次命令一条。
+  - **撞名错误分两类**：`CreateNote`/`UpdateNote` 撞上标题唯一索引时不再笼统地当 `id_conflict`，`isTitleUniqueError` 认 `notes.title` 的两种索引形态，再由 `classifyTitleConflict` 探一次 `deleted_at` 决定返回 `ErrNoteTitleExists` 还是 `ErrNoteTitleInTrash`——网页端因此能给出「同分类下已有同名笔记」/「回收站里已有同名笔记」两种可读提示（409 在网页任务里接入）。
+  - **软删除复用**：`SoftDeleteNote` 的事务体抽成 `softDeleteNoteTx`，按标题与按分类两条新路径共用；按分类删除逐条记 `note_delete`，与逐条删除同口径。
+  - **测试**：`internal/store/note_title_test.go` 9 例（新建→覆盖同一条且 rev/事件正确、回收站同名拒绝且正文不变、加密拒绝、大小写变体命中同一条、`FindNoteByTitle` 返回回收站行、软删三条分支、按分类只删活笔记且不误伤未分类、分类内按 `updated_at` 倒序、Create/Update 撞名的两种哨兵）。
+  - **验证**：`go test ./...` 357 项全绿；`go vet ./...` 无输出。
+
 - 内置「速记」固定分类与「同分类标题唯一」（实现过程与关键逻辑）：
   - **迁移 0007**（`sql/0007_quick_category_and_unique_title.sql`）：插入 `categories(2, '速记')`，再清理存量同分类同名笔记——按 `(category_id, 标题 NOCASE)` 用 `ROW_NUMBER() OVER (...)` 分组，保留顺序是「活着的优先 → `updated_at` 新优先 → `id` 大优先」，其余追加 ` (序号)`；序号被同分类里用户自己的标题占用时退化成 ` (序号 · id 前 8 位)`，两种后缀在组内两两不同，改名后按 200 字符截断。`category_id` 的比较一律用 `IS`（NULL 与 NULL 相等），不能用 `=`。
   - **两条唯一索引**：`idx_notes_title_category`（`category_id IS NOT NULL`）与 `idx_notes_title_uncategorized`（`category_id IS NULL`，未分类在库里是 NULL，普通唯一索引对 NULL 无效）；标题用 `COLLATE NOCASE`，与分类名的撞名口径一致。索引**包含回收站里的行**：恢复笔记因此永远不会撞名，代价是「用已删笔记的标题新建」必须被拒绝而不是静默放行（409 在下一步接入）。

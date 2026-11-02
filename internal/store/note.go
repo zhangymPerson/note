@@ -140,6 +140,10 @@ func (s *Store) CreateNote(ctx context.Context, in NoteInput) (Note, error) {
 		return recordActivityTx(ctx, tx, ActivityNoteCreate)
 	})
 	if err != nil {
+		// 撞上标题唯一索引时区分「活着已有」与「在回收站里」（事务已回滚，连接可用）。
+		if isTitleUniqueError(err) {
+			return Note{}, s.classifyTitleConflict(ctx, in.CategoryID, title)
+		}
 		return Note{}, err
 	}
 	return s.GetNote(ctx, id)
@@ -249,6 +253,9 @@ func (s *Store) UpdateNote(ctx context.Context, id string, in NoteInput) (Note, 
 		return recordActivityTx(ctx, tx, ActivityNoteUpdate)
 	})
 	if err != nil {
+		if isTitleUniqueError(err) {
+			return Note{}, s.classifyTitleConflict(ctx, in.CategoryID, title)
+		}
 		return Note{}, err
 	}
 	return s.GetNote(ctx, id)
@@ -357,25 +364,30 @@ func (s *Store) UpdateNoteCipher(ctx context.Context, id, cipherB64, kdfParams s
 // 这是「删除」的默认语义（0006）；真正清数据走 PurgeNote。
 func (s *Store) SoftDeleteNote(ctx context.Context, id string) (Note, error) {
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx,
-			`UPDATE notes SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`,
-			nowUTC(), id)
-		if err != nil {
-			return fmt.Errorf("soft delete note: %w", err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("soft delete note rows affected: %w", err)
-		}
-		if n == 0 {
-			return ErrNoteNotFound
-		}
-		return recordActivityTx(ctx, tx, ActivityNoteDelete)
+		return softDeleteNoteTx(ctx, tx, id)
 	})
 	if err != nil {
 		return Note{}, err
 	}
 	return s.GetNote(ctx, id)
+}
+
+// softDeleteNoteTx 只写 deleted_at；调用方负责确认目标是活的笔记。
+func softDeleteNoteTx(ctx context.Context, tx *sql.Tx, id string) error {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE notes SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`,
+		nowUTC(), id)
+	if err != nil {
+		return fmt.Errorf("soft delete note: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("soft delete note rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrNoteNotFound
+	}
+	return recordActivityTx(ctx, tx, ActivityNoteDelete)
 }
 
 // RestoreNote 把笔记从回收站取回：只清 deleted_at，不改 updated_at（
@@ -698,4 +710,34 @@ func boolInt(v bool) int {
 
 func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// isTitleUniqueError 判断是不是撞上了标题唯一索引。SQLite 的错误文本分别是
+// "UNIQUE constraint failed: notes.title"（未分类那条 partial index）与
+// "UNIQUE constraint failed: notes.title, notes.category_id"（复合索引）；
+// 主键冲突是 "notes.id"，不会命中这里。
+func isTitleUniqueError(err error) bool {
+	return isUniqueConstraint(err) && strings.Contains(err.Error(), "notes.title")
+}
+
+// classifyTitleConflict 在撞名之后探一次该 (分类, 标题) 的 deleted_at，
+// 让调用方能区分「活着已同名」与「同名在回收站里」。
+// 唯一索引保证最多只有一行，探不到时按「活着已有」处理（不应发生）。
+func (s *Store) classifyTitleConflict(ctx context.Context, categoryID *int64, title string) error {
+	predicate, _ := categoryPredicate(categoryID)
+	var deletedAt sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT deleted_at FROM notes WHERE title = ? COLLATE NOCASE AND `+predicate+` LIMIT 1`,
+		titleLookupArgs(title, categoryID)...,
+	).Scan(&deletedAt)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("classify note title conflict", "error", err)
+		}
+		return ErrNoteTitleExists
+	}
+	if deletedAt.Valid {
+		return ErrNoteTitleInTrash
+	}
+	return ErrNoteTitleExists
 }
