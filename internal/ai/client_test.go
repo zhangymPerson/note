@@ -183,6 +183,38 @@ func TestOptimizeRespectsContextAndTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestOptimizeWrapsTimeoutWithActionableMessage(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(150 * time.Millisecond)
+		io.WriteString(w, `{"choices":[{"message":{"content":"x"}}]}`)
+	})
+	c.HTTP = &http.Client{Timeout: 20 * time.Millisecond}
+
+	_, err := c.Optimize(context.Background(), "x", "")
+	if err == nil {
+		t.Fatal("应当超时")
+	}
+	var timeoutErr TimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("应当是 TimeoutError，得到 %T: %v", err, err)
+	}
+	if timeoutErr.Model != "m1" || timeoutErr.Duration != 20*time.Millisecond {
+		t.Fatalf("TimeoutError 要带模型与时长: %+v", timeoutErr)
+	}
+	// 原始错误链不能断：web 层靠 errors.Is 判 504。
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("应当仍可 Is DeadlineExceeded: %v", err)
+	}
+	for _, want := range []string{"模型 m1", "20 毫秒", "重试", "换一个模型"} {
+		if !strings.Contains(timeoutErr.Error(), want) {
+			t.Fatalf("超时文案缺 %q: %s", want, timeoutErr.Error())
+		}
+	}
+	if strings.Contains(timeoutErr.Error(), `Post "`) {
+		t.Fatalf("别把 net/http 的原文甩给用户: %s", timeoutErr.Error())
+	}
+}
+
 func TestBuildPrompt(t *testing.T) {
 	if BuildPrompt("", "笔记") != strings.Replace(config.DefaultAIPrompt, config.PromptVariable, "笔记", 1) {
 		t.Fatal("空模板应当使用默认提示词")

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -73,6 +74,45 @@ type ModelError struct{ Model string }
 
 func (e ModelError) Error() string {
 	return fmt.Sprintf("模型 %q 不在 ai.models 里，请先在配置里加上它", e.Model)
+}
+
+// TimeoutError 表示上游在超时时间内没有返回。
+//
+// 为什么要包一层：net/http 的原始错误长这样
+// `Post "https://gw.example.com/v1/chat/completions": context deadline exceeded`，
+// 命令行把它当状态行抛出来、网页原样回给用户，都等于没说「接下来能做什么」。
+// 这里统一成「模型 X 在 N 秒内没有响应，可以稍后重试、换一个模型…」，
+// 并用 Unwrap 保留 context.DeadlineExceeded，让调用方仍能判定 504。
+type TimeoutError struct {
+	Model    string
+	Duration time.Duration
+	Err      error
+}
+
+func (e TimeoutError) Error() string {
+	where := "AI 接口"
+	if e.Model != "" {
+		where = fmt.Sprintf("模型 %s", e.Model)
+	}
+	return fmt.Sprintf("%s 在 %s内没有响应，可以稍后重试、换一个模型，或检查接口地址是否可用",
+		where, formatTimeout(e.Duration))
+}
+
+func (e TimeoutError) Unwrap() error { return e.Err }
+
+// formatTimeout 把超时时长写成人话：整秒用「60 秒」，毫秒级用「200 毫秒」，
+// 其余情况退回 Duration.String()（例如 1.5 秒不会变成「1 秒」）。
+func formatTimeout(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return ""
+	case d%time.Second == 0:
+		return fmt.Sprintf("%d 秒", int64(d/time.Second))
+	case d%time.Millisecond == 0:
+		return fmt.Sprintf("%d 毫秒", int64(d/time.Millisecond))
+	default:
+		return d.String() + " "
+	}
 }
 
 // UpstreamError 是上游的非 2xx 响应：保留状态码与截断后的摘要。
@@ -170,7 +210,7 @@ func (c *Client) Optimize(ctx context.Context, content, model string) (Result, e
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Result{}, err
+		return Result{}, wrapTransportError(err, model, effectiveTimeout(client))
 	}
 	defer resp.Body.Close()
 
@@ -208,6 +248,29 @@ func (c *Client) Optimize(ctx context.Context, content, model string) (Result, e
 		return Result{}, ErrEmptyResult
 	}
 	return Result{Content: content2, Model: model}, nil
+}
+
+// wrapTransportError 只给「等太久」这一种失败换文案：其它传输错误（DNS、连接被拒、
+// 证书问题）原样返回，它们的原文比我们编的摘要更有用。
+func wrapTransportError(err error, model string, timeout time.Duration) error {
+	var netErr net.Error
+	if !errors.Is(err, context.DeadlineExceeded) && !(errors.As(err, &netErr) && netErr.Timeout()) {
+		return err
+	}
+	if errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// 用户自己取消（网页关页、Ctrl+C）不是「超时」，别误导成上游有问题。
+		return err
+	}
+	return TimeoutError{Model: model, Duration: timeout, Err: err}
+}
+
+// effectiveTimeout 是这次调用真正生效的上限：客户端自带 60 秒，
+// 调用方也可以塞一个自己的 HTTP 客户端（测试就是这么把超时压到毫秒的）。
+func effectiveTimeout(c *http.Client) time.Duration {
+	if c != nil && c.Timeout > 0 {
+		return c.Timeout
+	}
+	return defaultTimeout
 }
 
 func (c *Client) hasModel(model string) bool {

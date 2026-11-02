@@ -699,6 +699,27 @@ func TestCtrlOAdoptsOptimizedContent(t *testing.T) {
 	}
 }
 
+func TestCtrlOOptimizeFailureShowsReason(t *testing.T) {
+	m := enterContentStep(t)
+	m.deps.AIModel, m.deps.AIHost = "m1", "api.example.com"
+	m.deps.Optimize = func(context.Context, string) (OptimizeResult, error) {
+		// 文案与 internal/ai 的超时错误同口径：cmd 层把 ai 的错误原样交给这里。
+		return OptimizeResult{}, errors.New("模型 m1 在 60 秒内没有响应，可以稍后重试、换一个模型")
+	}
+
+	m, cmd := pressCmd(m, "ctrl+o")
+	m = feed(m, cmd())
+
+	if m.step != stepContent || m.body.Value() != "原正文" {
+		t.Fatalf("失败应退回正文步且不改正文: step=%v body=%q", m.step, m.body.Value())
+	}
+	for _, want := range []string{"AI 优化失败", "60 秒", "重试"} {
+		if !strings.Contains(m.status, want) {
+			t.Fatalf("状态行缺 %q: %q", want, m.status)
+		}
+	}
+}
+
 func TestPreviewEscKeepsOriginal(t *testing.T) {
 	m := enterContentStep(t)
 	m.deps.AIModel, m.deps.AIHost = "m1", "h"

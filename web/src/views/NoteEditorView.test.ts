@@ -195,6 +195,35 @@ describe("NoteEditorView 的 AI 优化", () => {
     expect(buttonWith(element, "替换正文").disabled).toBe(true);
   });
 
+  it("上游超时：错误原文 + 指向信息页的可操作提示", async () => {
+    const { ApiRequestError } =
+      await vi.importActual<typeof import("../lib/api")>("../lib/api");
+    mocks.optimizeNote.mockRejectedValue(
+      new ApiRequestError(
+        "ai_timeout",
+        "模型 m1 在 60 秒内没有响应，可以稍后重试、换一个模型，或检查接口地址是否可用",
+      ),
+    );
+    const element = await renderEditor();
+    typeInto(contentBox(element), "原始正文");
+    await vi.waitFor(() =>
+      expect(element.textContent).toContain("正文会发送到"),
+    );
+    click(aiButton(element));
+
+    await vi.waitFor(() =>
+      expect(element.querySelector(".ai-result .form-error")).not.toBeNull(),
+    );
+    const alert = element.querySelector(".ai-result") as HTMLElement;
+    expect(alert.textContent).toContain("60 秒");
+    // 只说「失败了」没用：要给下一步——重试，或换模型（模型配置在信息页）
+    expect(alert.textContent).toContain("换一个更快的模型");
+    expect(alert.querySelector('a[href="/info"]')).not.toBeNull();
+    expect(buttonWith(element, "重新优化")).toBeTruthy();
+    // 失败不许动正文
+    expect(contentBox(element).value).toBe("原始正文");
+  });
+
   it("结果超 2000 码点时禁止替换", async () => {
     mocks.optimizeNote.mockResolvedValue({
       content: "😀".repeat(2001),

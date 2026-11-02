@@ -8,6 +8,16 @@
 
 ### Changed
 
+- AI 优化超时/失败给出可操作的提示，而不是把 net/http 原文甩给用户（实现过程与关键逻辑）：
+  - **问题**：上游网关 `gpt-gateway-uat.wanmol.com` 慢到 60 秒没回，日志里是 `context deadline exceeded`；网页只拿到 504 的泛化文案，CLI 的 `Ctrl+O` 把 `Post "https://…/chat/completions": context deadline exceeded` 原样塞进状态行——两处都没告诉用户「接下来能做什么」。
+  - **`internal/ai`**：新增 `TimeoutError{Model, Duration, Err}` 与 `wrapTransportError`——`client.Do` 返回 `context.DeadlineExceeded` 或 `net.Error.Timeout()` 时包装成「模型 glm-5.3-flash 在 60 秒内没有响应，可以稍后重试、换一个模型，或检查接口地址是否可用」；`Unwrap` 保留原始错误，web 层照旧能判 504；`formatTimeout` 把时长写成人话（整秒「60 秒」、毫秒级「20 毫秒」，其余退回 `Duration.String()`）。DNS / 连接被拒 / 证书错误不包装（原文更有用），用户主动取消也不误报成超时。
+  - **`internal/web/handlers_optimize.go`**：`writeOptimizeError` 先 `errors.As(&ai.TimeoutError)` → 504 `ai_timeout` 并直接采用它的文案（网页与 CLI 说同一句），裸 `context.DeadlineExceeded` 作为兜底。
+  - **网页**：`NoteEditorView` 记录错误码（`ApiRequestError.code`），`ai_timeout` 时在错误面板下补一行提示——「可以点『重新优化』再试一次，或去信息页换一个更快的模型」，`ai_not_configured` 也给去信息页的链接；失败一律不改正文。
+  - **CLI**：`note add` 的 `Ctrl+O` 失败仍退回正文步，状态行回显 `internal/ai` 的新文案（含模型名与秒数），按 `Ctrl+O` 直接重试。
+  - **文档**：PRD FR-7.9 / FR-7.10 补失败与超时提示，TECH_DESIGN 4.4 错误映射与 `ai_timeout` 表项改为 `TimeoutError` 口径。
+  - **测试**：`internal/ai` 新增 `TestOptimizeWrapsTimeoutWithActionableMessage`（20ms 超时 → `TimeoutError` 带模型/时长/可执行文案、仍 `Is DeadlineExceeded`、不含 `Post "`）；`internal/web` 新增 `TestOptimizeErrorTimeoutIsActionable`（504 + `ai_timeout` + 模型 + 秒数）；`internal/cli` 新增 `TestCtrlOOptimizeFailureShowsReason`（退回正文步、正文不变、状态行含原因与重试）；`NoteEditorView.test.ts` 新增超时用例（原文 + 「换一个更快的模型」+ `/info` 链接 + 正文未变）。
+  - **验证**：`just test`（Go 全包 ok、前端 181 项）、`just check`（svelte-check 0 errors / 0 warnings）全绿。
+
 - `docs/PRD.md` 的修订说明从头部表格里搬出来，改成按版本排列的列表（实现过程与关键逻辑）：
   - 原头部元信息表把 v1.1–v1.15 的全部变更塞在「修订说明」一个单元格里，整行 3000+ 字符，表格宽度被撑到不可读，diff 里也看不出「哪个版本改了什么」。
   - 现在表格只留元信息（文档版本 / 日期 / 状态 / 目标版本 / 产品形态 / 技术栈），并按其真实内容重新收窄列宽；表格下方新增 `## 修订记录` 小节，每个版本一条 `- **v1.15**：…`（v1.15 → v1.1 倒序），原有措辞保留、句末统一为「。」。

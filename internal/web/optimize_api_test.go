@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,7 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"note/internal/ai"
 	"note/internal/config"
 )
 
@@ -161,6 +164,25 @@ func TestOptimizeAPIUpstreamFailure(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "sk-test") {
 		t.Fatal("上游错误里不许带密钥")
+	}
+}
+
+func TestOptimizeErrorTimeoutIsActionable(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeOptimizeError(rec, ai.TimeoutError{
+		Model:    "glm-5.3-flash",
+		Duration: 60 * time.Second,
+		Err:      context.DeadlineExceeded,
+	})
+
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("超时应当是 504，得到 %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"ai_timeout", "glm-5.3-flash", "60 秒", "重试"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("文案缺 %q：%s", want, body)
+		}
 	}
 }
 

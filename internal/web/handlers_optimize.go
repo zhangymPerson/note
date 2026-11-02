@@ -95,10 +95,15 @@ func (app *application) handleOptimizeNote(w http.ResponseWriter, r *http.Reques
 func writeOptimizeError(w http.ResponseWriter, err error) {
 	var modelErr ai.ModelError
 	var upstream ai.UpstreamError
+	var timeoutErr ai.TimeoutError
 	switch {
+	case errors.As(err, &timeoutErr):
+		// 文案由 internal/ai 统一给（含模型名与时长），网页与 CLI 说的是同一句话。
+		writeError(w, http.StatusGatewayTimeout, "ai_timeout", timeoutErr.Error())
 	case errors.Is(err, context.DeadlineExceeded):
+		// 兜底：ctx 到期但没有经过 wrapTransportError（例如调用方自己的 deadline）。
 		writeError(w, http.StatusGatewayTimeout, "ai_timeout",
-			"AI 接口超时（60 秒），可以重试或换一个模型")
+			"AI 接口在规定时间内没有响应，可以稍后重试或换一个模型")
 	case errors.As(err, &modelErr):
 		writeValidationError(w, map[string]string{"model": modelErr.Error()})
 	case errors.As(err, &upstream):

@@ -1,8 +1,8 @@
 <script lang="ts">
   import Markdown from '../components/Markdown.svelte'
   import { defaultModel, hostOf, optimizeNote } from '../lib/ai'
-  import { getAIConfig } from '../lib/ai-config'
   import { ApiRequestError } from '../lib/api'
+  import { getAIConfig } from '../lib/ai-config'
   import { decryptNoteContent, encryptNoteContent, paramsFromNote, KDF_PARAMS } from '../lib/crypto'
   import type { KdfParams } from '../lib/crypto'
   import { editorDraft } from '../lib/draft'
@@ -75,6 +75,8 @@
   let aiResult = $state('')
   let aiResultModel = $state('')
   let aiError = $state('')
+  // 错误码决定「下一步能做什么」：ai_timeout 要给去信息页换模型的入口。
+  let aiErrorCode = $state('')
   // 发起优化时的正文：用户中途改了字就不能直接替换，得重新优化一次。
   let aiRequestContent = $state('')
 
@@ -319,6 +321,7 @@
   async function optimize(): Promise<void> {
     aiBusy = true
     aiError = ''
+    aiErrorCode = ''
     aiResult = ''
     aiRequestContent = content
     try {
@@ -327,6 +330,7 @@
       aiResultModel = result.model
     } catch (error) {
       aiError = fail(error)
+      aiErrorCode = error instanceof ApiRequestError ? error.code : ''
     } finally {
       aiBusy = false
     }
@@ -339,6 +343,7 @@
     dirty = true
     aiResult = ''
     aiError = ''
+    aiErrorCode = ''
   }
 </script>
 
@@ -464,6 +469,17 @@
         {#if aiError !== ''}
           <div class="ai-result" role="alert">
             <p class="form-error">{aiError}</p>
+            {#if aiErrorCode === 'ai_timeout'}
+              <!-- 超时只说「失败了」等于没说：给两条可执行的出路 -->
+              <p class="muted">
+                上游一直没返回：可以点「重新优化」再试一次，或去<a href="/info">信息页</a
+                >换一个更快的模型。
+              </p>
+            {:else if aiErrorCode === 'ai_not_configured'}
+              <p class="muted">
+                接口地址、密钥或模型还没填全，去<a href="/info">信息页</a>补齐后再试。
+              </p>
+            {/if}
             <div class="actions">
               <button class="button button-quiet" type="button" disabled={!canOptimize} onclick={optimize}>
                 重新优化
@@ -497,6 +513,7 @@
                 onclick={() => {
                   aiResult = ''
                   aiError = ''
+                  aiErrorCode = ''
                 }}>放弃</button
               >
             </div>
