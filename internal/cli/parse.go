@@ -105,7 +105,7 @@ type ShowOptions struct {
 }
 
 // ConfigOptions 是 note config 自己的参数。
-type ConfigOptions struct {	// List 为 true 表示 note config list；否则是 note config set。
+type ConfigOptions struct { // List 为 true 表示 note config list；否则是 note config set。
 	List bool
 	// Key/Value 是 set 的键与值（已按第一个 = 拆开，值里可以再含 =）。
 	Key   string
