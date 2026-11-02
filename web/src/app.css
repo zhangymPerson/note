@@ -177,33 +177,33 @@ nav {
   text-decoration: underline;
 }
 
-.theme-switch {
-  display: flex;
+/* 三种配色合成一个循环按钮：点一下换下一个，省掉并排三格 */
+.theme-cycle {
+  display: inline-flex;
   align-self: center;
-  gap: 2px;
-  padding: 3px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
-}
-
-.theme-option {
-  padding: 2px 10px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: 0.78rem;
+  line-height: 1.4;
   cursor: pointer;
 }
 
-.theme-option[aria-pressed="true"] {
-  background: var(--accent);
-  color: var(--accent-contrast);
+.theme-cycle:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
-.theme-option:focus-visible {
+.theme-cycle svg {
+  flex: none;
+}
+
+.theme-cycle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -1415,7 +1415,7 @@ input {
     order: 3;
   }
 
-  .topbar .theme-switch {
+  .topbar .theme-cycle {
     order: 4;
     margin-left: auto;
   }
@@ -1459,7 +1459,7 @@ input {
     padding: 0 18px;
   }
 
-  .theme-option {
+  .theme-cycle {
     min-height: 40px;
     padding: 0 12px;
   }

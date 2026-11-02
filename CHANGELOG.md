@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 顶栏配色开关由三个并排按钮合成一个循环按钮（实现过程与关键逻辑）：
+  - **`web/src/lib/theme.ts`**：新增 `THEME_ORDER`（`light → dark → eye-care`）、`nextTheme(name)` 与 `themeLabel(name)`，循环顺序变成可测的纯函数（主题存储、`data-theme` 注入与 `resolveTheme` 的回落规则都没动）。
+  - **`web/src/components/ThemeSwitch.svelte`**：从 `role="group"` + 三个 `aria-pressed` 按钮改成单个 `<button>`，图标按当前主题切换（太阳 / 月亮 / 叶），文字只写当前主题名；`title` 与 `aria-label` 都写明「点击切换到下一个」，键盘用户也能靠 `Esc` 之外的无障碍名称知道结果。
+  - **`web/src/app.css`**：`.theme-switch` / `.theme-option` 换成 `.theme-cycle`（含 hover 描边、`focus-visible` 与移动端 44px 触控高度），顶栏因此少占两位宽。
+  - **测试**：`theme.test.ts` 新增 `nextTheme` 绕回与 `themeLabel` 两例；新增 `ThemeSwitch.test.ts`（只渲染一个按钮、连点三次回到亮色并同步 `localStorage` / `html[data-theme]`、`title` 文案）。
+  - **验证**：`just check`（svelte-check 0 errors / 0 warnings）、`just test`（前端 180 项，含新增 5 项）、`npm --prefix web run build` 均通过。
+
 ### Added
 
 - `note get @分类 --detail`：分类清单默认只给标题，时间与正文改成按需的表格（实现过程与关键逻辑）：

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTheme } from "./theme";
+import { nextTheme, resolveTheme, themeLabel } from "./theme";
 
 describe("resolveTheme", () => {
   it("使用已保存且合法的显式主题", () => {
@@ -16,5 +16,21 @@ describe("resolveTheme", () => {
   it("忽略非法的保存值，回退到系统偏好", () => {
     expect(resolveTheme("neon", true)).toBe("dark");
     expect(resolveTheme("", false)).toBe("light");
+  });
+});
+
+describe("nextTheme", () => {
+  it("按 亮色 → 暗色 → 护眼 循环，绕回起点", () => {
+    expect(nextTheme("light")).toBe("dark");
+    expect(nextTheme("dark")).toBe("eye-care");
+    expect(nextTheme("eye-care")).toBe("light");
+  });
+});
+
+describe("themeLabel", () => {
+  it("给出中文名，供单按钮的 title 与 aria-label 使用", () => {
+    expect(themeLabel("light")).toBe("亮色");
+    expect(themeLabel("dark")).toBe("暗色");
+    expect(themeLabel("eye-care")).toBe("护眼");
   });
 });

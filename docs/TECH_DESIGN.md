@@ -1180,7 +1180,7 @@ web/src/
 │   ├── CategoryTree.svelte    # 列表页右侧分类树：筛选 + 行内新增/改名/删除
 │   ├── ActivityHeatmap.svelte # 首页活动频率热力图（查询 + 增删改查）
 │   ├── Markdown.svelte        # 全仓唯一允许 {@html} 的组件
-│   └── ThemeSwitch.svelte     # 亮色 / 暗色 / 护眼
+│   └── ThemeSwitch.svelte     # 单按钮循环 亮色 → 暗色 → 护眼
 ├── views/                     # 9 个视图，见 9.3 路由表
 ├── router/router.ts           # 自写 History 路由
 ├── lib/
