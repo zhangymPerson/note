@@ -59,6 +59,7 @@ func addDeps(st *store.Store) cli.AddDeps {
 					Name:      c.Name,
 					Count:     c.NoteCount,
 					IsDefault: c.ID == store.DefaultCategoryID,
+					Reserved:  c.Reserved,
 				})
 			}
 			return out, nil

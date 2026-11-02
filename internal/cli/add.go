@@ -33,10 +33,13 @@ const (
 // Category 是向导需要的最小分类信息；IsDefault 表示内置的「未分类」，
 // 落库时它的 category_id 存 NULL，与 Web 端一致。
 type Category struct {
-	ID        int64
-	Name      string
-	Count     int
+	ID    int64
+	Name  string
+	Count int
+	// IsDefault 表示内置「未分类」：落库时映射成 category_id = NULL。
 	IsDefault bool
+	// Reserved 表示内置固定分类（「未分类」与「速记」）：不可改名、不可删除。
+	Reserved bool
 }
 
 // AddNote 是向导收集到的一条待创建笔记；CategoryID 为 nil 表示未分类。

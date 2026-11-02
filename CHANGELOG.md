@@ -8,6 +8,13 @@
 
 ### Added
 
+- CLI `set / get / del` 的纯逻辑与输出格式（实现过程与关键逻辑）：
+  - **`internal/cli/quick.go`**：`QuickDeps`（分类查询/按需建分类/按标题读写/按分类列与删）+ `RunSet` / `RunGet` / `RunGetCategory` / `RunGetCategories` / `RunDel` / `RunDelCategory`。cli 不依赖 store，store 的哨兵错误由 `cmd/note` 的适配层翻译成 `ErrQuickNotFound` / `ErrQuickInTrash` / `ErrQuickCategoryNotFound`（加密沿用 `ErrNoteEncrypted`）。
+  - **输出约定**：`set`/`del` 只返回要写给 stderr 的提示（stdout 一个字节不写）；`get <标题>` 输出原文，缺结尾换行时补一个；`get @分类` 每行 `标题	updated_at`（空分类输出空串、退出码 0）；`get --list` 用 `text/tabwriter` 打 `ID/分类/笔记数/备注`，固定分类备注列写 `固定`。
+  - **语义细节**：`set` 正文上限 2000 码点（先在 cli 拦下，不惊动数据库）；`set 标题@新分类` 经 `EnsureCategory` 顺带建分类；`del @分类` 删到 0 条时返回错误（让脚本能区分「删到了」与「没删到」）。
+  - **测试**：`internal/cli/quick_test.go` 12 例（新建/覆盖文案、超长正文不写库、按需建分类、结尾换行三态、回收站与加密映射、分类列表逐字节、空分类不是错误、分类表格的固定标记、单条/整分类删除文案与 0 条报错）。
+  - **验证**：`go test ./...` 383 项全绿；`go vet ./...` 无输出。
+
 - CLI 的 `标题[@分类]` 寻址（实现过程与关键逻辑）：
   - **`internal/cli/ref.go`**：`Ref{Title, Category, CategoryOnly}` + `ParseRef(raw, typeFlag, defaultCategory)`。规则与优先级：`--type` 显式分类时整体当标题（标题里要写 `@` 的逃生口）→ `@分类` 开头是分类引用 → 否则按**最后一个** `@` 切分 → 都没有就落默认分类「速记」。标题 1–200 码点、分类名 ≤30 码点，与 store/web 同值；`@`、`周报@`、空引用都是用法错误。
   - **测试**：`internal/cli/ref_test.go` 表驱动 11 例（含 `a@b@c` 的最后一个 `@` 切分、`--type` 保留标题里的 `@`、超长标题/分类名、前后空白）。
