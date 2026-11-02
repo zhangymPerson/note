@@ -13,9 +13,6 @@
 
   let { categories, active, busy = false, onPick, onCreate, onRename, onDelete }: Props = $props()
 
-  // 「未分类」是内置分类，后端改名/删除都返回 409，界面干脆不给按钮。
-  const DEFAULT_CATEGORY_ID = 1
-
   let open = $state(true)
   let editingId = $state(0)
   let editingName = $state('')
@@ -114,7 +111,7 @@
                 <span class="cat-name">{category.name}</span>
                 <span class="cat-num">{category.note_count}</span>
               </button>
-              {#if category.id !== DEFAULT_CATEGORY_ID}
+              {#if !category.reserved}
                 <span class="cat-actions">
                   <button class="cat-act" type="button" disabled={busy} onclick={() => startRename(category)}>
                     改名

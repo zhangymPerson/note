@@ -5,8 +5,9 @@ import CategoryTree from "./CategoryTree.svelte";
 import type { Category } from "../lib/notes";
 
 const CATS: Category[] = [
-  { id: 1, name: "未分类", note_count: 2 },
-  { id: 2, name: "工作", note_count: 3 },
+  { id: 1, name: "未分类", note_count: 2, reserved: true },
+  { id: 2, name: "速记", note_count: 1, reserved: true },
+  { id: 3, name: "工作", note_count: 2, reserved: false },
 ];
 
 interface TreeProps {
@@ -70,20 +71,21 @@ describe("CategoryTree", () => {
   });
 
   it("点击分类行回传该分类 id，并按 active 标记高亮", () => {
-    const { target, props } = render({ active: 2 });
+    const { target, props } = render({ active: 3 });
     const rows = target.querySelectorAll<HTMLElement>(".cat-list .cat-row");
-    expect(rows).toHaveLength(2);
-    expect(rows[1].dataset.active).toBe("true");
-    rows[1].click();
+    expect(rows).toHaveLength(3);
+    expect(rows[2].dataset.active).toBe("true");
+    rows[2].click();
     flushSync();
-    expect(props.onPick).toHaveBeenCalledWith(2);
+    expect(props.onPick).toHaveBeenCalledWith(3);
   });
 
-  it("「未分类」行没有改名/删除按钮，其它分类各有一个", () => {
+  it("固定分类（未分类、速记）没有改名/删除按钮，其它分类各有一个", () => {
     const { target } = render();
     const items = target.querySelectorAll(".cat-list .cat-item");
     expect(items[0].querySelectorAll(".cat-act")).toHaveLength(0);
-    expect(items[1].querySelectorAll(".cat-act")).toHaveLength(2);
+    expect(items[1].querySelectorAll(".cat-act")).toHaveLength(0);
+    expect(items[2].querySelectorAll(".cat-act")).toHaveLength(2);
   });
 
   it("根节点可收起子项，收起后子项不再渲染", () => {
@@ -131,7 +133,7 @@ describe("CategoryTree", () => {
 
   it("改名：行内输入框回车提交", async () => {
     const { target, props } = render();
-    const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
+    const workItem = target.querySelectorAll(".cat-list .cat-item")[2];
     workItem.querySelectorAll<HTMLElement>(".cat-act")[0].click();
     flushSync();
     const input = target.querySelector(".cat-rename input") as HTMLInputElement;
@@ -139,13 +141,13 @@ describe("CategoryTree", () => {
     typeInto(input, "项目");
     submit(target.querySelector(".cat-rename") as HTMLFormElement);
     await vi.waitFor(() =>
-      expect(props.onRename).toHaveBeenCalledWith(2, "项目"),
+      expect(props.onRename).toHaveBeenCalledWith(3, "项目"),
     );
   });
 
   it("改名 Esc 取消，不调用 onRename", () => {
     const { target, props } = render();
-    const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
+    const workItem = target.querySelectorAll(".cat-list .cat-item")[2];
     workItem.querySelectorAll<HTMLElement>(".cat-act")[0].click();
     flushSync();
     const input = target.querySelector(".cat-rename input") as HTMLInputElement;
@@ -160,7 +162,7 @@ describe("CategoryTree", () => {
   it("删除需确认，取消则不调用", () => {
     const { target, props } = render();
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
+    const workItem = target.querySelectorAll(".cat-list .cat-item")[2];
     workItem.querySelectorAll<HTMLElement>(".cat-act")[1].click();
     expect(props.onDelete).not.toHaveBeenCalled();
   });
@@ -170,7 +172,7 @@ describe("CategoryTree", () => {
       onDelete: vi.fn().mockResolvedValue("分类下仍有 3 条笔记"),
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
+    const workItem = target.querySelectorAll(".cat-list .cat-item")[2];
     workItem.querySelectorAll<HTMLElement>(".cat-act")[1].click();
     await vi.waitFor(() =>
       expect(workItem.querySelector(".field-error")?.textContent).toContain(
@@ -181,7 +183,7 @@ describe("CategoryTree", () => {
 
   it("busy 时操作按钮禁用", () => {
     const { target } = render({ busy: true });
-    const workItem = target.querySelectorAll(".cat-list .cat-item")[1];
+    const workItem = target.querySelectorAll(".cat-list .cat-item")[2];
     for (const button of workItem.querySelectorAll<HTMLButtonElement>(
       ".cat-act",
     )) {

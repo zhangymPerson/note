@@ -140,6 +140,17 @@ func writeNoteStoreError(w http.ResponseWriter, err error, fields map[string]str
 		writeError(w, http.StatusConflict, "master_password_missing", "请先设置主密码再保存加密笔记")
 	case errors.Is(err, store.ErrEncryptedImmutable):
 		writeError(w, http.StatusConflict, "encrypted_immutable", "加密笔记不能改回明文")
+	case errors.Is(err, store.ErrNoteTitleExists):
+		// 同一分类里标题唯一（0007 的唯一索引，大小写不敏感）：前端把冲突指到标题字段，
+		// 而不是笼统地报「保存失败」。
+		writeConflictFields(w, "title_conflict", "该分类下已有同名笔记", map[string]string{
+			"title": "该分类下已有同名笔记",
+		})
+	case errors.Is(err, store.ErrNoteTitleInTrash):
+		// 回收站里的那条也占着这个名字：不自动复活、不覆盖，让用户自己决定。
+		writeConflictFields(w, "title_in_trash", "同名的笔记在回收站里，先恢复或彻底删除它", map[string]string{
+			"title": "同名的笔记在回收站里，先恢复或彻底删除它",
+		})
 	case errors.Is(err, store.ErrInvalidNote):
 		if len(fields) == 0 {
 			fields = map[string]string{"content": "正文与密文必须二选一"}

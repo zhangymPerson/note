@@ -217,20 +217,23 @@ describe("错误透传", () => {
 
 describe("分类与主密码", () => {
   it("listCategories 直接返回数组", async () => {
-    mockFetch([ok([{ id: 1, name: "未分类", note_count: 0 }])]);
+    mockFetch([ok([{ id: 1, name: "未分类", note_count: 0, reserved: true }])]);
     await expect(listCategories()).resolves.toEqual([
-      { id: 1, name: "未分类", note_count: 0 },
+      { id: 1, name: "未分类", note_count: 0, reserved: true },
     ]);
   });
 
   it("createCategory POST、renameCategory PUT", async () => {
     mockFetch([
-      { status: 201, body: { id: 5, name: "工作", note_count: 0 } },
-      ok([{ id: 5, name: "生活", note_count: 0 }]),
+      {
+        status: 201,
+        body: { id: 5, name: "工作", note_count: 0, reserved: false },
+      },
+      ok([{ id: 5, name: "生活", note_count: 0, reserved: false }]),
     ]);
     await expect(createCategory("工作")).resolves.toMatchObject({ id: 5 });
     await expect(renameCategory(5, "生活")).resolves.toEqual([
-      { id: 5, name: "生活", note_count: 0 },
+      { id: 5, name: "生活", note_count: 0, reserved: false },
     ]);
     expect(calls.find((call) => call.method === "POST")?.url).toBe(
       "/api/categories",

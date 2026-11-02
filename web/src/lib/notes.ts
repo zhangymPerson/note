@@ -52,6 +52,8 @@ export interface Category {
   id: number;
   name: string;
   note_count: number;
+  // 内置固定分类（「未分类」「速记」）：后端拒绝改名/删除，界面不给按钮。
+  reserved: boolean;
 }
 
 export interface MasterPasswordState {

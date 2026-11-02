@@ -46,6 +46,16 @@ func writeValidationError(w http.ResponseWriter, fields map[string]string) {
 	}})
 }
 
+// writeConflictFields 返回 409 与字段级提示：冲突不是「输入不合法」（400），
+// 但前端仍需要知道该把提示挂在哪个输入框上。
+func writeConflictFields(w http.ResponseWriter, code, message string, fields map[string]string) {
+	writeJSON(w, http.StatusConflict, apiErrorBody{Error: apiError{
+		Code:    code,
+		Message: message,
+		Fields:  fields,
+	}})
+}
+
 // decodeJSON 读取并解析请求体，失败时已写好错误响应。
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any, maxBytes int64) error {
 	defer r.Body.Close()

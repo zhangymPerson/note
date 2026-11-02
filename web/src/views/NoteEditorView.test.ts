@@ -115,6 +115,11 @@ function buttonWith(element: HTMLElement, label: string): HTMLButtonElement {
   return button as HTMLButtonElement;
 }
 
+function submit(form: HTMLFormElement): void {
+  form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  flushSync();
+}
+
 function click(node: Element): void {
   node.dispatchEvent(new Event("click", { bubbles: true }));
   flushSync();
@@ -252,5 +257,30 @@ describe("NoteEditorView 的 AI 优化", () => {
 
     await vi.waitFor(() => expect(element.textContent).toContain("以明文发送"));
     expect(element.textContent).toContain("api.example.com");
+  });
+});
+
+describe("NoteEditorView 的标题冲突", () => {
+  it("同名 409 把文案挂到标题字段上", async () => {
+    const { ApiRequestError } = await import("../lib/api");
+    mocks.createNote.mockRejectedValue(
+      new ApiRequestError("title_conflict", "该分类下已有同名笔记", {
+        title: "该分类下已有同名笔记",
+      }),
+    );
+    const element = await renderEditor();
+
+    typeInto(element.querySelector("#note-title") as HTMLInputElement, "周报");
+    typeInto(contentBox(element), "正文");
+    submit(element.querySelector(".editor-form") as HTMLFormElement);
+
+    await vi.waitFor(() => {
+      expect(mocks.createNote).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(element.querySelector(".field-error")?.textContent).toContain(
+        "该分类下已有同名笔记",
+      );
+    });
   });
 });

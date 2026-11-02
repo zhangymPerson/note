@@ -607,3 +607,77 @@ func TestNotesAPIRecycleBinFlow(t *testing.T) {
 		t.Fatalf("expected 403 without csrf token, got %d", rec.Code)
 	}
 }
+
+func TestNotesAPITitleConflict(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	token := csrfTokenFor(t, handler)
+
+	rec := apiRequest(t, handler, http.MethodPost, "/api/notes", token, `{"title":"周报","content":"第一版"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	firstID, _ := decodeNote(t, rec)["id"].(string)
+
+	// 同一个分类里同名（大小写不敏感）→ 409 title_conflict，不新建第二条。
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes", token, `{"title":"周报","content":"第二版"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate title, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := errorBody(t, rec)
+	if body.Error.Code != "title_conflict" {
+		t.Fatalf("expected title_conflict, got %q", body.Error.Code)
+	}
+	if body.Error.Fields["title"] == "" {
+		t.Fatalf("expected a title field hint: %+v", body.Error)
+	}
+
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes", token, `{"title":"todo","content":"x"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes", token, `{"title":"TODO","content":"y"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected NOCASE 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 换一个分类同名可以：标题唯一是「分类内」的唯一。
+	rec = apiRequest(t, handler, http.MethodPost, "/api/categories", token, `{"name":"工作"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create category: %d %s", rec.Code, rec.Body.String())
+	}
+	var work struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &work); err != nil {
+		t.Fatalf("decode category: %v", err)
+	}
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes", token,
+		`{"title":"周报","content":"另一份","category_id":`+strconv.FormatInt(work.ID, 10)+`}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 in another category, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 改标题撞上邻居也是 409 title_conflict。
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes", token, `{"title":"月报","content":"x"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	monthID, _ := decodeNote(t, rec)["id"].(string)
+	rec = apiRequest(t, handler, http.MethodPut, "/api/notes/"+monthID, token, `{"title":"周报","content":"改个名"}`)
+	if rec.Code != http.StatusConflict || errorBody(t, rec).Error.Code != "title_conflict" {
+		t.Fatalf("expected 409 title_conflict on rename, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 软删除后同名新建 → 409 title_in_trash：回收站里的那条仍占着这个名字。
+	rec = apiRequest(t, handler, http.MethodDelete, "/api/notes/"+firstID, token, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on soft delete, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = apiRequest(t, handler, http.MethodPost, "/api/notes", token, `{"title":"周报","content":"第三版"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 after delete, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if code := errorBody(t, rec).Error.Code; code != "title_in_trash" {
+		t.Fatalf("expected title_in_trash, got %q", code)
+	}
+}

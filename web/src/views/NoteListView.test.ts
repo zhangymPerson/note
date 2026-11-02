@@ -25,8 +25,8 @@ const NOTE = {
   updated_at: "2026-10-28T10:00:00Z",
 };
 const CATS = [
-  { id: 1, name: "未分类", note_count: 1 },
-  { id: 2, name: "工作", note_count: 2 },
+  { id: 1, name: "未分类", note_count: 1, reserved: true },
+  { id: 2, name: "工作", note_count: 2, reserved: false },
 ];
 
 let app: ReturnType<typeof mount> | null = null;

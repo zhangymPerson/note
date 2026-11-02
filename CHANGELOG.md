@@ -8,6 +8,12 @@
 
 ### Added
 
+- 网页端的标题冲突映射与固定分类标记（实现过程与关键逻辑）：
+  - **`internal/web/handlers_notes.go`**：`writeNoteStoreError` 新增 `ErrNoteTitleExists` → 409 `title_conflict`、`ErrNoteTitleInTrash` → 409 `title_in_trash`，两者都带 `fields.title`（新增 `errors.go#writeConflictFields`：409 仍要字段级提示，前端才知道把文案挂到标题框）。此前这类错误落进 `isUniqueError` 被报成「该笔记 id 已存在」，是 0007 唯一索引之后必须修的误导。
+  - **前端**：`web/src/lib/notes.ts` 的 `Category` 加 `reserved: boolean`；`CategoryTree.svelte` 删掉硬编码的 `DEFAULT_CATEGORY_ID = 1`，改用 `{#if !category.reserved}`——「未分类」与「速记」都不给改名/删除按钮，后端仍返回 409 双保险。保存冲突走编辑器已有的 `fields` 通路，无需新增逻辑。
+  - **测试**：`internal/web/notes_api_test.go` 新增 `TestNotesAPITitleConflict`（同分类同名 409 `title_conflict` + `fields.title`、NOCASE 撞名、换分类同名合法、改标题撞邻居 409、软删后同名 409 `title_in_trash`）；`CategoryTree.test.ts` 夹具加 `reserved` 并断言固定分类（1、2）都没有操作按钮；`NoteEditorView.test.ts` 新增一例断言 409 文案出现在标题字段下。
+  - **验证**：`just check` 通过（svelte-check 0 errors / 0 warnings、tsc 无输出）；`just test` 通过（Go 399 项、前端 175 项）。
+
 - CLI `set/get/del` 接上真实数据库（实现过程与关键逻辑）：
   - **`internal/store/category.go`**：新增 `CategoryByName`（NOCASE 查名字，笔记数只算未删除、`未分类` 含 `category_id IS NULL`）与 `EnsureCategory`（取不到就建，并发撞名回头再查一次，仍按「拿到既有分类」处理）——`note set 标题@新分类` 靠它顺手建分类。
   - **`cmd/note/quick.go`**：`quickDeps(store)` 把 cli 的 `QuickDeps` 接到 `FindNoteByTitle` / `UpsertNoteByTitle` / `SoftDeleteNoteByTitle` / `SoftDeleteCategoryNotes` / `ListNotesInCategory`，并把 store 的 `ErrNotFound` / `ErrNoteNotFound` / `ErrNoteTitleInTrash` 翻成 cli 的 `ErrQuickCategoryNotFound` / `ErrQuickNotFound` / `ErrQuickInTrash`；`quickCategoryID` 把内置「未分类」映射回 `category_id IS NULL`。
