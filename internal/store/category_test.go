@@ -271,3 +271,83 @@ func TestErrCategoryNotEmptyMessage(t *testing.T) {
 		t.Fatalf("unexpected message: %q", got)
 	}
 }
+
+func TestCategoryByName(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	work, err := st.CreateCategory(ctx, "Work")
+	if err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	body := "正文"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "周报", CategoryID: &work.ID, Content: &body}); err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	// categories.name 是 NOCASE 列，大小写不同的查询要命中同一条。
+	got, err := st.CategoryByName(ctx, "work")
+	if err != nil {
+		t.Fatalf("CategoryByName: %v", err)
+	}
+	if got.ID != work.ID || got.Name != "Work" || got.NoteCount != 1 || got.Reserved {
+		t.Fatalf("unexpected category: %+v", got)
+	}
+
+	// 「未分类」照常可查，并且标成固定分类；它的笔记数含 category_id IS NULL 的行。
+	uncategorized, err := st.CategoryByName(ctx, "未分类")
+	if err != nil {
+		t.Fatalf("CategoryByName 未分类: %v", err)
+	}
+	if uncategorized.ID != DefaultCategoryID || !uncategorized.Reserved {
+		t.Fatalf("unexpected default category: %+v", uncategorized)
+	}
+
+	if _, err := st.CategoryByName(ctx, "没有这个分类"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestEnsureCategory(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	// 已存在的分类原地返回，不新建、不报错。
+	quick, err := st.EnsureCategory(ctx, "速记")
+	if err != nil {
+		t.Fatalf("EnsureCategory existing: %v", err)
+	}
+	if quick.ID != QuickCategoryID || !quick.Reserved {
+		t.Fatalf("unexpected quick category: %+v", quick)
+	}
+
+	before, err := st.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
+
+	created, err := st.EnsureCategory(ctx, "工作")
+	if err != nil {
+		t.Fatalf("EnsureCategory new: %v", err)
+	}
+	if created.Reserved || created.Name != "工作" || created.ID == 0 {
+		t.Fatalf("unexpected created category: %+v", created)
+	}
+
+	after, err := st.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("list categories after: %v", err)
+	}
+	if len(after) != len(before)+1 {
+		t.Fatalf("expected exactly one new category, before %d after %d", len(before), len(after))
+	}
+
+	// 再要一次同一个名字：还是那一条。
+	again, err := st.EnsureCategory(ctx, "工作")
+	if err != nil {
+		t.Fatalf("EnsureCategory again: %v", err)
+	}
+	if again.ID != created.ID {
+		t.Fatalf("expected the same category id, got %d and %d", again.ID, created.ID)
+	}
+}

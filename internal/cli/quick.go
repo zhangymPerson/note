@@ -19,6 +19,8 @@ var (
 	ErrQuickInTrash = errors.New("note is in trash")
 	// ErrQuickCategoryNotFound 表示分类不存在。
 	ErrQuickCategoryNotFound = errors.New("category not found")
+	// ErrQuickNothingDeleted 表示整分类删除没删到任何笔记（都是回收站里的或本来就空）。
+	ErrQuickNothingDeleted = errors.New("no note to delete in category")
 )
 
 // QuickNote 是 note set/get/del 需要的最小笔记形状。
@@ -131,12 +133,17 @@ func RunGetCategories(ctx context.Context, deps QuickDeps) (string, error) {
 		return "", err
 	}
 	for _, category := range categories {
-		remark := ""
+		// 没有备注就不写第四列：否则 tabwriter 会把行尾补齐成一串空格，
+		// `note get --list | awk` 之类的管道会多出一个空字段。
 		if category.Reserved {
-			remark = "固定"
+			if _, err := fmt.Fprintf(writer, "%d\t%s\t%d\t固定\n",
+				category.ID, category.Name, category.Count); err != nil {
+				return "", err
+			}
+			continue
 		}
-		if _, err := fmt.Fprintf(writer, "%d\t%s\t%d\t%s\n",
-			category.ID, category.Name, category.Count, remark); err != nil {
+		if _, err := fmt.Fprintf(writer, "%d\t%s\t%d\n",
+			category.ID, category.Name, category.Count); err != nil {
 			return "", err
 		}
 	}
@@ -178,7 +185,7 @@ func RunDelCategory(ctx context.Context, deps QuickDeps, ref Ref) (string, error
 		return "", err
 	}
 	if deleted == 0 {
-		return "", fmt.Errorf("分类「%s」下没有可删除的笔记", category.Name)
+		return "", ErrQuickNothingDeleted
 	}
 	return fmt.Sprintf("已移入回收站 %d 条（分类「%s」）\n", deleted, category.Name), nil
 }

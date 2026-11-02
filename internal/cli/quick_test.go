@@ -231,6 +231,9 @@ func TestRunGetCategoriesPrintsHeaderAndReserved(t *testing.T) {
 	if strings.Contains(lines[3], "固定") {
 		t.Fatalf("expected user categories to have an empty remark, got %q", lines[3])
 	}
+	if strings.TrimRight(lines[3], " 	") != lines[3] {
+		t.Fatalf("expected no trailing padding on remark-less rows, got %q", lines[3])
+	}
 	for _, want := range []string{"未分类", "速记", "工作", "3", "1", "2"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in output %q", want, text)
@@ -269,8 +272,8 @@ func TestRunDelCategoryReportsCount(t *testing.T) {
 	}
 
 	empty := &fakeQuickDeps{categories: []Category{{ID: 3, Name: "工作"}}, deleteNotes: 0}
-	if _, err := RunDelCategory(ctx, empty.deps(), Ref{Category: "工作", CategoryOnly: true}); err == nil {
-		t.Fatal("expected an error when nothing was deleted")
+	if _, err := RunDelCategory(ctx, empty.deps(), Ref{Category: "工作", CategoryOnly: true}); !errors.Is(err, ErrQuickNothingDeleted) {
+		t.Fatalf("expected ErrQuickNothingDeleted, got %v", err)
 	}
 }
 

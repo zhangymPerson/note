@@ -46,6 +46,9 @@ func (e exitError) Error() string { return fmt.Sprintf("exit %d", int(e)) }
 //
 //	note            打印帮助（等价 note help）
 //	note add        交互向导新建一条明文笔记
+//	note set        按标题新建或覆盖一条笔记（默认落「速记」）
+//	note get        按标题读正文，或列分类下的笔记 / 列分类
+//	note del        把笔记移入回收站（软删除）
 //	note web        启动 Web 服务
 //	note info       输出软件与运行信息
 //	note status     输出使用统计（事件构成、累计事件、活跃天数）
@@ -75,6 +78,15 @@ func run(args []string) error {
 
 	case cli.CommandAdd:
 		return runAdd(opts.ConfigPath, opts.Args)
+
+	case cli.CommandSet:
+		return runSet(opts.ConfigPath, opts.Args, opts.Set)
+
+	case cli.CommandGet:
+		return runGet(opts.ConfigPath, opts.Args, opts.Get)
+
+	case cli.CommandDel:
+		return runDel(opts.ConfigPath, opts.Args, opts.Del)
 
 	case cli.CommandList:
 		return runList(opts.ConfigPath, opts.Args, opts.List)

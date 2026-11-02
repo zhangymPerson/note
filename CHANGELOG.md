@@ -8,6 +8,14 @@
 
 ### Added
 
+- CLI `set/get/del` 接上真实数据库（实现过程与关键逻辑）：
+  - **`internal/store/category.go`**：新增 `CategoryByName`（NOCASE 查名字，笔记数只算未删除、`未分类` 含 `category_id IS NULL`）与 `EnsureCategory`（取不到就建，并发撞名回头再查一次，仍按「拿到既有分类」处理）——`note set 标题@新分类` 靠它顺手建分类。
+  - **`cmd/note/quick.go`**：`quickDeps(store)` 把 cli 的 `QuickDeps` 接到 `FindNoteByTitle` / `UpsertNoteByTitle` / `SoftDeleteNoteByTitle` / `SoftDeleteCategoryNotes` / `ListNotesInCategory`，并把 store 的 `ErrNotFound` / `ErrNoteNotFound` / `ErrNoteTitleInTrash` 翻成 cli 的 `ErrQuickCategoryNotFound` / `ErrQuickNotFound` / `ErrQuickInTrash`；`quickCategoryID` 把内置「未分类」映射回 `category_id IS NULL`。
+  - **退出码与流向**：`set`/`del` 提示走 stderr，`get` 正文走 stdout；找不到/在回收站/整分类删除 0 条 → 1（新增 cli 哨兵 `ErrQuickNothingDeleted`），缺参数 → 2，命中加密笔记 → 4。`set` 撞上回收站同名时额外查一次 id，提示里带上 id 让用户去网页处理。
+  - **`cmd/note/main.go`**：`CommandSet/Get/Del` 接进 `run()` 的分发，并在 `run` 的注释里补三条命令。
+  - **测试**：`cmd/note/quick_test.go` 5 例（cli 与 store 的速记常量一致、未分类映射 NULL、真实库的写入/覆盖/列表/软删/整分类删除全链路、缺失笔记与分类的哨兵映射、未分类往返）。
+  - **验证**：`go test ./...` 399 项全绿；`go vet ./...` 无输出；手工跑二进制确认 `set`/`del` 不污染 stdout、`get @分类` 空结果退出码 0、`del @分类` 缺 `--yes` 退出码 2、回收站同名拒绝覆盖并报 id、`get` 命中加密走 4。
+
 - CLI 子命令解析与帮助文本（实现过程与关键逻辑）：
   - **`internal/cli/parse.go`**：新增 `CommandSet/CommandGet/CommandDel` 与 `SetOptions{Ref, Content}` / `GetOptions{Ref, List}` / `DelOptions{Ref, Yes}`；手写解析仍是主入口，`set/get/del` 只从位置参数里取引用与正文，配置类开关（`-c/--config`、`--db`）原样透传给 `opts.Args`，未知开关一律报错，`--type` 进入 `valueFlags` 以免 `--type -h` 被当成帮助。
   - **解析规则**：`set` 恰好两个位置参数（第二个即空串也算给了，用来清空正文），`get` 最多一个引用且 `--list` 与引用互斥，`del` 恰好一个引用且 `@分类` 引用必须带 `--yes`（错误文案直接点出 `--yes`）。

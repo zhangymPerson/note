@@ -90,6 +90,55 @@ func (s *Store) ListCategories(ctx context.Context) ([]Category, error) {
 	return cats, nil
 }
 
+// CategoryByName 按名字查分类（categories.name 是 NOCASE 列，大小写不敏感），
+// 找不到返回 ErrNotFound。笔记数只算未删除的，「未分类」包含 category_id IS NULL 的行。
+func (s *Store) CategoryByName(ctx context.Context, name string) (Category, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Category{}, ErrNotFound
+	}
+
+	var cat Category
+	err := s.db.QueryRowContext(ctx,
+		`SELECT c.id, c.name, COUNT(n.id) AS note_count
+         FROM categories c
+         LEFT JOIN notes n ON (n.category_id = c.id
+                               OR (c.id = ? AND n.category_id IS NULL))
+                              AND n.deleted_at IS NULL
+         WHERE c.name = ?
+         GROUP BY c.id, c.name`, defaultCategoryID, name,
+	).Scan(&cat.ID, &cat.Name, &cat.NoteCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Category{}, ErrNotFound
+	}
+	if err != nil {
+		return Category{}, fmt.Errorf("category by name: %w", err)
+	}
+	cat.Reserved = IsReservedCategory(cat.ID)
+	return cat, nil
+}
+
+// EnsureCategory 取分类，不存在就建一个：note set 标题@新分类 要能顺手把分类造出来。
+// 建的时候撞名（并发下才会发生）就回头再查一次，仍然按「拿到既有分类」处理。
+func (s *Store) EnsureCategory(ctx context.Context, name string) (Category, error) {
+	cat, err := s.CategoryByName(ctx, name)
+	if err == nil {
+		return cat, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Category{}, err
+	}
+
+	created, err := s.CreateCategory(ctx, name)
+	if err != nil {
+		if errors.Is(err, ErrCategoryExists) {
+			return s.CategoryByName(ctx, name)
+		}
+		return Category{}, err
+	}
+	return created, nil
+}
+
 // CreateCategory 新建分类；name 由调用方去除空白，长度校验在 web 层。
 func (s *Store) CreateCategory(ctx context.Context, name string) (Category, error) {
 	name = strings.TrimSpace(name)
