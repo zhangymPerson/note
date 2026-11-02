@@ -100,6 +100,7 @@ note/
 ├── cmd/note/web_service.go      # web start / stop / status 三命令实现
 ├── cmd/note/status.go           # note status：只读采集 activities 统计并交给 internal/cli 渲染
 ├── cmd/note/config.go           # note config：list 读三项 / set 原子写入 note.yaml
+├── cmd/note/quick.go            # note set/get/del：加载配置 → 开库 → 调 internal/cli → 退出码与 stdout/stderr 分流
 ├── config/
 │   └── note.yaml                 # 示例配置（原始默认值；运行时读用户配置目录，不自动加载）
 ├── sql/
@@ -109,7 +110,8 @@ note/
 │   ├── 0003_note_fields.sql      # kind/remark/rev
 │   ├── 0004_note_app.sql         # categories、master_password、notes.category_id
 │   ├── 0005_activity_events.sql  # activities 重建：kind 枚举扩到查询 + 笔记/分类读写
-│   └── 0006_note_soft_delete.sql # notes.deleted_at + 活动/回收站两条部分索引
+│   ├── 0006_note_soft_delete.sql # notes.deleted_at + 活动/回收站两条部分索引
+│   └── 0007_quick_category_and_unique_title.sql # 「速记」分类 + 存量重名清理 + 两条标题唯一索引
 ├── internal/
 │   ├── build/info.go             # 版本/git hash/构建日期变量（ldflags 注入）+ vcs 回落
 │   ├── ai/                       # 唯一对外网络出口：OpenAI 兼容的 optimize 客户端（模板渲染、剥围栏、超时与错误映射）
@@ -124,6 +126,8 @@ note/
 │   │   ├── status.go             # note web status 三态渲染与 uptime/文件大小文案
 │   │   ├── stats.go              # note status 使用统计渲染：事件分组合并、uniseg 对齐、缺库占位
 │   │   ├── config.go             # note config list/set 渲染（密钥掩码、单行折叠、CJK 列对齐）
+│   │   ├── ref.go                # 标题寻址：Ref/ParseRef（--type 优先、@分类 引用、最后一个 @ 切分、默认分类）
+│   │   ├── quick.go              # note set/get/del 的纯逻辑：QuickDeps + RunSet/RunGet/RunGetCategory/RunGetCategories/RunDel/RunDelCategory
 │   │   └── usage.go              # 总帮助与子命令帮助（动态带出本机默认路径）
 │   ├── clipboard/                # 把文本写进剪贴板：原生实现（clip.exe/pbcopy/xclip）+ OSC52 兜底
 │   │   └── clipboard.go          # Copy / writeOSC52 / ExplainFailure（失败只返回错误，从不 panic）
@@ -249,6 +253,9 @@ v1.5 起入口是 CLI 子命令（`internal/cli.Parse` 分发）：
 | `note`                    | 打印帮助（等价 `note help`）：把可用命令直接摆出来，不再进交互菜单                                                                                                                                                                                                                  |
 | `note add [参数]`         | bubbletea 三步向导：选分类（输入即模糊筛选，可就地新建）→ 标题 → 正文（支持换行，`Ctrl+D` 完成）；只创建明文笔记；stdin 非终端时报错退出 1；正文步 `Ctrl+O` 用 AI 优化（预览后 `Enter` 采用、`Esc` 保留原文，未配置时提示该补哪几项）                                               |
 | `note list [参数]`        | 可筛选的笔记列表（输入即筛选标题/分类（fuzzy）与正文（子串）、`Enter` 预览并复制原文、`Esc` 退出）；非终端时输出纯文本一行一条，空结果零字节；数据一次性读进内存（`store.ListNotesAll`，避免逐键查库污染 `RecordSearch`）                                                           |
+| `note set <标题[@分类]> <正文>` | 新建或覆盖一条明文笔记：默认落内置「速记」，同分类同名即覆盖（`rev+1`），分类不存在时 `EnsureCategory` 顺带创建；提示写 stderr，stdout 为空 |
+| `note get <标题[@分类]>` / `@<分类>` / `--list` | 读一条正文到 stdout（缺结尾换行时补一个）/ 列分类下笔记（每行 `标题<TAB>updated_at`）/ 列全部分类（ID、名字、笔记数、固定分类标记） |
+| `note del <标题[@分类]>` / `@<分类> --yes` | 软删除一条；`@分类` 删除该分类下所有未删除笔记，缺 `--yes` 是用法错误（退出 2）。不做 CLI 恢复，恢复与彻底删除仍在网页 |
 | `note show [<id>] [参数]` | 渲染一条笔记（`internal/markdown` → glamour）并把库里的原始 Markdown 复制到剪贴板（仅 stdout 是终端时复制，失败只提示）；省略 id 时进与 `note list` 同一个选择器（要求 stdin/stdout 都是终端）；真终端打印三行头部，非终端无头部且默认 `notty`（无 ANSI）；加密笔记打印提示并退出 4 |
 | `note web [参数]`         | 前台启动 Web 服务，唯一会启动前端页面的基线命令（日志进终端，不建日志文件）                                                                                                                                                                                                         |
 | `note web start [参数]`   | 后台启动；已在运行则打印地址后退出 0                                                                                                                                                                                                                                                |
@@ -504,6 +511,8 @@ GET    /*                     # 非 API GET → index.html
 | `master_password_missing` | 409  | 未设置主密码就提交密文                                   |
 | `master_password_exists`  | 409  | 重复设置主密码                                           |
 | `id_conflict`             | 409  | 客户端提供的笔记 ID 已存在                               |
+| `title_conflict`          | 409  | 同分类下已有同名笔记（`title COLLATE NOCASE`），带 `fields.title` |
+| `title_in_trash`          | 409  | 同名笔记在回收站里（仍占着这个名字），带 `fields.title`   |
 | `category_reserved`       | 409  | 改名或删除默认分类                                       |
 | `category_not_empty`      | 409  | 分类下仍有笔记，`fields.note_count` 为条数               |
 | `ai_not_configured`       | 409  | AI 没配齐（`base_url`/`api_key`/`models`），文案点名缺项 |
@@ -539,7 +548,7 @@ GET    /*                     # 非 API GET → index.html
 
 ### 5.1 Schema
 
-结构由 `sql/` 下的编号迁移脚本累积而成，当前 schema 版本 `user_version = 6`。以下是迁移全部执行完之后的最终形态：
+结构由 `sql/` 下的编号迁移脚本累积而成，当前 schema 版本 `user_version = 7`。以下是迁移全部执行完之后的最终形态：
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -640,6 +649,15 @@ ALTER TABLE activities_v5 RENAME TO activities;
 CREATE INDEX IF NOT EXISTS idx_activities_created_at ON activities(created_at);
 CREATE INDEX IF NOT EXISTS idx_activities_kind       ON activities(kind);
 CREATE INDEX IF NOT EXISTS idx_activities_query      ON activities(query);
+
+-- 0007_quick_category_and_unique_title.sql：第二内置分类「速记」+ 同分类标题唯一
+INSERT INTO categories (id, name, created_at) VALUES (2, '速记', '2000-01-01T00:00:00Z');
+-- 存量重名先改名（ROW_NUMBER 按「活着的优先 → updated_at 最新 → id 最大」保留一条），再建索引；
+-- 唯一索引刻意不加 deleted_at IS NULL：回收站里的那条也占着名字，恢复时不会撞名。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_title_category
+    ON notes(title COLLATE NOCASE, category_id) WHERE category_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_title_uncategorized
+    ON notes(title COLLATE NOCASE) WHERE category_id IS NULL;
 ```
 
 字段约定：
@@ -654,6 +672,8 @@ CREATE INDEX IF NOT EXISTS idx_activities_query      ON activities(query);
 - `notes.kind` / `notes.remark` / `notes.rev`：0003 引入。创建写 `'note'` 与空备注，每次更新 `rev + 1`；`kind`、`remark` 目前没有编辑入口，原值透传。
 - `notes.extra` / `notes.last_visited_at`：0003 预留列，应用当前只读 schema、不写入，保持 `NULL`。
 - `notes.category_id`：所属分类；`NULL` 与 `id = 1`「未分类」在展示与筛选上等价（见 5.4）。
+- `categories.id = 2`「速记」：0007 引入的第二个内置固定分类，与「未分类」同受 `store.IsReservedCategory` 守卫（不可改名、不可删除）；`Category.Reserved` 是 API 响应里的 `reserved` 字段，也是前端判断「给不给操作按钮」的唯一依据。
+- `notes.title` 的唯一性：0007 起同一分类内标题唯一（`COLLATE NOCASE`，回收站里的行也参与），因此按 `(分类, 标题)` 可以定位到唯一一条；查询必须显式写 `title = ? COLLATE NOCASE`（列本身没声明 COLLATE，只有索引是 NOCASE）。
 - `notes.deleted_at`：0006 引入的软删除标记；`NULL` = 正常，非空 = 在回收站里（值就是移入时刻，UTC 秒级）。列表、搜索、分类计数、统计都只看 `deleted_at IS NULL`。
 - 时间：UTC，固定格式 `2006-01-02T15:04:05Z`（秒级），便于字符串排序；相同时间以 `id DESC` 兜底。
 - `master_password` 是单行表（`CHECK (id = 1)`），只存派生参数，永不存口令本身；`question` 为助记问题原文，只用于展示提示。
@@ -687,6 +707,7 @@ CREATE INDEX IF NOT EXISTS idx_activities_query      ON activities(query);
   - `0001_init.sql`：v1 的 `notes` 表与索引，内容与 5.1 一致；
   - `0005_activity_events.sql`：`activities` 重建（新建 → 拷数据 → 删旧 → 改名），把 `kind` 的 CHECK 从 `('search')` 扩到查询 + 笔记/分类读写，并补回三条索引；
   - `0006_note_soft_delete.sql`：`ALTER TABLE notes ADD COLUMN deleted_at TEXT`（存量行保持 `NULL`，升级后全是「未删除」），并建两个部分索引 `idx_notes_active`（`deleted_at IS NULL`，按 `updated_at DESC`）与 `idx_notes_deleted_at`（按 `deleted_at DESC`），让默认列表与回收站列表各走一条窄索引；
+  - `0007_quick_category_and_unique_title.sql`：插入 `categories(2, '速记')`；用 `ROW_NUMBER()` 把存量同分类重名改成 ` (2)`、` (3)`…（冲突时退化为 ` (n · <id 前 8 位>)`，超 200 码点截断）；再建两条部分唯一索引 `idx_notes_title_category`（`category_id IS NOT NULL`）与 `idx_notes_title_uncategorized`（`category_id IS NULL`），键都是 `title COLLATE NOCASE`，且**不**排除回收站行；
   - `embed.go`：用 `//go:embed *.sql` 暴露嵌入文件系统，供 `internal/store` 读取。
 - 文件名前缀为版本号；启动时按版本升序执行，已执行版本由 `PRAGMA user_version` 记录。
 - 每个版本的迁移在单个事务内执行；任一语句失败则回滚并拒绝启动，成功后更新 `user_version`。
@@ -969,7 +990,7 @@ web/src/lib/session-key.ts
 
 **分页（`store.NotePage`）**：`{"items":[…],"total":42,"page":1,"per_page":20}`——总数与页大小都由服务端给出，前端自己算 `ceil(total/per_page)`。
 
-**分类（`store.Category`）**：`{"id":2,"name":"work","note_count":3}`；`GET /api/categories` 返回裸数组，`note_count` 对默认分类计入 `category_id IS NULL` 的笔记。
+**分类（`store.Category`）**：`{"id":2,"name":"work","note_count":3,"reserved":false}`；`GET /api/categories` 返回裸数组，`note_count` 对默认分类计入 `category_id IS NULL` 的笔记；`reserved` 为 `true` 的是内置固定分类（「未分类」「速记」），前端据此隐藏改名/删除按钮。
 
 **主密码配置**：`{"configured":true,"salt_b64":"…","question":"…"}`；未配置时 `configured=false` 且后两字段为空串。
 
@@ -1082,6 +1103,8 @@ GET /api/csrf
 | 未设置主密码就改助记问题 | 409 `master_password_missing`                                         |
 | 客户端 id 撞库           | 409 `id_conflict`                                                     |
 | 默认分类改名/删除        | 409 `category_reserved`                                               |
+| 同分类标题已存在         | 409 `title_conflict` + `fields.title`                                 |
+| 同名笔记在回收站里       | 409 `title_in_trash` + `fields.title`                                 |
 | 删除非空分类             | 409 `category_not_empty` + `fields.note_count`                        |
 | 笔记请求体声明长度超限   | 413 `body_too_large`（分类/主密码/姓名超限表现为 400 `body_invalid`） |
 | 其它                     | 500 `internal`                                                        |
@@ -1498,18 +1521,23 @@ Referrer-Policy: no-referrer
 | `internal/ai/client_test.go`               | `Configured`/`Missing`/`DefaultModel`/`Host`、URL 拼接与末尾斜杠、`temperature`/`stream`/`model` 载荷、显式未知模型 → `ModelError`、非 2xx → `UpstreamError`（摘要按 200 码点截断）、坏 JSON/空 choices → `ErrBadResponse`、1 MiB 上限 → `ErrTooLarge`、空正文 → `ErrEmptyResult`、`BuildPrompt` 空模板回落与只替换首个变量、`StripFence` 只剥整段围栏 |
 | `internal/web/optimize_api_test.go`        | `POST /api/ai/optimize` 成功与 `no-store`、空/超长正文 400、模型不在列表 400 字段 `model`、未配置 409、上游 5xx 502 与超时 504（`fakeUpstream` 起 `httptest` 假上游）、结果不落库                                                                                                                                                                      |
 | `internal/web/shutdown_api_test.go`        | 正确令牌 → 202 且回调只调用一次；错误/缺失令牌 → 403；未启用（Token 为空）→ 403 `shutdown_disabled`；GET → 405 带 `Allow`；不带 CSRF Cookie 也能通过；非法 Host 仍被 `hostGuard` 拦下                                                                                                                                                                  |
-| `internal/store/store_test.go`             | 空库自动建表并跑完 6 个迁移、重复打开幂等、`user_version` 高于程序时拒绝启动、非法文件拒绝启动、0004 对象存在、0005 的 kind 枚举与索引重建、0006 的 `deleted_at` 为可空 TEXT 且存量行为 `NULL` + 两个部分索引存在、0003 扩展列默认值与 CHECK                                                                                                           |
+| `internal/store/store_test.go`             | 空库自动建表并跑完 7 个迁移、重复打开幂等、`user_version` 高于程序时拒绝启动、非法文件拒绝启动、0004 对象存在、0005 的 kind 枚举与索引重建、0006 的 `deleted_at` 为可空 TEXT 且存量行为 `NULL` + 两个部分索引存在、0003 扩展列默认值与 CHECK                                                                                                           |
 | `internal/store/activity_test.go`          | 笔记与分类的增删改各写一条对应事件、`RecordActivity` 只接受已知 kind、失败的写操作（不存在/非空分类/默认分类）不留事件、`GetStats` 的总量/活跃天数/按天计数覆盖全部事件而 Top 查询只算 `search`                                                                                                                                                        |
 | `internal/store/category_test.go`          | 分类 CRUD 与笔记数、大小写不敏感重名、默认分类守卫（改名/删除）、非空分类删除返回条数、**未分类（`category_id IS NULL`）计入默认分类并可被筛出**                                                                                                                                                                                                       |
+| `internal/store/migration_test.go`         | 用只跑到 `user_version=6` 的旧库验证 0007：插入「速记」、同分类重名按「活着的优先 → 更新时间新 → id 大」保留并追加后缀（大小写不敏感）、后缀冲突退化为 id 片段、超 200 码点截断、两条部分唯一索引存在且覆盖未分类 |
+| `internal/store/note_title_test.go`        | `FindNoteByTitle`/`UpsertNoteByTitle`/`SoftDeleteNoteByTitle`/`SoftDeleteCategoryNotes`/`ListNotesInCategory` 全分支：新建→覆盖同 id 且 `rev+1`、NOCASE 命中、回收站同名拒绝（不复活不覆盖）、加密笔记拒绝、按分类软删只动未删除行且每条记一次 `note_delete`、`CreateNote`/`UpdateNote` 的撞名映射（活着 → `ErrNoteTitleExists`，回收站 → `ErrNoteTitleInTrash`） |
+| `internal/cli/ref_test.go`                 | `ParseRef` 表驱动：`--type` 优先与标题里的 `@`、`@分类` 引用、`a@b@c` 按最后一个 `@` 切分、空标题/空分类/`@`/超长标题/超长分类名，前后空白裁剪 |
+| `internal/cli/quick_test.go`               | `RunSet/RunGet/RunGetCategory/RunGetCategories/RunDel/RunDelCategory`：新建与覆盖文案、超长正文不写库、按需建分类、结尾换行三态、回收站与加密映射、空分类不是错误、分类表格的「固定」标记与无尾随空格、整分类删除的 0 条报错 |
+| `cmd/note/quick_test.go`                   | cli 与 store 的「速记」常量一致、未分类映射 `category_id IS NULL`、真实库全链路（写入/覆盖/列表/软删/整分类删除）、缺失笔记与分类的哨兵映射、未分类往返 |
 | `internal/store/master_test.go`            | 主密码只写一次、盐长度与空问题拒绝、`UpdateMasterQuestion` 只改问题列（空/超 100 码点拒绝、未配置时报 `master_password_missing`、盐与 `created_at` 不动）                                                                                                                                                                                              |
 | `internal/store/note_test.go`              | id 形态、明文/密文建改删、明文转加密、`rev`/`updated_at`、分页、标题命中排前、分类筛选与空查询、按码点计数的 2000 边界、结构非法拒绝、软删除不碰 `rev`/`updated_at` 且删除后不可更新、彻底删除后 404、`ListEncryptedCiphers` 只含加密行且不带 `content`、`UpdateNoteCipher` 只换密文（`title/content/category_id/rev/updated_at` 逐字不变）            |
 | `internal/store/note_trash_test.go`        | 软删除后列表/搜索/分类计数全部看不到它而 `deleted=1` 能列出、恢复到原分类且 `updated_at`/`rev` 不变、`restore`/`purge` 对未删除笔记返回 `ErrNoteNotInTrash` 而对不存在返回 `ErrNoteNotFound`、重复删除 404、软删除/恢复/彻底删除各落一条事件、只剩回收站笔记的分类可删且恢复后落到「未分类」                                                           |
 | `internal/build/info_test.go`              | `Describe()` 的「已注入」与「回落到 vcs 信息」两分支、`Label()` 的开发构建标注                                                                                                                                                                                                                                                                         |
-| `internal/web/handlers_info_test.go`       | `/api/info` 字段齐全、`no-store`、时间戳形如 `2006-01-02T15:04:05Z`、`schema_version` 为 6                                                                                                                                                                                                                                                             |
+| `internal/web/handlers_info_test.go`       | `/api/info` 字段齐全、`no-store`、时间戳形如 `2006-01-02T15:04:05Z`、`schema_version` 为 7                                                                                                                                                                                                                                                             |
 | `internal/web/note_cipher_api_test.go`     | 清单不含 title/content、缺 `kdf_params` 与非法 base64 各返回对应字段错误、对明文笔记 409 `not_encrypted`、不存在的 id 404、不带 `X-CSRF-Token` 的 PUT 403 且库里密文未变、`/api/notes/encrypted` 不被 `{id}` 通配吃掉                                                                                                                                  |
 | `internal/web/master_question_api_test.go` | `PUT /api/master-password/question` 的成功、字段校验与 CSRF 拒绝                                                                                                                                                                                                                                                                                       |
 | `internal/web/server_test.go`              | SPA 回退与安全头、`/assets` 长缓存与缺失 404、未知 API 返回 JSON 404、CSRF 签发与复用、Host 白名单、带扩展名非 HTML 路径 404、设置门禁与改名、统计与搜索端点                                                                                                                                                                                           |
-| `internal/web/notes_api_test.go`           | 创建与字段级校验、密文笔记往返、客户端自带 id、列表分页与筛选、`q` 超长 400、读改删与 404/409 映射、回收站全流程（软删除后详情带 `deleted_at`、默认列表不出现、`deleted=1` 列出、恢复回原分类、`not_in_trash` 409、`?purge=1` 后 404、restore 的 CSRF 拒绝）、增删改查与详情查看各自落一条事件（回收站详情不算查看）                                   |
+| `internal/web/notes_api_test.go`           | 创建与字段级校验、密文笔记往返、客户端自带 id、列表分页与筛选、`q` 超长 400、读改删与 404/409 映射、同分类标题唯一（`title_conflict` / `title_in_trash`、NOCASE、换分类同名合法、改标题撞邻居 409）、回收站全流程（软删除后详情带 `deleted_at`、默认列表不出现、`deleted=1` 列出、恢复回原分类、`not_in_trash` 409、`?purge=1` 后 404、restore 的 CSRF 拒绝）、增删改查与详情查看各自落一条事件（回收站详情不算查看）                                   |
 | `internal/web/categories_api_test.go`      | 主密码 GET/POST 与重复设置 409、分类增删改与错误码、非空删除 409 带 `note_count`                                                                                                                                                                                                                                                                       |
 
 - 运行 `just test`（内含 `go test ./...`）与 `just check`（`go vet ./...`）。

@@ -35,6 +35,7 @@
 ## Task 1: 迁移 0007 + 「速记」固定分类 + `reserved` 字段
 
 **Files:**
+
 - Create: `sql/0007_quick_category_and_unique_title.sql`
 - Modify: `internal/store/category.go`
 - Modify: `internal/store/store_test.go:28`、`internal/store/store_test.go:72`（版本号断言 6 → 7）
@@ -42,6 +43,7 @@
 - Modify: `internal/store/category_test.go`
 
 **Interfaces:**
+
 - Consumes: 既有 `sql/0001`–`0006`、`store.loadMigrations`、`store.Open`、`ListCategories`、`RenameCategory`、`DeleteCategory`。
 - Produces（后续任务依赖）：
   - `store.QuickCategoryID int64 = 2`、`store.QuickCategoryName = "速记"`
@@ -49,7 +51,7 @@
   - `store.Category` 新字段 `Reserved bool`，JSON 名 `reserved`
   - 数据库：`categories` 有 (2, '速记')；`notes` 上有 `idx_notes_title_category` 与 `idx_notes_title_uncategorized` 两条唯一索引；`PRAGMA user_version = 7`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 `internal/store/migration_test.go`（新建）——用一个只跑到 v6 的库模拟存量数据：
 
@@ -77,11 +79,11 @@ func TestMigrationDedupesTitlesKeepingLiveAndNewest(t *testing.T)
 
 预置（同一「未分类」，`category_id = NULL`，content 随便非空）：
 
-| id | title | updated_at | deleted_at |
-|----|-------|-----------|-----------|
-| `n1` | 周报 | 2026-01-09T00:00:00Z | 2026-01-10T00:00:00Z |
-| `n2` | 周报 | 2026-01-02T00:00:00Z | NULL |
-| `n3` | 周报 | 2026-01-03T00:00:00Z | NULL |
+| id   | title | updated_at           | deleted_at           |
+| ---- | ----- | -------------------- | -------------------- |
+| `n1` | 周报  | 2026-01-09T00:00:00Z | 2026-01-10T00:00:00Z |
+| `n2` | 周报  | 2026-01-02T00:00:00Z | NULL                 |
+| `n3` | 周报  | 2026-01-03T00:00:00Z | NULL                 |
 
 期望：`n3` 仍是 `周报`（活的最新）；`n2` → `周报 (2)`；`n1` → `周报 (3)`（在回收站里排最后，序号取组内 `ROW_NUMBER`）。
 
@@ -111,12 +113,12 @@ func TestQuickCategoryIsReserved(t *testing.T)
 
 断言：`ListCategories` 里 id=2 的 `Name == "速记"` 且 `Reserved == true`；`RenameCategory(ctx, QuickCategoryID, "快记")` 与 `DeleteCategory(ctx, QuickCategoryID)` 都返回 `ErrReservedCategory`。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/store/ -run 'TestMigration|TestQuickCategory' -v`
 Expected: 编译失败（`QuickCategoryID` 未定义）或断言失败（version 6 / 无速记）。
 
-- [ ] **Step 3: 写迁移 SQL**
+- [x] **Step 3: 写迁移 SQL**
 
 `sql/0007_quick_category_and_unique_title.sql`（完整内容，逐字照抄；去重语句是实现要点，测试不接受「看起来对」）：
 
@@ -175,7 +177,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_title_uncategorized
     ON notes(title COLLATE NOCASE) WHERE category_id IS NULL;
 ```
 
-- [ ] **Step 4: 改 `internal/store/category.go`**
+- [x] **Step 4: 改 `internal/store/category.go`**
 
 ```go
 const quickCategoryID = 2
@@ -191,17 +193,17 @@ const (
 func IsReservedCategory(id int64) bool { return id == defaultCategoryID || id == quickCategoryID }
 ```
 
-- `Category` 结构体加 `Reserved bool` + ``json:"reserved"``；
+- `Category` 结构体加 `Reserved bool` + `json:"reserved"`；
 - `ListCategories` 扫描后 `cat.Reserved = IsReservedCategory(cat.ID)`；
 - `RenameCategory` / `DeleteCategory` 的守卫改成 `if IsReservedCategory(id) { return ErrReservedCategory }`；
 - 文件头注释里补一句「id=2 速记也是固定分类」。
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `go test ./internal/store/ -v`
 Expected: PASS，含 4 个新迁移测试、`TestQuickCategoryIsReserved`、以及 `TestOpenCreatesDatabaseAndAppliesMigrations`（版本 7）。
 
-- [ ] **Step 6: CHANGELOG + 提交**
+- [x] **Step 6: CHANGELOG + 提交**
 
 `docs/CHANGELOG.md` 的 `[Unreleased] → Added` 追加：固定分类「速记」（id=2，与未分类同为不可改名的内置分类）；`Changed` 追加：迁移 0007 清理存量同分类同名笔记（活的/新的保留原名，其余追加序号）并新增两条唯一索引（含回收站行）。
 
@@ -215,11 +217,13 @@ git commit -m "feat(store): 速记固定分类与同分类标题唯一索引"
 ## Task 2: store 层按 (分类, 标题) 读写 + 唯一冲突翻译
 
 **Files:**
+
 - Create: `internal/store/note_title.go`
 - Create: `internal/store/note_title_test.go`
 - Modify: `internal/store/note.go`（`CreateNote` / `UpdateNote` 的错误翻译；`SoftDeleteNote` 事务体抽成 `softDeleteNoteTx`）
 
 **Interfaces:**
+
 - Consumes: Task 1 的唯一索引、`normalizeTitle`、`maxContentRunes`、`nowUTC`、`recordActivityTx`、`GetNote`、`NewNoteID`、`buildNoteQuery`、`listSelectSQL`、`scanNoteItems`、`defaultCategoryID`。
 - Produces（Task 6 依赖）：
 
@@ -250,7 +254,7 @@ func (s *Store) SoftDeleteCategoryNotes(ctx context.Context, categoryID *int64) 
 func (s *Store) ListNotesInCategory(ctx context.Context, categoryID int64) ([]NoteListItem, error)
 ```
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 `internal/store/note_title_test.go`（新建，包内测试，可直接用 `s.db` 做断言）：
 
@@ -276,12 +280,12 @@ func TestCreateAndUpdateNoteMapTitleConflict(t *testing.T)
 - `ListNotesInCategory(DefaultCategoryID)` 只返回 `category_id IS NULL` 的活笔记，按 `updated_at` 倒序。
 - `CreateNote` 同分类同名 → `ErrNoteTitleExists`；换成另一个分类 → 成功；`CreateNote` 用回收站里那条的标题 → `ErrNoteTitleInTrash`；`UpdateNote` 把 A 改成 B 的标题（同分类）→ `ErrNoteTitleExists`。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/store/ -run 'Title|CategoryNotes|NotesInCategory' -v`
 Expected: 编译失败（`UpsertNoteByTitle` 未定义）。
 
-- [ ] **Step 3: 实现 `internal/store/note_title.go`**
+- [x] **Step 3: 实现 `internal/store/note_title.go`**
 
 按标题定位的 SQL（`title` 列没有声明 `COLLATE`，必须显式写；分类为 nil 用 `IS NULL`）：
 
@@ -318,17 +322,17 @@ func (s *Store) classifyTitleConflict(ctx context.Context, categoryID *int64, ti
 `CreateNote` / `UpdateNote` 在 `inTx` 返回 `isTitleUniqueError` 时（事务已回滚，连接可用）返回
 `classifyTitleConflict(...)` 的结果。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `go test ./internal/store/ -v`
 Expected: PASS（全包，含 Task 1 的迁移测试）。
 
-- [ ] **Step 5: 跑全量后端测试，修掉撞名的既有测试**
+- [x] **Step 5: 跑全量后端测试，修掉撞名的既有测试**
 
 Run: `go test ./...`
 Expected: PASS。既有测试里如果有「同分类两次用同一个标题建笔记」的地方，改成不同标题（不许为了过测试放宽索引）。
 
-- [ ] **Step 6: CHANGELOG + 提交**
+- [x] **Step 6: CHANGELOG + 提交**
 
 `[Unreleased] → Added` 追加「store 层按 (分类, 标题) 的 upsert/find/soft-delete 与 `ErrNoteTitleExists` / `ErrNoteTitleInTrash`」。
 
@@ -342,10 +346,12 @@ git commit -m "feat(store): 按标题的 upsert/find/软删与标题冲突分类
 ## Task 3: `cli.Ref` 寻址解析
 
 **Files:**
+
 - Create: `internal/cli/ref.go`
 - Create: `internal/cli/ref_test.go`
 
 **Interfaces:**
+
 - Consumes: 无（纯字符串处理）。
 - Produces（Task 4/5/6 依赖）：
   - `cli.QuickCategoryName = "速记"`
@@ -353,31 +359,31 @@ git commit -m "feat(store): 按标题的 upsert/find/软删与标题冲突分类
   - `func ParseRef(raw, typeFlag, defaultCategory string) (Ref, error)`
   - `const maxRefTitleRunes = 200`、`const maxRefCategoryRunes = 30`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 `internal/cli/ref_test.go`（表驱动）：
 
-| raw | typeFlag | 期望 |
-|-----|----------|------|
-| `周报` | `` | `{Title:"周报", Category:"速记"}` |
-| `周报@工作` | `` | `{Title:"周报", Category:"工作"}` |
-| `@工作` | `` | `{Category:"工作", CategoryOnly:true}` |
-| `meeting@2024` | `工作` | `{Title:"meeting@2024", Category:"工作"}` |
-| `a@b@c` | `` | `{Title:"a@b", Category:"c"}`（最后一个 `@` 切分） |
-| `周报@` | `` | error |
-| `@` | `` | error |
-| `` | `` | error（空引用） |
-| `＠` 之外的 200 码点标题 | `` | error（超长标题） |
-| `周报@` + 31 码点分类 | — | error（分类名超长） |
+| raw                      | typeFlag | 期望                                               |
+| ------------------------ | -------- | -------------------------------------------------- |
+| `周报`                   | ``       | `{Title:"周报", Category:"速记"}`                  |
+| `周报@工作`              | ``       | `{Title:"周报", Category:"工作"}`                  |
+| `@工作`                  | ``       | `{Category:"工作", CategoryOnly:true}`             |
+| `meeting@2024`           | `工作`   | `{Title:"meeting@2024", Category:"工作"}`          |
+| `a@b@c`                  | ``       | `{Title:"a@b", Category:"c"}`（最后一个 `@` 切分） |
+| `周报@`                  | ``       | error                                              |
+| `@`                      | ``       | error                                              |
+| ``                       | ``       | error（空引用）                                    |
+| `＠` 之外的 200 码点标题 | ``       | error（超长标题）                                  |
+| `周报@` + 31 码点分类    | —        | error（分类名超长）                                |
 
 另加 `TestParseRefTrimsWhitespace`：`" 周报 @ 工作 "` → `{Title:"周报", Category:"工作"}`。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/cli/ -run TestParseRef -v`
 Expected: 编译失败（`ParseRef` 未定义）。
 
-- [ ] **Step 3: 实现 `internal/cli/ref.go`**
+- [x] **Step 3: 实现 `internal/cli/ref.go`**
 
 ```go
 const (
@@ -403,12 +409,12 @@ type Ref struct {
 校验：标题去空白后 1–200 码点（分类引用时标题必须为空）、分类去空白后 1–30 码点；错误返回
 `fmt.Errorf("...（用 note set/get/del --help 查看用法）")`，由调用方映射成退出码 2。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `go test ./internal/cli/ -run TestParseRef -v`
 Expected: PASS。
 
-- [ ] **Step 5: CHANGELOG + 提交**
+- [x] **Step 5: CHANGELOG + 提交**
 
 ```bash
 git add internal/cli/ref.go internal/cli/ref_test.go docs/CHANGELOG.md
@@ -420,10 +426,12 @@ git commit -m "feat(cli): 标题@分类 寻址解析"
 ## Task 4: `cli.RunSet / RunGet / RunDel` 与输出格式
 
 **Files:**
+
 - Create: `internal/cli/quick.go`
 - Create: `internal/cli/quick_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 3 的 `Ref`、既有 `cli.Category`、`cli.ErrNoteEncrypted`。
 - Produces（Task 6 依赖）：
 
@@ -466,7 +474,7 @@ func RunDel(ctx context.Context, deps QuickDeps, ref Ref) (string, error)
 func RunDelCategory(ctx context.Context, deps QuickDeps, ref Ref) (string, error)
 ```
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 `internal/cli/quick_test.go`，用一个假 `QuickDeps`（记录调用、返回预置值、可注入错误）：
 
@@ -483,12 +491,12 @@ func TestRunDelReportsTrashAndMapsMissing(t *testing.T) // "已移入回收站�
 func TestRunDelCategoryReportsCount(t *testing.T)       // 3 → "已移入回收站 3 条（分类「工作」）\n"；0 → error
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/cli/ -run 'TestRun(Set|Get|Del)' -v`
 Expected: 编译失败。
 
-- [ ] **Step 3: 实现 `internal/cli/quick.go`**
+- [x] **Step 3: 实现 `internal/cli/quick.go`**
 
 要点（文案逐字，测试直接断言）：
 
@@ -501,12 +509,12 @@ Expected: 编译失败。
 - `RunDelCategory`：`deps.Category` + `deps.DeleteNotes`；`n == 0` 返回 `fmt.Errorf("分类「%s」下没有可删除的笔记", ref.Category)`；否则 `已移入回收站 %d 条（分类「%s」）\n`。
 - 分类查找失败（`ErrQuickCategoryNotFound`）原样透传，由 cmd 层给中文。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `go test ./internal/cli/ -v`
 Expected: PASS。
 
-- [ ] **Step 5: CHANGELOG + 提交**
+- [x] **Step 5: CHANGELOG + 提交**
 
 ```bash
 git add internal/cli/quick.go internal/cli/quick_test.go docs/CHANGELOG.md
@@ -518,11 +526,13 @@ git commit -m "feat(cli): set/get/del 的纯逻辑与输出格式"
 ## Task 5: `parse.Parse` 认识 set / get / del + 帮助文案
 
 **Files:**
+
 - Modify: `internal/cli/parse.go`
 - Modify: `internal/cli/usage.go`
 - Modify: `internal/cli/parse_test.go`
 
 **Interfaces:**
+
 - Consumes: Task 3 的 `ParseRef`、`QuickCategoryName`。
 - Produces（Task 6 依赖）：`CommandSet`、`CommandGet`、`CommandDel`（追加在 `CommandConfig` 之后、`CommandHelp` 之前不影响既有零值），以及 `Options.Set cli.SetOptions` / `Options.Get cli.GetOptions` / `Options.Del cli.DelOptions`：
 
@@ -532,7 +542,7 @@ type GetOptions struct { Ref Ref; List bool }
 type DelOptions struct { Ref Ref; Yes bool }
 ```
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 `internal/cli/parse_test.go` 追加：
 
@@ -547,12 +557,12 @@ func TestParseQuickCommandsAcceptConfigFlags(t *testing.T) // -c / --db 被消�
 func TestParseQuickCommandHelp(t *testing.T)         // {"set","--help"} → CommandHelp，主题 "set"
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/cli/ -run TestParse -v`
 Expected: 失败（`CommandSet` 未定义 / 解析走错分支）。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `parse.go`：
 
@@ -569,12 +579,12 @@ Expected: 失败（`CommandSet` 未定义 / 解析走错分支）。
 - `Usage()` 命令表补三行（`set` 写/覆盖速记、`get` 读正文与列表、`del` 移入回收站）+ 三条示例；
 - `UsageFor` 增加 `set` / `get` / `del` 主题；帮助里写明寻址语法（`标题` / `标题@分类` / `@分类` / `--type`）、退出码（0/1/2/4）、`del @分类` 必须 `--yes`、`set` 的提示走 stderr。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `go test ./internal/cli/ -v`
 Expected: PASS。
 
-- [ ] **Step 5: CHANGELOG + 提交**
+- [x] **Step 5: CHANGELOG + 提交**
 
 ```bash
 git add internal/cli/parse.go internal/cli/usage.go internal/cli/parse_test.go docs/CHANGELOG.md
@@ -586,15 +596,17 @@ git commit -m "feat(cli): set/get/del 子命令解析与帮助"
 ## Task 6: `cmd/note` 装配与退出码
 
 **Files:**
+
 - Create: `cmd/note/quick.go`
 - Create: `cmd/note/quick_test.go`
 - Modify: `cmd/note/main.go`（`run()` 的 switch 补三个分支）
 
 **Interfaces:**
+
 - Consumes: Task 2 的 store 方法、Task 4 的 `Run*` 与哨兵错误、Task 5 的 Options。
 - Produces: `runSet(globalConfigPath string, args []string, opts cli.SetOptions) error` 等同名三个入口（`main.go` 只调用它们）。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 `cmd/note/quick_test.go`（复用 `openTestStore` 的思路，直接对 temp 目录里的库跑 store + cli 组合）：
 
@@ -609,12 +621,12 @@ func TestQuickExitCodeForEncryptedGet(t *testing.T)  // 加密笔记 + get → s
 断言方式：直接调 `quickDeps(st)` 的字段（与 `cmd/note` 内部同一份），或调 `cli.RunSet/RunGet`；退出码用
 `errors.As(err, &exitError)` 后的值断言。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./cmd/note/ -run TestQuick -v`
 Expected: 编译失败（`quickDeps` 未定义）。
 
-- [ ] **Step 3: 实现 `cmd/note/quick.go`**
+- [x] **Step 3: 实现 `cmd/note/quick.go`**
 
 ```go
 // quickDeps 把 store 包装成 cli.QuickDeps；store 的哨兵错误在这里翻译成 cli 的哨兵错误。
@@ -626,12 +638,12 @@ func categoryID(category cli.Category) *int64
 
 映射规则：
 
-| store | cli |
-|-------|-----|
-| `ErrNotFound`（分类） | `cli.ErrQuickCategoryNotFound` |
-| `ErrNoteNotFound` | `cli.ErrQuickNotFound` |
-| `ErrNoteTitleInTrash` | `cli.ErrQuickInTrash` |
-| `ErrEncryptedImmutable` | `cli.ErrNoteEncrypted` |
+| store                   | cli                            |
+| ----------------------- | ------------------------------ |
+| `ErrNotFound`（分类）   | `cli.ErrQuickCategoryNotFound` |
+| `ErrNoteNotFound`       | `cli.ErrQuickNotFound`         |
+| `ErrNoteTitleInTrash`   | `cli.ErrQuickInTrash`          |
+| `ErrEncryptedImmutable` | `cli.ErrNoteEncrypted`         |
 
 三个入口函数：`loadConfig` → `store.Open` → 调 `cli.Run*` → 打印：
 
@@ -661,12 +673,12 @@ case cli.CommandDel:
 	return runDel(opts.ConfigPath, opts.Args, opts.Del)
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `go test ./cmd/note/ -v && go build ./...`
 Expected: PASS。
 
-- [ ] **Step 5: 手工冒烟（临时库）**
+- [x] **Step 5: 手工冒烟（临时库）**
 
 ```bash
 go run ./cmd/note set --db /tmp/q.db 周报 "本周结论"
@@ -680,7 +692,7 @@ go run ./cmd/note del --db /tmp/q.db @工作 --yes
 
 Expected：`get 周报` 输出 `本周结论`；`get @工作` 一行；`--list` 里「未分类」和「速记」备注列都是 `固定`；不带 `--yes` 的那条退出码 2。
 
-- [ ] **Step 6: CHANGELOG + 提交**
+- [x] **Step 6: CHANGELOG + 提交**
 
 ```bash
 git add cmd/note/ docs/CHANGELOG.md
@@ -692,6 +704,7 @@ git commit -m "feat(cli): 接入 note set/get/del 与退出码"
 ## Task 7: 网页端 409 映射 + 前端 `reserved`
 
 **Files:**
+
 - Modify: `internal/web/handlers_notes.go`（`writeNoteStoreError`）
 - Modify: `internal/web/notes_api_test.go`
 - Modify: `web/src/lib/notes.ts`（`Category` 加 `reserved: boolean`）
@@ -699,10 +712,11 @@ git commit -m "feat(cli): 接入 note set/get/del 与退出码"
 - Modify: `web/src/components/CategoryTree.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 2 的 `store.ErrNoteTitleExists` / `store.ErrNoteTitleInTrash`、Task 1 的 `Category.Reserved`。
 - Produces: HTTP 409 码 `title_conflict`（「同分类下已有同名笔记」）与 `title_in_trash`（「回收站里已有同名笔记，请先恢复或彻底删除」）。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 `internal/web/notes_api_test.go` 追加：
 
@@ -716,12 +730,12 @@ func TestCategoryTreeMarksReserved(t *testing.T)                   // GET /api/c
 `web/src/components/CategoryTree.test.ts` 追加：`reserved: true` 的分类不渲染「改名」「删除」按钮（
 用既有测试的 mount 方式，断言按钮文案不存在）。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/web/ -run 'Conflicts|Reserved' -v` 与 `npm --prefix web run test -- --run CategoryTree`
 Expected: 409 断言失败（现状是 500 `internal` 或 201）；前端按钮仍出现。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `writeNoteStoreError` 在 `ErrNoteNotFound` 分支之前加：
 
@@ -740,12 +754,12 @@ case errors.Is(err, store.ErrNoteTitleExists):
 - `CategoryTree.svelte`：删除 `const DEFAULT_CATEGORY_ID = 1`，`{#if category.id !== DEFAULT_CATEGORY_ID}` 改为 `{#if !category.reserved}`，注释改成「固定分类（未分类 / 速记）后端改名删除都 409，界面不给按钮」。
 - 若前端别处（`NoteListView`/`NoteEditorView`）构造 `Category` 字面量，补 `reserved: false` 以保证类型通过 `svelte-check`。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `go test ./internal/web/ -v && npm --prefix web run test -- --run`
 Expected: PASS。
 
-- [ ] **Step 5: CHANGELOG + 提交**
+- [x] **Step 5: CHANGELOG + 提交**
 
 ```bash
 git add internal/web/ web/src/ docs/CHANGELOG.md
@@ -757,24 +771,25 @@ git commit -m "feat(web): 同名标题 409 与固定分类 reserved 标记"
 ## Task 8: 文档收口与全量验证
 
 **Files:**
+
 - Modify: `docs/PRD.md`（`5.1.2 功能列表`、`5.4 页面与接口清单`、`5.5 分类管理`、`6.7 分类树`）
 - Modify: `docs/TECH_DESIGN.md`（`5.1 Schema`、`5.3 迁移`、`5.4 查询与搜索`、`8.5 校验与状态映射`、`4.x` 增补 CLI 一节）
 - Modify: `AGENTS.md`（项目概览三条命令、硬性约定两条）
 - Modify: `docs/CHANGELOG.md`（补齐本功能的 Added / Changed 全貌）
 
-- [ ] **Step 1: 更新 `AGENTS.md`**
+- [x] **Step 1: 更新 `AGENTS.md`**
 
 - 「项目概览」补：`note set / get / del` 用 `标题[@分类]` 寻址、`note set` 是覆盖语义、`del` 是软删除；
 - 「硬性约定」补两条：①同分类标题唯一（唯一索引包含回收站行，`set` 撞回收站同名是拒绝而非复活）；②「速记」（id=2）是第二个固定分类，守卫与「未分类」同源，前端只认 `reserved` 字段、不硬编码 id。
 
-- [ ] **Step 2: 更新 `docs/PRD.md`**
+- [x] **Step 2: 更新 `docs/PRD.md`**
 
 - `5.1.2`：CLI 侧三条命令的一句话描述与退出码；
 - `5.4`：新增 409 `title_conflict` / `title_in_trash`；
 - `5.5`：速记是第二个固定分类（不可改名/删除）；
 - `6.7`：固定分类不给改名/删除按钮（前端读 `reserved`）。
 
-- [ ] **Step 3: 更新 `docs/TECH_DESIGN.md`**
+- [x] **Step 3: 更新 `docs/TECH_DESIGN.md`**
 
 - `5.1`：`categories` 种子行、两条唯一索引的 DDL 与「包含回收站行」的理由；
 - `5.3`：0007 的去重策略（分组键、保留顺序、后缀规则、200 字符截断、失败回滚）；
@@ -782,7 +797,7 @@ git commit -m "feat(web): 同名标题 409 与固定分类 reserved 标记"
 - `8.5`：两个 409 码的映射；
 - 新增小节：`note set/get/del` 的寻址语法、默认分类、stderr/stdout 约定、退出码表。
 
-- [ ] **Step 4: 全量验证**
+- [x] **Step 4: 全量验证**
 
 Run: `just test`
 Expected: `go test ./...` 与 Vitest 全绿。
@@ -790,7 +805,7 @@ Expected: `go test ./...` 与 Vitest 全绿。
 Run: `just check`
 Expected: `go vet` 与 `svelte-check`/`tsc` 无错误。
 
-- [ ] **Step 5: CHANGELOG 收口 + 提交**
+- [x] **Step 5: CHANGELOG 收口 + 提交**
 
 确认 `[Unreleased]` 已按 Added / Changed 分类覆盖全部改动（速记分类、三个命令、迁移、409、前端 reserved、文档），且没有把未验证项写成已完成。
 

@@ -8,6 +8,13 @@
 
 ### Added
 
+- 文档与验收同步（实现过程与关键逻辑）：
+  - **`docs/PRD.md`**：版本推到 v1.15 并写明修订说明；5.1.2 新增 FR-1.13（同分类标题唯一：409 `title_conflict` / `title_in_trash`、迁移保留规则）与 FR-1.14（`note set/get/del` 的三种形态与 stdout/stderr 分流）；5.5 改写 FR-4.1 / FR-4.5（「速记」为第二个固定分类、前端只认 `reserved`）并新增 FR-4.8（`set` 顺带建分类）；8.9 的命令表补 6 行、参数表补 `--type` / `--yes` 并把 `--db` 说明改成各子命令均可用；第 9 节新增 AC-61（CLI 全链路，含 stdout 干净与退出码）与 AC-62（网页撞名/回收站同名/老库升级），第 10 节新增 M14。
+  - **`docs/TECH_DESIGN.md`**：目录树补 `cmd/note/quick.go`、`internal/cli/ref.go`、`internal/cli/quick.go`、`sql/0007`；4.1 启动表补三条命令；5.1 schema 版本 6 → 7 并补 0007 的 SQL 形状与两条字段约定（`categories.id=2` 固定分类、标题唯一与 `COLLATE NOCASE` 查询口径）；5.3 迁移补 0007 条目；4.5 错误码表与 8.5 状态映射表补 409 两码；8.2 分类结构加 `reserved`；第 11 节测试表补 5 个新测试文件并把迁移数、schema 版本改成 7。
+  - **`AGENTS.md`**：部署形态段补三条命令的语义；硬性约定新增一条（速记固定分类、标题唯一含回收站行、前端只认 `reserved`、CLI 寻址与退出码 0/1/2/4、`del @分类` 必须 `--yes`），避免后续改动把「按标题寻址」的前提拆掉。
+  - **计划文档**：`docs/superpowers/plans/2026-11-02-cli-quick-note-set-get-del.md` 全部勾选完成。
+  - **验证**：`just test`（Go 399 项 + 前端 175 项）与 `just check` 全绿。
+
 - 网页端的标题冲突映射与固定分类标记（实现过程与关键逻辑）：
   - **`internal/web/handlers_notes.go`**：`writeNoteStoreError` 新增 `ErrNoteTitleExists` → 409 `title_conflict`、`ErrNoteTitleInTrash` → 409 `title_in_trash`，两者都带 `fields.title`（新增 `errors.go#writeConflictFields`：409 仍要字段级提示，前端才知道把文案挂到标题框）。此前这类错误落进 `isUniqueError` 被报成「该笔记 id 已存在」，是 0007 唯一索引之后必须修的误导。
   - **前端**：`web/src/lib/notes.ts` 的 `Category` 加 `reserved: boolean`；`CategoryTree.svelte` 删掉硬编码的 `DEFAULT_CATEGORY_ID = 1`，改用 `{#if !category.reserved}`——「未分类」与「速记」都不给改名/删除按钮，后端仍返回 409 双保险。保存冲突走编辑器已有的 `fields` 通路，无需新增逻辑。

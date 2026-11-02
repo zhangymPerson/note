@@ -59,11 +59,11 @@
 
 ## 6. 已定的三个取向（用户 2026-11-02 选择）
 
-| 分叉 | 选择 | 含义 |
-|------|------|------|
-| 标题唯一性 | **①B 数据库唯一索引** | 加 `UNIQUE(分类, 标题)`；网页端同名从「允许」改为 409；需要一条清理存量重名的迁移 |
-| `del @分类` 安全阀 | **②B 必须 `--yes`** | 整分类删除只在显式加 `--yes` 时执行，否则是用法错误（退出码 2） |
-| `get` 输出形态 | **③A 只输出正文** | `get 标题` 输出原始 Markdown；`get @分类` 一行一条；不渲染、不复制、不打印头部 |
+| 分叉               | 选择                  | 含义                                                                              |
+| ------------------ | --------------------- | --------------------------------------------------------------------------------- |
+| 标题唯一性         | **①B 数据库唯一索引** | 加 `UNIQUE(分类, 标题)`；网页端同名从「允许」改为 409；需要一条清理存量重名的迁移 |
+| `del @分类` 安全阀 | **②B 必须 `--yes`**   | 整分类删除只在显式加 `--yes` 时执行，否则是用法错误（退出码 2）                   |
+| `get` 输出形态     | **③A 只输出正文**     | `get 标题` 输出原始 Markdown；`get @分类` 一行一条；不渲染、不复制、不打印头部    |
 
 ## 7. 设计
 
@@ -83,11 +83,11 @@
 
 三种引用形状，解析集中在 `internal/cli`：
 
-| 写法 | 含义 |
-|------|------|
-| `标题` | 速记分类里的这条标题 |
-| `标题@分类` | 指定分类里的这条标题 |
-| `@分类` | 整个分类（只用于 `get` / `del`） |
+| 写法          | 含义                                                      |
+| ------------- | --------------------------------------------------------- |
+| `标题`        | 速记分类里的这条标题                                      |
+| `标题@分类`   | 指定分类里的这条标题                                      |
+| `@分类`       | 整个分类（只用于 `get` / `del`）                          |
 | `--type 分类` | 显式分类；给了它就不再拆 `@`（标题里要写 `@` 时的逃生口） |
 
 规则：
@@ -159,12 +159,12 @@ note del @分类 --yes                # 软删除分类下所有未删除笔记
 
 ### 7.6 退出码
 
-| 码 | 含义 |
-|----|------|
-| 0 | 成功（含 `get @分类` 空结果） |
-| 1 | 找不到、只在回收站里、加密看不了以外的失败、`del` 没有删到任何东西 |
-| 2 | 用法错误（参数形状、缺 `--yes`、标题/分类名校验失败） |
-| 4 | `get` 命中的是加密笔记（CLI 没有主密码） |
+| 码  | 含义                                                               |
+| --- | ------------------------------------------------------------------ |
+| 0   | 成功（含 `get @分类` 空结果）                                      |
+| 1   | 找不到、只在回收站里、加密看不了以外的失败、`del` 没有删到任何东西 |
+| 2   | 用法错误（参数形状、缺 `--yes`、标题/分类名校验失败）              |
+| 4   | `get` 命中的是加密笔记（CLI 没有主密码）                           |
 
 ### 7.7 迁移 `sql/0007_quick_category_and_unique_title.sql`
 
@@ -288,30 +288,30 @@ EnsureCategory(ctx, name string) (Category, error)
 
 ### 7.11 统计事件口径
 
-| 命令 | 事件 |
-|------|------|
-| `set` 新建 | `note_create` |
-| `set` 覆盖 | `note_update` |
-| `get 标题` | `note_view`（走 `ViewNote`，与网页详情页/`note show` 同源） |
-| `get @分类` / `get --list` | 不记（与 `note list` 一致） |
-| `del 标题` / `del @分类` | 每条被删笔记一次 `note_delete` |
+| 命令                       | 事件                                                        |
+| -------------------------- | ----------------------------------------------------------- |
+| `set` 新建                 | `note_create`                                               |
+| `set` 覆盖                 | `note_update`                                               |
+| `get 标题`                 | `note_view`（走 `ViewNote`，与网页详情页/`note show` 同源） |
+| `get @分类` / `get --list` | 不记（与 `note list` 一致）                                 |
+| `del 标题` / `del @分类`   | 每条被删笔记一次 `note_delete`                              |
 
 ## 8. 影响面
 
-| 位置 | 改动 |
-|------|------|
-| `sql/0007_*.sql` | 新增：速记分类、存量重名清理、两条唯一索引 |
-| `internal/store/category.go` | `QuickCategoryID`、`IsReservedCategory`、`Category.Reserved`、`CategoryByName`、`EnsureCategory`、守卫改写 |
-| `internal/store/note.go`（或新文件） | 四个按标题的读写、错误翻译与 `classifyTitleConflict`、`softDeleteNoteTx` 抽取 |
-| `internal/cli/ref.go`（新） | `Ref` 解析与校验 |
-| `internal/cli/quick.go`（新） | `RunSet/RunGet/RunDel/RunCategoryList` + 输出格式化 + `Deps` |
-| `internal/cli/parse.go` | `CommandSet/Get/Del`、`SetOptions/GetOptions/DelOptions`、`--type/--yes/--list` |
-| `internal/cli/usage.go` | 总帮助三条命令 + `set/get/del` 三个主题帮助 |
-| `cmd/note/quick.go`（新）+ `main.go` | 三个子命令的装配、退出码映射 |
-| `internal/web/handlers_notes.go` | 两个新的 409 映射 |
-| `web/src/lib/notes.ts`、`web/src/components/CategoryTree.svelte` | `reserved` 字段替代硬编码 id |
-| 测试 | store（唯一性/upsert/软删/迁移去重）、cli（Ref/格式化）、parse、web（409 两种） |
-| 文档 | `docs/PRD.md`、`docs/TECH_DESIGN.md`、`AGENTS.md` 硬性约定、`CHANGELOG.md` |
+| 位置                                                             | 改动                                                                                                       |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `sql/0007_*.sql`                                                 | 新增：速记分类、存量重名清理、两条唯一索引                                                                 |
+| `internal/store/category.go`                                     | `QuickCategoryID`、`IsReservedCategory`、`Category.Reserved`、`CategoryByName`、`EnsureCategory`、守卫改写 |
+| `internal/store/note.go`（或新文件）                             | 四个按标题的读写、错误翻译与 `classifyTitleConflict`、`softDeleteNoteTx` 抽取                              |
+| `internal/cli/ref.go`（新）                                      | `Ref` 解析与校验                                                                                           |
+| `internal/cli/quick.go`（新）                                    | `RunSet/RunGet/RunDel/RunCategoryList` + 输出格式化 + `Deps`                                               |
+| `internal/cli/parse.go`                                          | `CommandSet/Get/Del`、`SetOptions/GetOptions/DelOptions`、`--type/--yes/--list`                            |
+| `internal/cli/usage.go`                                          | 总帮助三条命令 + `set/get/del` 三个主题帮助                                                                |
+| `cmd/note/quick.go`（新）+ `main.go`                             | 三个子命令的装配、退出码映射                                                                               |
+| `internal/web/handlers_notes.go`                                 | 两个新的 409 映射                                                                                          |
+| `web/src/lib/notes.ts`、`web/src/components/CategoryTree.svelte` | `reserved` 字段替代硬编码 id                                                                               |
+| 测试                                                             | store（唯一性/upsert/软删/迁移去重）、cli（Ref/格式化）、parse、web（409 两种）                            |
+| 文档                                                             | `docs/PRD.md`、`docs/TECH_DESIGN.md`、`AGENTS.md` 硬性约定、`CHANGELOG.md`                                 |
 
 文档改动落点（避免整篇重写）：
 
