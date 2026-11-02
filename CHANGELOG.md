@@ -8,6 +8,11 @@
 
 ### Added
 
+- CLI 的 `标题[@分类]` 寻址（实现过程与关键逻辑）：
+  - **`internal/cli/ref.go`**：`Ref{Title, Category, CategoryOnly}` + `ParseRef(raw, typeFlag, defaultCategory)`。规则与优先级：`--type` 显式分类时整体当标题（标题里要写 `@` 的逃生口）→ `@分类` 开头是分类引用 → 否则按**最后一个** `@` 切分 → 都没有就落默认分类「速记」。标题 1–200 码点、分类名 ≤30 码点，与 store/web 同值；`@`、`周报@`、空引用都是用法错误。
+  - **测试**：`internal/cli/ref_test.go` 表驱动 11 例（含 `a@b@c` 的最后一个 `@` 切分、`--type` 保留标题里的 `@`、超长标题/分类名、前后空白）。
+  - **验证**：`go test ./internal/cli/` 全绿（14 项新增/受影响用例）。
+
 - store 层按「(分类, 标题)」读写（实现过程与关键逻辑）：
   - **新增 `internal/store/note_title.go`**：`FindNoteByTitle` / `UpsertNoteByTitle` / `SoftDeleteNoteByTitle` / `SoftDeleteCategoryNotes` / `ListNotesInCategory`。按标题的查询一律显式 `title = ? COLLATE NOCASE`（`notes.title` 列本身没有声明 COLLATE，NOCASE 只写在唯一索引上），未分类用 `category_id IS NULL`。
   - **`note set` 的落库语义**：命中活的 → 只换正文（`rev+1`、`updated_at` 刷新，标题与分类不动）；命中回收站 → `ErrNoteTitleInTrash`（拒绝复活、拒绝覆盖，回收站里的正文原样保留）；命中加密笔记 → `ErrEncryptedImmutable`（`set` 只会写明文，加密后不可回退）；都没有 → 新建。活动事件：新建 `note_create`、覆盖 `note_update`，一次命令一条。
