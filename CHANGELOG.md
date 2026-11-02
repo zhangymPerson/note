@@ -8,6 +8,12 @@
 
 ### Added
 
+- 内置「速记」固定分类与「同分类标题唯一」（实现过程与关键逻辑）：
+  - **迁移 0007**（`sql/0007_quick_category_and_unique_title.sql`）：插入 `categories(2, '速记')`，再清理存量同分类同名笔记——按 `(category_id, 标题 NOCASE)` 用 `ROW_NUMBER() OVER (...)` 分组，保留顺序是「活着的优先 → `updated_at` 新优先 → `id` 大优先」，其余追加 ` (序号)`；序号被同分类里用户自己的标题占用时退化成 ` (序号 · id 前 8 位)`，两种后缀在组内两两不同，改名后按 200 字符截断。`category_id` 的比较一律用 `IS`（NULL 与 NULL 相等），不能用 `=`。
+  - **两条唯一索引**：`idx_notes_title_category`（`category_id IS NOT NULL`）与 `idx_notes_title_uncategorized`（`category_id IS NULL`，未分类在库里是 NULL，普通唯一索引对 NULL 无效）；标题用 `COLLATE NOCASE`，与分类名的撞名口径一致。索引**包含回收站里的行**：恢复笔记因此永远不会撞名，代价是「用已删笔记的标题新建」必须被拒绝而不是静默放行（409 在下一步接入）。
+  - **固定分类守卫**：`store.QuickCategoryID` / `store.QuickCategoryName` / `store.IsReservedCategory`，`RenameCategory`、`DeleteCategory` 的守卫从「id == 1」改成「id ∈ {1, 2}」，`Category` 新增 `reserved` 字段（`ListCategories` 在 Go 里算出来）——网页前端从此不必硬编码 id。
+  - **测试**：`internal/store/migration_test.go` 用「只跑到 v6 的库」造存量数据，覆盖保留顺序、大小写变体分组、后缀被占用的兜底、200 字符截断、速记行与两条索引的落地；既有测试里依赖分类数量/顺序与「同分类可重名」的用例同步改为新种子数据。
+  - **验证**：`go test ./...` 348 项全绿（含 store 50 项、web 55 项）。
 - 网页与 CLI 都能「用 AI 优化笔记格式」（实现过程与关键逻辑）：
   - **配置从三项变四项**：`ai.models` 是一个列表（逗号或换行分隔，去空、按首现顺序去重，最多 10 个、单项 ≤200 字节且不含空白/控制字符），**第一个就是默认模型**，空列表表示没配。YAML 里它写成 `!!seq`（`SetValues` 新增 `setModelsNode`，清空写 `[]`），命令行与网页都用逗号串读写，拆分/校验/展示共用 `config.SplitModels` / `ValidateModels` / `ModelsDisplay`——不在 web 层另写一套规则。手写成标量会在启动加载时直接报错，不猜成单元素列表。
   - **提示词变成模板**：`ai.prompt` 非空时**必须**包含 `{{content}}`（正文在这里代入），否则启动加载、`note config set` 与 `PUT /api/ai-config` 三处一律硬失败（命令行退出 2、网页 400 且标红 `prompt`，报错文案点名变量与「留空即用默认」）；空串改为表示「使用内置默认提示词」`config.DefaultAIPrompt`（一份讲清楚「只调排版、不改原意、只输出 Markdown」的模板），命令行与信息页都把空值显示成「（默认提示词）」。v1.13 的「空 = 不追加」语义因此作废，已在 PRD 2.6 记为偏离。

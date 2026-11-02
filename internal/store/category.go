@@ -9,18 +9,35 @@ import (
 )
 
 // Category 是笔记分类及其引用笔记数。
+// Reserved 表示内置固定分类（「未分类」与「速记」）：不可改名、不可删除。
 type Category struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
 	NoteCount int    `json:"note_count"`
+	Reserved  bool   `json:"reserved"`
 }
 
-// 默认分类固定为 id=1「未分类」，不可改名、不可删除（见 sql/0004 头注释）。
-const defaultCategoryID = 1
+// 默认分类固定为 id=1「未分类」、id=2「速记」，均不可改名、不可删除（见 sql/0004、sql/0007 头注释）。
+const (
+	defaultCategoryID = 1
+	quickCategoryID   = 2
+)
 
 // DefaultCategoryID 是内置「未分类」分类的 id。Web 端把它落库成 category_id = NULL，
 // CLI 的 note add 也用同一判断，避免两边对"未分类"的理解分叉。
 const DefaultCategoryID = defaultCategoryID
+
+// QuickCategoryID / QuickCategoryName 是内置「速记」分类的 id 与名字：
+// CLI 的 note set/get/del 不给分类时默认落在这里（cmd/note 会断言两处常量一致）。
+const (
+	QuickCategoryID   = quickCategoryID
+	QuickCategoryName = "速记"
+)
+
+// IsReservedCategory 判断是不是内置固定分类（不可改名、不可删除）。
+func IsReservedCategory(id int64) bool {
+	return id == defaultCategoryID || id == quickCategoryID
+}
 
 var (
 	// ErrCategoryExists 表示分类名已被占用（NOCASE，大小写不敏感）。
@@ -64,6 +81,7 @@ func (s *Store) ListCategories(ctx context.Context) ([]Category, error) {
 		if err := rows.Scan(&cat.ID, &cat.Name, &cat.NoteCount); err != nil {
 			return nil, fmt.Errorf("scan category: %w", err)
 		}
+		cat.Reserved = IsReservedCategory(cat.ID)
 		cats = append(cats, cat)
 	}
 	if err := rows.Err(); err != nil {
@@ -111,13 +129,13 @@ func (s *Store) CreateCategory(ctx context.Context, name string) (Category, erro
 	return Category{ID: id, Name: name, NoteCount: 0}, nil
 }
 
-// RenameCategory 改名；默认分类与不存在的分类分别返回守卫错误。
+// RenameCategory 改名；内置固定分类与不存在的分类分别返回守卫错误。
 func (s *Store) RenameCategory(ctx context.Context, id int64, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("rename category: %w", ErrNotFound)
 	}
-	if id == defaultCategoryID {
+	if IsReservedCategory(id) {
 		return ErrReservedCategory
 	}
 
@@ -152,9 +170,9 @@ func (s *Store) RenameCategory(ctx context.Context, id int64, name string) error
 	})
 }
 
-// DeleteCategory 删除分类；默认分类不可删，仍有笔记时返回 ErrCategoryNotEmpty。
+// DeleteCategory 删除分类；内置固定分类不可删，仍有笔记时返回 ErrCategoryNotEmpty。
 func (s *Store) DeleteCategory(ctx context.Context, id int64) error {
-	if id == defaultCategoryID {
+	if IsReservedCategory(id) {
 		return ErrReservedCategory
 	}
 

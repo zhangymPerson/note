@@ -242,7 +242,7 @@ func TestListNotesPaging(t *testing.T) {
 
 	for i := 0; i < 45; i++ {
 		body := "body"
-		in := NoteInput{Title: string(rune('a'+i%26)) + " 标题", Content: &body}
+		in := NoteInput{Title: fmt.Sprintf("%c 标题 %d", 'a'+i%26, i), Content: &body}
 		if i == 0 {
 			// 显式指定 id：CreateNote 接受客户端生成的 id（Task 10 编辑器需要）
 			in.ID = NewNoteID()

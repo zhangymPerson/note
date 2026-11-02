@@ -23,14 +23,15 @@ func openTestStore(t *testing.T) *Store {
 }
 
 // insertTestNote 直接写 notes 表：Task 4 的 CreateNote 还不存在。
+// 标题带上 id：0007 起同分类标题唯一，同一个分类里插入多条必须用不同标题。
 func insertTestNote(t *testing.T, st *Store, id string, categoryID any) {
 	t.Helper()
 	const ts = "2026-01-01T00:00:00Z"
 
 	_, err := st.db.Exec(
 		`INSERT INTO notes (id, title, content, created_at, updated_at, category_id)
-         VALUES (?, '标题', '正文', ?, ?, ?)`,
-		id, ts, ts, categoryID,
+         VALUES (?, ?, '正文', ?, ?, ?)`,
+		id, "标题 "+id, ts, ts, categoryID,
 	)
 	if err != nil {
 		t.Fatalf("insert note %s: %v", id, err)
@@ -57,8 +58,8 @@ func TestCategoryCRUDAndCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list categories: %v", err)
 	}
-	if len(cats) != 3 {
-		t.Fatalf("expected 3 categories, got %d", len(cats))
+	if len(cats) != 4 {
+		t.Fatalf("expected 4 categories, got %d", len(cats))
 	}
 	if cats[0].ID != 1 || cats[0].Name != "未分类" {
 		t.Fatalf("expected default category first, got %+v", cats[0])
@@ -77,7 +78,7 @@ func TestCategoryCRUDAndCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list categories after notes: %v", err)
 	}
-	if cats[0].NoteCount != 1 || cats[1].NoteCount != 2 || cats[2].NoteCount != 0 {
+	if cats[0].NoteCount != 1 || cats[2].NoteCount != 2 || cats[3].NoteCount != 0 {
 		t.Fatalf("unexpected note counts: %+v", cats)
 	}
 
@@ -88,8 +89,8 @@ func TestCategoryCRUDAndCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list categories after rename: %v", err)
 	}
-	if cats[2].Name != "阅读" {
-		t.Fatalf("expected renamed category, got %+v", cats[2])
+	if cats[3].Name != "阅读" {
+		t.Fatalf("expected renamed category, got %+v", cats[3])
 	}
 
 	if err := st.RenameCategory(ctx, 999, "x"); !errors.Is(err, ErrNotFound) {
@@ -148,7 +149,8 @@ func TestCategoryNameValidationAndUniqueness(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
 
-	if _, err := st.CreateCategory(ctx, "work"); err != nil {
+	work, err := st.CreateCategory(ctx, "work")
+	if err != nil {
 		t.Fatalf("create category: %v", err)
 	}
 	if _, err := st.CreateCategory(ctx, "WORK"); !errors.Is(err, ErrCategoryExists) {
@@ -160,16 +162,20 @@ func TestCategoryNameValidationAndUniqueness(t *testing.T) {
 	if _, err := st.CreateCategory(ctx, "未分类"); !errors.Is(err, ErrCategoryExists) {
 		t.Fatalf("expected ErrCategoryExists for default name, got %v", err)
 	}
+	// 速记同样被占用：它是 0007 起的内置分类。
+	if _, err := st.CreateCategory(ctx, "速记"); !errors.Is(err, ErrCategoryExists) {
+		t.Fatalf("expected ErrCategoryExists for quick category name, got %v", err)
+	}
 
 	cats, err := st.ListCategories(ctx)
 	if err != nil {
 		t.Fatalf("list categories: %v", err)
 	}
-	if len(cats) != 2 {
-		t.Fatalf("expected rejected duplicates to leave 2 categories, got %d", len(cats))
+	if len(cats) != 3 {
+		t.Fatalf("expected rejected duplicates to leave 3 categories, got %d", len(cats))
 	}
 
-	if err := st.RenameCategory(ctx, cats[1].ID, "未分类"); !errors.Is(err, ErrCategoryExists) {
+	if err := st.RenameCategory(ctx, work.ID, "未分类"); !errors.Is(err, ErrCategoryExists) {
 		t.Fatalf("expected ErrCategoryExists renaming onto default name, got %v", err)
 	}
 	// 改名同样要走 NOCASE 唯一约束：把另一个分类改成只差大小写的同名，是撞名不是改名。
@@ -191,6 +197,9 @@ func TestDeleteCategoryGuards(t *testing.T) {
 	}
 	if err := st.RenameCategory(ctx, 1, "杂记"); !errors.Is(err, ErrReservedCategory) {
 		t.Fatalf("expected ErrReservedCategory renaming default, got %v", err)
+	}
+	if err := st.DeleteCategory(ctx, QuickCategoryID); !errors.Is(err, ErrReservedCategory) {
+		t.Fatalf("expected ErrReservedCategory deleting quick category, got %v", err)
 	}
 
 	work, err := st.CreateCategory(ctx, "work")
@@ -223,8 +232,37 @@ func TestDeleteCategoryGuards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list categories: %v", err)
 	}
+	if len(cats) != 3 {
+		t.Fatalf("expected 3 categories after delete, got %d", len(cats))
+	}
+}
+
+// 「速记」（id=2）是 0007 起的第二个固定分类：与「未分类」一样不可改名、不可删除。
+func TestQuickCategoryIsReserved(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	cats, err := st.ListCategories(ctx)
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
 	if len(cats) != 2 {
-		t.Fatalf("expected 2 categories after delete, got %d", len(cats))
+		t.Fatalf("expected 未分类 + 速记, got %+v", cats)
+	}
+	for _, cat := range cats {
+		if !cat.Reserved {
+			t.Fatalf("expected built-in category to be reserved, got %+v", cat)
+		}
+	}
+	if cats[1].ID != QuickCategoryID || cats[1].Name != QuickCategoryName {
+		t.Fatalf("expected quick category id=%d, got %+v", QuickCategoryID, cats[1])
+	}
+
+	if err := st.RenameCategory(ctx, QuickCategoryID, "快记"); !errors.Is(err, ErrReservedCategory) {
+		t.Fatalf("expected ErrReservedCategory renaming quick category, got %v", err)
+	}
+	if err := st.DeleteCategory(ctx, QuickCategoryID); !errors.Is(err, ErrReservedCategory) {
+		t.Fatalf("expected ErrReservedCategory deleting quick category, got %v", err)
 	}
 }
 

@@ -93,12 +93,21 @@ func TestCategoriesAPI(t *testing.T) {
 	}
 
 	items := listCategories()
-	if len(items) != 1 {
-		t.Fatalf("expected only default category, got %+v", items)
+	if len(items) != 2 {
+		t.Fatalf("expected 未分类 + 速记, got %+v", items)
 	}
 	defaultID, _ := items[0]["id"].(float64)
 	if name, _ := items[0]["name"].(string); name != "未分类" {
 		t.Fatalf("expected 未分类 first, got %q", name)
+	}
+	// 内置固定分类都带 reserved 标记：前端靠它决定不给改名/删除按钮。
+	for _, item := range items {
+		if reserved, _ := item["reserved"].(bool); !reserved {
+			t.Fatalf("expected built-in category to be reserved, got %+v", item)
+		}
+	}
+	if name, _ := items[1]["name"].(string); name != "速记" {
+		t.Fatalf("expected 速记 second, got %q", name)
 	}
 
 	rec := apiRequest(t, handler, http.MethodPost, "/api/categories", token, `{"name":"工作"}`)
@@ -190,8 +199,8 @@ func TestCategoriesAPI(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 deleting empty category, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if len(listCategories()) != 1 {
-		t.Fatalf("expected only default category left, got %+v", listCategories())
+	if len(listCategories()) != 2 {
+		t.Fatalf("expected only the two built-in categories left, got %+v", listCategories())
 	}
 
 	rec = apiRequest(t, handler, http.MethodPut, "/api/categories/9999", token, `{"name":"幽灵"}`)
