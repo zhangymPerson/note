@@ -7,12 +7,21 @@ export interface OptimizeResult {
   model: string;
 }
 
+// MAX_CUSTOM_PROMPT 与 internal/ai.MaxCustomPromptRunes 同口径（500 码点）：
+// 前端只用它限制输入长度，真正的校验在服务端（超长回 400 字段级 custom_prompt）。
+export const MAX_CUSTOM_PROMPT = 500;
+
 export function optimizeNote(
   content: string,
   model?: string,
+  customPrompt?: string,
 ): Promise<OptimizeResult> {
   // 不给模型就让服务端用 ai.models 的第一个：两边各存一份默认值只会对不上。
-  const payload = model ? { content, model } : { content };
+  const payload: Record<string, string> = { content };
+  if (model) payload.model = model;
+  // 自定义提示词只对这一次调用生效：空串就不带这个字段，服务端按「没有额外要求」处理。
+  const custom = customPrompt?.trim() ?? "";
+  if (custom !== "") payload.custom_prompt = custom;
   return postJSON<OptimizeResult>("/api/ai/optimize", payload);
 }
 

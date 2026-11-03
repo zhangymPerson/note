@@ -98,7 +98,9 @@ func addDepsWithAI(deps cli.AddDeps, cfg config.Config) cli.AddDeps {
 		return deps
 	}
 	deps.Optimize = func(ctx context.Context, content string) (cli.OptimizeResult, error) {
-		res, err := client.Optimize(ctx, content, "")
+		// 命令行没有「自定义提示词」这一栏（CLI 不该再开一个多行输入），
+		// 用配置里的 ai.prompt / 内置默认提示词就够了。
+		res, err := client.Optimize(ctx, ai.Request{Content: content})
 		if err != nil {
 			return cli.OptimizeResult{}, err
 		}

@@ -6,7 +6,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- 编辑器按次的「自定义提示词」（实现过程与关键逻辑）：
+  - **需求**：默认提示词管格式，但同一个人不同场景要的不一样（要图、要更短、要突出待办）。所以除模型下拉之外再给一栏临时要求，只对这一次优化生效。
+  - **`internal/ai/client.go`**：`Optimize` 的入参从 `(ctx, content, model)` 改成 `(ctx, Request)`——三个都是 `string` 的位置参数太容易传反，`Request{Content, Model, CustomPrompt}` 一眼能看出谁是谁；新增 `MaxCustomPromptRunes = 500`、`ValidateCustomPrompt`（空串合法、超长拒绝）与 `BuildPromptWithCustom`（先 `BuildPrompt` 代入正文，再把额外要求追加到模板末尾，并重申「在满足上面全部要求的前提下，仍然只输出优化后的 Markdown 正文」——不重申的话「用 mermaid 展示」这类补充容易把「不超 2000 字符」「不要客套话」冲掉；额外要求里写 `{{content}}` 同样不展开）。
+  - **`internal/web/handlers_optimize.go`**：请求体新增 `custom_prompt`（trim 后 ≤500 码点，超长回 400 字段级 `custom_prompt`，校验直接调 `ai.ValidateCustomPrompt`，web 层不另写一套），透传进 `ai.Request`；日志仍只记 host/model/错误摘要，自定义提示词往往含用户对这篇笔记的描述，一律不记。
+  - **`cmd/note/add.go`**：CLI 的 `Ctrl+O` 不开口子（不传 `CustomPrompt`），行为不变。
+  - **网页**：`lib/ai.ts` 的 `optimizeNote(content, model?, customPrompt?)` 只在 trim 后非空时带 `custom_prompt`（空串 = 没有额外要求），常量 `MAX_CUSTOM_PROMPT` 只用于输入框 `maxlength`；`NoteEditorView` 在模型下拉下方新增虚线描边输入框（灰字占位：「可选：给这次优化加要求，例如「用 mermaid 图表展示，更形象」「再精简一些」」），优化中禁用，不写回 `note.yaml`、不进草稿；`app.css` 新增 `.field .custom-prompt`（字号走与工具条同一个 clamp，≤640px 提到 16px 防 iOS 聚焦缩放）。
+  - **文档**：PRD 升到 v1.16（修订记录、路由表、FR-7.7 / FR-7.9 / FR-7.11、新增 AC-63 与 M15）、TECH_DESIGN 4.4.1 与 8.3 / 9.4 / 9.6 / 12.1 同步、`AGENTS.md` 补一条「自定义提示词与 `ai.prompt` 是两种东西」的约定。
+  - **测试**：`internal/ai` 新增 `TestBuildPromptWithCustom`（空额外要求与 `BuildPrompt` 完全一致、非空追加在后面且重申约束、变量不二次展开）、`TestValidateCustomPrompt`、`TestOptimizeSendsCustomPrompt`（上游收到的提示词含额外要求、正文只出现一次）；`internal/web` 新增 `TestOptimizeAPICustomPrompt`（透传且响应不回显）与 `TestOptimizeAPICustomPromptTooLong`（400 字段级，且不发请求）；`ai.test.ts` 新增载荷用例（trim 后带上、空白不带）；`NoteEditorView.test.ts` 新增占位文字与发调用例，并把两条旧断言补上第三个参数。
+  - **验证**：`just test`（Go 410 项、前端 183 项）、`just check`（`go vet` + svelte-check 0 errors / 0 warnings）、`npm --prefix web run build` 均通过。
+
 ### Changed
+
+- 内置默认提示词补两条硬约束（实现过程与关键逻辑）：`config.DefaultAIPrompt` 的六条要求里，第 1 条补「压缩的是措辞与重复表达，不是要点」，新增第 4 条「以压缩为主——能用更少的字说清同一件事就不要扩写，不添加原文没有的描述、背景、延伸或总结，确需展开也要精简」与第 5 条「优化后的全文不超过 2000 字符（含标题与列表符号），超了优先删掉重复表述与客套话」，原「只输出优化后的 Markdown 正文」从第 4 条挪到第 6 条。其余措辞不动。与前端「结果超 2000 码点禁止替换」是同一意图，写进模板能少一轮无效调用。
 
 - 页面宽度自适应 + 新建笔记正文工具条不再挤成一团 + 全部笔记就地展开详情（实现过程与关键逻辑）：
   - **问题**：`main` 与 `.topbar` 的 `max-width` 硬编码 880px，PC 上两侧大片留白；新建笔记页正文那一条 `field-label-row` 里塞了「编辑模板 / 用 AI 优化格式 / 模型下拉 / n / 2000」，而 `.field select { width: 100% }` 又把模型下拉撑满整条，四样东西在 ~420px 的半栏里互相挤；列表页点一条笔记会 `navigate('/notes/{id}')` 跳页，看完要按浏览器回退。

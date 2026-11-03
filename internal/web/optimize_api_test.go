@@ -167,6 +167,51 @@ func TestOptimizeAPIUpstreamFailure(t *testing.T) {
 	}
 }
 
+func TestOptimizeAPICustomPrompt(t *testing.T) {
+	handler, cfg := newTestHandler(t)
+	var gotMessage string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Messages []struct{ Content string }
+		}
+		json.NewDecoder(r.Body).Decode(&b)
+		gotMessage = b.Messages[0].Content
+		io.WriteString(w, `{"choices":[{"message":{"content":"x"}}]}`)
+	}))
+	t.Cleanup(upstream.Close)
+	configureAI(t, cfg, upstream.URL+"/v1", "    - m1\n")
+	token := csrfTokenFor(t, handler)
+
+	rec := apiRequest(t, handler, http.MethodPost, "/api/ai/optimize", token,
+		`{"content":"原始正文","custom_prompt":"  用 mermaid 图表展示  "}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST = %d: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(gotMessage, "原始正文") || !strings.Contains(gotMessage, "用 mermaid 图表展示") {
+		t.Fatalf("自定义提示词没进发出去的提示词: %q", gotMessage)
+	}
+	// 它只对这一次调用生效：配置文件里的 ai.prompt 不被改写，响应也不回显它
+	if strings.Contains(rec.Body.String(), "mermaid") {
+		t.Fatalf("响应只该有优化结果: %s", rec.Body)
+	}
+}
+
+func TestOptimizeAPICustomPromptTooLong(t *testing.T) {
+	handler, cfg := newTestHandler(t)
+	configureAI(t, cfg, "http://127.0.0.1:1/v1", "    - m1\n")
+	token := csrfTokenFor(t, handler)
+
+	// 校验必须在发请求之前：这里的上游是不可达地址
+	rec := apiRequest(t, handler, http.MethodPost, "/api/ai/optimize", token,
+		`{"content":"c","custom_prompt":"`+strings.Repeat("字", ai.MaxCustomPromptRunes+1)+`"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), `"custom_prompt"`) {
+		t.Fatalf("应当是字段级 custom_prompt 错误: %s", rec.Body)
+	}
+}
+
 func TestOptimizeErrorTimeoutIsActionable(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeOptimizeError(rec, ai.TimeoutError{

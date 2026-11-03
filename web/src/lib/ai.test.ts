@@ -52,6 +52,28 @@ describe("ai", () => {
     });
   });
 
+  it("optimizeNote 传入自定义提示词时带上 custom_prompt，空白不算要求", async () => {
+    stubFetch({ content: "x", model: "m1" });
+
+    await optimizeNote("正文", "m1", "  用 mermaid 图表展示  ");
+    let optimize = requests.find(
+      (request) => request.url === "/api/ai/optimize",
+    );
+    expect(JSON.parse(String(optimize?.init.body))).toEqual({
+      content: "正文",
+      model: "m1",
+      custom_prompt: "用 mermaid 图表展示",
+    });
+
+    requests = [];
+    await optimizeNote("正文", "m1", "   ");
+    optimize = requests.find((request) => request.url === "/api/ai/optimize");
+    expect(JSON.parse(String(optimize?.init.body))).toEqual({
+      content: "正文",
+      model: "m1",
+    });
+  });
+
   it("optimizeNote 把服务端错误原样抛出（调用方只负责显示）", async () => {
     stubFetch(
       { error: { code: "ai_not_configured", message: "AI 还没配置好" } },

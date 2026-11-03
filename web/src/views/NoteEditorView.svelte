@@ -1,6 +1,6 @@
 <script lang="ts">
   import Markdown from '../components/Markdown.svelte'
-  import { defaultModel, hostOf, optimizeNote } from '../lib/ai'
+  import { defaultModel, hostOf, MAX_CUSTOM_PROMPT, optimizeNote } from '../lib/ai'
   import { ApiRequestError } from '../lib/api'
   import { getAIConfig } from '../lib/ai-config'
   import { decryptNoteContent, encryptNoteContent, paramsFromNote, KDF_PARAMS } from '../lib/crypto'
@@ -77,6 +77,8 @@
   let aiError = $state('')
   // 错误码决定「下一步能做什么」：ai_timeout 要给去信息页换模型的入口。
   let aiErrorCode = $state('')
+  // 自定义提示词：只对本次优化生效的补充要求，不写回 note.yaml，也不进草稿。
+  let customPrompt = $state('')
   // 发起优化时的正文：用户中途改了字就不能直接替换，得重新优化一次。
   let aiRequestContent = $state('')
 
@@ -325,7 +327,11 @@
     aiResult = ''
     aiRequestContent = content
     try {
-      const result = await optimizeNote(content, aiModel === '' ? undefined : aiModel)
+      const result = await optimizeNote(
+        content,
+        aiModel === '' ? undefined : aiModel,
+        customPrompt,
+      )
       aiResult = result.content
       aiResultModel = result.model
     } catch (error) {
@@ -450,6 +456,16 @@
             </select>
           {/if}
         </div>
+        <label class="sr-only" for="ai-custom-prompt">自定义提示词</label>
+        <input
+          id="ai-custom-prompt"
+          class="custom-prompt"
+          type="text"
+          maxlength={MAX_CUSTOM_PROMPT}
+          placeholder="可选：给这次优化加要求，例如「用 mermaid 图表展示，更形象」「再精简一些」"
+          bind:value={customPrompt}
+          disabled={aiBusy || !aiConfigured}
+        />
         <textarea
           id="note-content"
           rows="14"

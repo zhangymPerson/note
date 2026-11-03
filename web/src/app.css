@@ -799,6 +799,28 @@ input {
   font: inherit;
 }
 
+/* 自定义提示词：可选输入，靠灰色占位文字提醒能写什么；虚线描边表示“可有可无”，
+   不跟正文输入框争注意力。 */
+.field .custom-prompt {
+  width: 100%;
+  padding: 7px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: clamp(0.78rem, 0.7rem + 0.35vw, 0.88rem);
+}
+
+.field .custom-prompt::placeholder {
+  color: var(--muted);
+  opacity: 0.9;
+}
+
+.field .custom-prompt:disabled {
+  opacity: 0.6;
+}
+
 .checkbox {
   display: inline-flex;
   align-items: center;
@@ -1576,6 +1598,11 @@ input {
   .field-toolbar select {
     min-height: 44px;
     padding: 0 12px;
+  }
+
+  /* 自定义提示词同样按 16px 字号，避免 iOS 聚焦时放大页面 */
+  .field .custom-prompt {
+    font-size: 1rem;
   }
 
   /* 首页搜索：输入框与按钮各占一行，按钮不再被挤成窄条 */

@@ -171,7 +171,7 @@ describe("NoteEditorView 的 AI 优化", () => {
       ),
     );
     expect(element.textContent).toContain("AI 优化结果 · m1");
-    expect(mocks.optimizeNote).toHaveBeenCalledWith("原始正文", "m1");
+    expect(mocks.optimizeNote).toHaveBeenCalledWith("原始正文", "m1", "");
 
     click(buttonWith(element, "替换正文"));
     expect(contentBox(element).value).toBe("# 优化后");
@@ -270,7 +270,37 @@ describe("NoteEditorView 的 AI 优化", () => {
 
     click(aiButton(element));
     await vi.waitFor(() =>
-      expect(mocks.optimizeNote).toHaveBeenCalledWith("原始正文", "m2"),
+      expect(mocks.optimizeNote).toHaveBeenCalledWith("原始正文", "m2", ""),
+    );
+  });
+
+  it("自定义提示词占位文字提醒能写什么，填了就随这次调用发出", async () => {
+    const element = await renderEditor();
+    typeInto(contentBox(element), "原始正文");
+
+    await vi.waitFor(() =>
+      expect(element.querySelector("#ai-custom-prompt")).not.toBeNull(),
+    );
+    // 等 AI 配置真的读进来：四个模型（m1/m2）会在此时把默认值填成 m1
+    await vi.waitFor(() =>
+      expect(element.querySelector("#ai-model")).not.toBeNull(),
+    );
+    const custom = element.querySelector(
+      "#ai-custom-prompt",
+    ) as HTMLInputElement;
+    // 灰字提示就是这栏的全部说服力：必须点明能写哪类要求
+    expect(custom.placeholder).toContain("mermaid");
+    expect(custom.placeholder).toContain("可选");
+    expect(custom.value).toBe("");
+
+    typeInto(custom, "用 mermaid 图表展示，更形象");
+    click(aiButton(element));
+    await vi.waitFor(() =>
+      expect(mocks.optimizeNote).toHaveBeenCalledWith(
+        "原始正文",
+        "m1",
+        "用 mermaid 图表展示，更形象",
+      ),
     );
   });
 

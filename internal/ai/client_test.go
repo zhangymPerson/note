@@ -44,7 +44,7 @@ func TestOptimizeSendsRenderedPrompt(t *testing.T) {
 	})
 	c.Prompt = "把这段整理好：\n" + config.PromptVariable
 
-	res, err := c.Optimize(context.Background(), "原始正文", "")
+	res, err := c.Optimize(context.Background(), Request{Content: "原始正文"})
 	if err != nil {
 		t.Fatalf("Optimize: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestOptimizeSendsLowercaseMessageKeys(t *testing.T) {
 	})
 	c.Prompt = "整理：" + config.PromptVariable
 
-	if _, err := c.Optimize(context.Background(), "原始正文", ""); err != nil {
+	if _, err := c.Optimize(context.Background(), Request{Content: "原始正文"}); err != nil {
 		t.Fatalf("Optimize: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestOptimizeRejectsUnknownModel(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Error("模型不在列表时不该发请求")
 	})
-	_, err := c.Optimize(context.Background(), "x", "nope")
+	_, err := c.Optimize(context.Background(), Request{Content: "x", Model: "nope"})
 	var bad ModelError
 	if !errors.As(err, &bad) || bad.Model != "nope" {
 		t.Fatalf("err = %v", err)
@@ -132,7 +132,7 @@ func TestOptimizeUpstreamErrorKeepsStatusAndTruncates(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprintf(w, `{"error":{"message":%q}}`, long)
 	})
-	_, err := c.Optimize(context.Background(), "x", "")
+	_, err := c.Optimize(context.Background(), Request{Content: "x"})
 	var up UpstreamError
 	if !errors.As(err, &up) {
 		t.Fatalf("err = %v", err)
@@ -160,7 +160,7 @@ func TestOptimizeFailsOnBadJSONEmptyChoicesAndOversize(t *testing.T) {
 			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				io.WriteString(w, tc.body)
 			})
-			if _, err := c.Optimize(context.Background(), "x", ""); err == nil {
+			if _, err := c.Optimize(context.Background(), Request{Content: "x"}); err == nil {
 				t.Fatal("应当报错")
 			}
 		})
@@ -178,7 +178,7 @@ func TestOptimizeRespectsContextAndTrailingSlash(t *testing.T) {
 	c.BaseURL += "/" // 末尾斜杠不许拼出 //
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := c.Optimize(ctx, "x", ""); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := c.Optimize(ctx, Request{Content: "x"}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("应当返回 ctx 错误，得到 %v", err)
 	}
 }
@@ -190,7 +190,7 @@ func TestOptimizeWrapsTimeoutWithActionableMessage(t *testing.T) {
 	})
 	c.HTTP = &http.Client{Timeout: 20 * time.Millisecond}
 
-	_, err := c.Optimize(context.Background(), "x", "")
+	_, err := c.Optimize(context.Background(), Request{Content: "x"})
 	if err == nil {
 		t.Fatal("应当超时")
 	}
@@ -224,6 +224,71 @@ func TestBuildPrompt(t *testing.T) {
 	}
 	if strings.Count(BuildPrompt("x"+config.PromptVariable, "{{content}} {{content}}"), "{{content}}") != 2 {
 		t.Fatal("正文原样保留")
+	}
+}
+
+func TestBuildPromptWithCustom(t *testing.T) {
+	tpl := "整理：" + config.PromptVariable
+	base := BuildPrompt(tpl, "笔记")
+
+	// 没有额外要求（或只有空白）时与 BuildPrompt 完全一致：不多一条空标题
+	if got := BuildPromptWithCustom(tpl, "笔记", "  \n "); got != base {
+		t.Fatalf("无额外要求时应当原样返回: %q", got)
+	}
+
+	got := BuildPromptWithCustom(tpl, "笔记", "  用 mermaid 图表展示  ")
+	if !strings.HasPrefix(got, base) || !strings.HasSuffix(got, "用 mermaid 图表展示") {
+		t.Fatalf("额外要求应当追加在模板之后: %q", got)
+	}
+	// 「只输出正文」「不超篇幅」这些全局约束不能被补充要求冲掉
+	for _, want := range []string{"满足上面全部要求", "只输出优化后的 Markdown 正文"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("缺少约束 %q: %q", want, got)
+		}
+	}
+	// 额外要求里的 {{content}} 同样不展开：正文只在前面的模板里化入一次
+	if strings.Count(BuildPromptWithCustom(tpl, "笔记", "{{content}}"), "{{content}}") != 1 {
+		t.Fatal("额外要求里的变量不该被展开")
+	}
+}
+
+func TestValidateCustomPrompt(t *testing.T) {
+	if err := ValidateCustomPrompt(""); err != nil {
+		t.Fatalf("空串是合法的: %v", err)
+	}
+	if err := ValidateCustomPrompt(strings.Repeat("字", MaxCustomPromptRunes)); err != nil {
+		t.Fatalf("上限内应当通过: %v", err)
+	}
+	err := ValidateCustomPrompt(strings.Repeat("字", MaxCustomPromptRunes+1))
+	if err == nil || !strings.Contains(err.Error(), "自定义提示词") {
+		t.Fatalf("超长应当拒绝并点名该字段: %v", err)
+	}
+}
+
+func TestOptimizeSendsCustomPrompt(t *testing.T) {
+	var gotMessage string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct{ Content string }
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		gotMessage = body.Messages[0].Content
+		io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	})
+	c.Prompt = "整理：" + config.PromptVariable
+
+	_, err := c.Optimize(context.Background(), Request{
+		Content:      "原始正文",
+		CustomPrompt: "  用 mermaid 图表展示  ",
+	})
+	if err != nil {
+		t.Fatalf("Optimize: %v", err)
+	}
+	if !strings.Contains(gotMessage, "整理：原始正文") || !strings.Contains(gotMessage, "用 mermaid 图表展示") {
+		t.Fatalf("自定义提示词没发出去: %q", gotMessage)
+	}
+	if strings.Count(gotMessage, "原始正文") != 1 {
+		t.Fatalf("正文只该出现一次: %q", gotMessage)
 	}
 }
 

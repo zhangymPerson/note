@@ -41,6 +41,9 @@ const (
 	// maxErrorMessageRunes 限制回显给用户与日志的上游错误摘要长度。
 	maxErrorMessageRunes = 200
 	defaultTimeout       = 60 * time.Second
+	// MaxCustomPromptRunes 是「自定义提示词」的码点上限：它是本次调用的补充约束，
+	// 不是第二份提示词模板（后者是 ai.prompt，上限 2000）。
+	MaxCustomPromptRunes = 500
 )
 
 var (
@@ -175,12 +178,22 @@ func (c *Client) Host() string {
 	return parsed.Host
 }
 
-// Optimize 渲染提示词并发起一次调用。model 为空表示用列表第一个；
-// content 原样代入模板，不截断、不改写（长度由调用方预检）。
-func (c *Client) Optimize(ctx context.Context, content, model string) (Result, error) {
+// Request 是一次优化的入参：正文、模型（空串表示列表第一个）与本次的自定义提示词。
+// CustomPrompt 是编辑器里那一栏「自定义提示词」的内容，只对这一次调用生效，
+// 不写回 note.yaml；空串表示没有额外要求。
+type Request struct {
+	Content      string
+	Model        string
+	CustomPrompt string
+}
+
+// Optimize 渲染提示词并发起一次调用。req.Content 原样代入模板，不截断、不改写
+// （长度由调用方预检）。
+func (c *Client) Optimize(ctx context.Context, req Request) (Result, error) {
 	if !c.Configured() {
 		return Result{}, ErrNotConfigured
 	}
+	model := strings.TrimSpace(req.Model)
 	if model == "" {
 		model = c.DefaultModel()
 	} else if !c.hasModel(model) {
@@ -188,7 +201,10 @@ func (c *Client) Optimize(ctx context.Context, content, model string) (Result, e
 	}
 
 	payload := chatRequest{Model: model, Temperature: 0.2}
-	payload.Messages = []chatMessage{{Role: "user", Content: BuildPrompt(c.Prompt, content)}}
+	payload.Messages = []chatMessage{{
+		Role:    "user",
+		Content: BuildPromptWithCustom(c.Prompt, req.Content, req.CustomPrompt),
+	}}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Result{}, fmt.Errorf("encode request: %w", err)
@@ -196,19 +212,19 @@ func (c *Client) Optimize(ctx context.Context, content, model string) (Result, e
 
 	// 末尾斜杠不参与拼接：base_url 写成 .../v1 或 .../v1/ 都一样。
 	endpoint := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/") + "/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return Result{}, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
 
 	client := c.HTTP
 	if client == nil {
 		client = &http.Client{Timeout: defaultTimeout}
 	}
-	resp, err := client.Do(req)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return Result{}, wrapTransportError(err, model, effectiveTimeout(client))
 	}
@@ -290,6 +306,28 @@ func BuildPrompt(tpl, content string) string {
 		return tpl + "\n\n" + content
 	}
 	return strings.Replace(tpl, config.PromptVariable, content, 1)
+}
+
+// ValidateCustomPrompt 校验本次的自定义提示词：空串合法（不说话就是没要求），
+// 超长拒绝。它和 ai.prompt 是两种东西，所以校验口径也分开（500 码点 vs 2000）。
+func ValidateCustomPrompt(custom string) error {
+	if n := utf8.RuneCountInString(custom); n > MaxCustomPromptRunes {
+		return fmt.Errorf("自定义提示词请控制在 %d 字以内，当前 %d 字", MaxCustomPromptRunes, n)
+	}
+	return nil
+}
+
+// BuildPromptWithCustom 在 BuildPrompt 的结果之后追加本次的额外要求。
+// 追加在模板末尾并写明「不得违反上面任何一条」，以免「用 mermaid 展示」这类补充
+// 把「只输出优化后的 Markdown 正文」「不超 2000 字符」冲掉；额外要求里的
+// {{content}} 同样不展开（正文只在前面的模板里化入一次）。
+func BuildPromptWithCustom(tpl, content, custom string) string {
+	base := BuildPrompt(tpl, content)
+	custom = strings.TrimSpace(custom)
+	if custom == "" {
+		return base
+	}
+	return base + "\n\n【本次额外要求】（在满足上面全部要求的前提下执行，仍然只输出优化后的 Markdown 正文）\n" + custom
 }
 
 // StripFence 剥掉模型「顺手」包上的整段代码围栏（``` 或 ~~~）。

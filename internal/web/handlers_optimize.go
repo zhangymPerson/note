@@ -25,6 +25,9 @@ const (
 type optimizeRequest struct {
 	Content string `json:"content"`
 	Model   string `json:"model"`
+	// CustomPrompt 是本次的额外要求（编辑器里那一栏），只对这一次调用生效，
+	// 不会写回 note.yaml 的 ai.prompt。
+	CustomPrompt string `json:"custom_prompt"`
 }
 
 type optimizeResponse struct {
@@ -49,6 +52,12 @@ func (app *application) handleOptimizeNote(w http.ResponseWriter, r *http.Reques
 		fields["content"] = "正文不能为空"
 	} else if n := utf8.RuneCountInString(req.Content); n > maxContentRunes {
 		fields["content"] = fmt.Sprintf("正文请控制在 %d 字以内，当前 %d 字", maxContentRunes, n)
+	}
+	// 自定义提示词只是本次的补充约束：上限比 ai.prompt（2000）小得多，
+	// 校验口径由 internal/ai 统一给，web 层不另写一套。
+	custom := strings.TrimSpace(req.CustomPrompt)
+	if err := ai.ValidateCustomPrompt(custom); err != nil {
+		fields["custom_prompt"] = err.Error()
 	}
 	if len(fields) > 0 {
 		writeValidationError(w, fields)
@@ -81,7 +90,7 @@ func (app *application) handleOptimizeNote(w http.ResponseWriter, r *http.Reques
 
 	ctx, cancel := context.WithTimeout(r.Context(), optimizeTimeout)
 	defer cancel()
-	res, err := client.Optimize(ctx, req.Content, model)
+	res, err := client.Optimize(ctx, ai.Request{Content: req.Content, Model: model, CustomPrompt: custom})
 	if err != nil {
 		// 日志只记 host / model / 状态 / 耗时与错误摘要：绝不记正文与密钥
 		slog.Error("optimize note", "host", client.Host(), "model", model, "error", err)
