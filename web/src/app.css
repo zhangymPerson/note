@@ -33,6 +33,9 @@
     "SimSun", Georgia, serif;
   --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
   --cell: 11px;
+  /* 内容栏宽度随视口自适应：窄屏保持原来的 880px 手感，
+     宽屏（PC）爬到 1280px，编辑页两栏与列表右侧分类树都不再被压瘪 */
+  --page-max: clamp(880px, 84vw, 1280px);
 }
 
 :root[data-theme="dark"] {
@@ -127,7 +130,7 @@ a:hover {
   display: flex;
   flex-wrap: wrap;
   width: 100%;
-  max-width: 880px;
+  max-width: var(--page-max);
   margin: 0 auto;
   padding: 20px;
   align-items: baseline;
@@ -210,7 +213,7 @@ nav {
 
 main {
   width: 100%;
-  max-width: 880px;
+  max-width: var(--page-max);
   margin: 0 auto;
   padding: 32px 20px 64px;
   flex: 1;
@@ -720,12 +723,6 @@ input {
   gap: 6px;
 }
 
-.field-label-actions {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
 .field-label-row {
   display: flex;
   align-items: baseline;
@@ -756,6 +753,50 @@ input {
 .field select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* 正文工具条：模板 / AI 优化 / 模型筛选独占一行，字级随视口收放，
+   窄了只换行，不会缩成一列或把标签行撑成一条缝。 */
+.field-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  font-size: clamp(0.78rem, 0.7rem + 0.35vw, 0.9rem);
+}
+
+.field-toolbar .linklike {
+  align-self: center;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.field-toolbar .linklike:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.field-toolbar .linklike:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 模型下拉跟着工具条走：宽度按内容（下面 .field select 的 100% 会把整条压死） */
+.field-toolbar select {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
 }
 
 .checkbox {
@@ -898,6 +939,26 @@ input {
   background: var(--surface);
 }
 
+/* 展开了详情的行：描边高亮，表明下面那块内容属于它 */
+.note-row-open {
+  border-color: var(--accent);
+}
+
+/* 内联展开的详情：就地撑开，不再跳页、不用回退 */
+.note-detail {
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+/* 卡片已经包了一层，里面的正文区就不再套第二个框 */
+.detail-inline .detail-body {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
 .note-main {
   flex: 1;
   display: flex;
@@ -1015,6 +1076,15 @@ input {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 10px;
+}
+
+/* 内联展开时没有标题（上面那行已经写了），元信息与复制图标占同一条 */
+.detail-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
 }
 
@@ -1501,6 +1571,13 @@ input {
     min-height: 44px;
   }
 
+  /* 正文工具条的小药丸跟主按钮一样给足触控高度，否则手机上点不中 */
+  .field-toolbar .linklike,
+  .field-toolbar select {
+    min-height: 44px;
+    padding: 0 12px;
+  }
+
   /* 首页搜索：输入框与按钮各占一行，按钮不再被挤成窄条 */
   .search-form {
     flex-direction: column;
@@ -1547,6 +1624,10 @@ input {
   /* 详情：给正文留够行宽，减少左右留白 */
   .detail-body {
     padding: 16px;
+  }
+
+  .note-detail {
+    padding: 14px;
   }
 
   .trash-banner,

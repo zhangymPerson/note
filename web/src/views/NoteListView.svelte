@@ -1,5 +1,6 @@
 <script lang="ts">
   import CategoryTree from '../components/CategoryTree.svelte'
+  import NoteDetailView from './NoteDetailView.svelte'
   import { ApiRequestError } from '../lib/api'
   import {
     createCategory,
@@ -33,6 +34,8 @@
   let error = $state('')
   let pendingId = $state('')
   let categoryBusy = $state(false)
+  // 展开的笔记：就地撑开详情，不跳页（跳了要回退才能接着看列表）
+  let openId = $state('')
 
   const pageCount = $derived(Math.max(1, Math.ceil(total / perPage)))
   const activeCategory = $derived(categories.find((cat) => cat.id === category) ?? null)
@@ -145,8 +148,20 @@
     page = Math.min(pageCount, Math.max(1, page + delta))
   }
 
-  function open(note: NoteListItem): void {
-    navigate(`/notes/${encodeURIComponent(note.id)}`)
+  function toggle(note: NoteListItem): void {
+    openId = openId === note.id ? '' : note.id
+  }
+
+  // 详情自己删掉笔记后要重拉列表（否则列表里还留着一条已进回收站的行）
+  async function closeDetail(removed: boolean): Promise<void> {
+    openId = ''
+    if (!removed) return
+    await refresh(committedQ, category, page)
+    try {
+      categories = await listCategories()
+    } catch {
+      // 分类条读不到时列表已刷新，静默降级
+    }
   }
 
   // 删除是软删除：进回收站，可以恢复。加密笔记要求先解锁（详情页），
@@ -215,8 +230,13 @@
       {:else}
         <ul class="note-rows">
           {#each rows as note (note.id)}
-            <li class="note-row">
-              <button class="note-main" type="button" onclick={() => open(note)}>
+            <li class="note-row" class:note-row-open={openId === note.id}>
+              <button
+                class="note-main"
+                type="button"
+                aria-expanded={openId === note.id}
+                onclick={() => toggle(note)}
+              >
                 <span class="note-title">
                   {note.title}
                   {#if note.encrypted}
@@ -235,16 +255,23 @@
                   {/if}
                 </span>
               </button>
-              <button
-                class="button button-quiet"
-                type="button"
-                disabled={pendingId === note.id || note.encrypted}
-                title={note.encrypted ? '加密笔记请打开详情、解锁后再删除' : '删除后先进回收站，可以恢复'}
-                onclick={() => remove(note)}
-              >
-                {pendingId === note.id ? '删除中…' : '删除'}
-              </button>
+              {#if openId !== note.id}
+                <button
+                  class="button button-quiet"
+                  type="button"
+                  disabled={pendingId === note.id || note.encrypted}
+                  title={note.encrypted ? '加密笔记请打开详情、解锁后再删除' : '删除后先进回收站，可以恢复'}
+                  onclick={() => remove(note)}
+                >
+                  {pendingId === note.id ? '删除中…' : '删除'}
+                </button>
+              {/if}
             </li>
+            {#if openId === note.id}
+              <li class="note-detail">
+                <NoteDetailView id={note.id} inline onclose={closeDetail} />
+              </li>
+            {/if}
           {/each}
         </ul>
 

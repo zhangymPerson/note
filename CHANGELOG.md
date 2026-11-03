@@ -8,6 +8,15 @@
 
 ### Changed
 
+- 页面宽度自适应 + 新建笔记正文工具条不再挤成一团 + 全部笔记就地展开详情（实现过程与关键逻辑）：
+  - **问题**：`main` 与 `.topbar` 的 `max-width` 硬编码 880px，PC 上两侧大片留白；新建笔记页正文那一条 `field-label-row` 里塞了「编辑模板 / 用 AI 优化格式 / 模型下拉 / n / 2000」，而 `.field select { width: 100% }` 又把模型下拉撑满整条，四样东西在 ~420px 的半栏里互相挤；列表页点一条笔记会 `navigate('/notes/{id}')` 跳页，看完要按浏览器回退。
+  - **宽度**：`web/src/app.css` 新增 `--page-max: clamp(880px, 84vw, 1280px)`，`.topbar` 与 `main` 改用它——窄屏仍是原来的 880px 手感，宽屏（PC）爬到 1280px，编辑页两栏、列表右侧分类树、热力图都有了呼吸空间。
+  - **工具条**：`NoteEditorView.svelte` 把标签行收缩成「正文 + 码点计数」，模板 / AI 优化 / 模型下拉移进新的 `.field-toolbar`（独占一行、`flex-wrap`、`font-size: clamp(0.78rem, 0.7rem + 0.35vw, 0.9rem)` 随视口收放）；CSS 里删掉不再使用的 `.field-label-actions`，新增 `.field-toolbar` 与小药丸式的 `.linklike` / `select` 样式，并把工具条内的 `select` 从 `.field select` 的 `width: 100%` 里解出来（`width: auto; max-width: 100%`）——这正是原来被撑死的主因。≤640px 时工具条内两项仍给 44px 触控高度与 16px 字号（不触发 iOS 聚焦缩放），只换行、不缩成一列。
+  - **就地展开详情**：`NoteListView.svelte` 新增 `openId` 状态，行按钮从「跳转」改成 `toggle`（带 `aria-expanded`），展开的那一行加 `.note-row-open` 描边，下一行 `li.note-detail` 内嵌 `<NoteDetailView id inline onclose>`（按 `note.id` keyed 的 `{#each}` 保证换行时组件重建、不会串用上一条的明文）；展开时收起行尾的「删除」，避免与详情里的「移入回收站」重复。
+  - **`NoteDetailView.svelte`**：新增 `inline` / `onclose(removed)` 两个 props。`inline` 为真时不再渲染 `h1`（列表行已有标题），元信息与「复制原文」图标走新的 `.detail-meta-row` 同排；`remove()` / `purge()` 改成 `inline ? onclose(true) : navigate(...)`；动作区把「返回」换成「收起」（`onclose(false)`）。复制图标与元信息抽成 `{#snippet}`（`metaLine(entry)` 收参数以获得 `NoteMeta` 收窄），跳页形态的标题行结构不变。列表侧 `closeDetail(removed)` 收起后按需 `refresh` + 重拉分类，删掉的笔记不会留在列表里。
+  - **测试**：无新增测试文件；既有 181 项前端用例（含 `NoteDetailView.test.ts` 的三条复制用例，`button.icon-button` 选择器在 snippet 化后仍命中）与 405 项 Go 用例全绿。
+  - **验证**：`just check`（`go vet` + svelte-check 0 errors / 0 warnings）、`just test`、`npm --prefix web run build` 均通过。
+
 - AI 优化超时/失败给出可操作的提示，而不是把 net/http 原文甩给用户（实现过程与关键逻辑）：
   - **问题**：上游网关 `gpt-gateway-uat.wanmol.com` 慢到 60 秒没回，日志里是 `context deadline exceeded`；网页只拿到 504 的泛化文案，CLI 的 `Ctrl+O` 把 `Post "https://…/chat/completions": context deadline exceeded` 原样塞进状态行——两处都没告诉用户「接下来能做什么」。
   - **`internal/ai`**：新增 `TimeoutError{Model, Duration, Err}` 与 `wrapTransportError`——`client.Do` 返回 `context.DeadlineExceeded` 或 `net.Error.Timeout()` 时包装成「模型 glm-5.3-flash 在 60 秒内没有响应，可以稍后重试、换一个模型，或检查接口地址是否可用」；`Unwrap` 保留原始错误，web 层照旧能判 504；`formatTimeout` 把时长写成人话（整秒「60 秒」、毫秒级「20 毫秒」，其余退回 `Duration.String()`）。DNS / 连接被拒 / 证书错误不包装（原文更有用），用户主动取消也不误报成超时。

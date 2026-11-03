@@ -415,38 +415,40 @@
       </div>
 
       <div class="field">
+        <!-- 标签行只放「正文」与码点计数：模板 / AI 优化 / 模型筛选另占一条工具条，
+             否则窄栏里四样东西挤在同一行基线，只能靠缩成一列自救。 -->
         <div class="field-label-row">
           <label for="note-content">正文</label>
-          <span class="field-label-actions">
-            {#if !isEdit}
-              <button class="linklike" type="button" onclick={editTemplate}>编辑模板</button>
-            {/if}
-            <button
-              class="linklike"
-              type="button"
-              disabled={!canOptimize}
-              onclick={optimize}
-            >
-              {aiBusy ? '优化中…' : '用 AI 优化格式'}
-            </button>
-            {#if aiModels.length > 1}
-              <!-- 不用 bind:：<select> 挂载时会把自己的空值写回去，把默认模型冲掉 -->
-              <select
-                id="ai-model"
-                value={aiModel}
-                disabled={aiBusy}
-                aria-label="优化用的模型"
-                onchange={(event) => (aiModel = event.currentTarget.value)}
-              >
-                {#each aiModels as model (model)}
-                  <option value={model}>{model}</option>
-                {/each}
-              </select>
-            {/if}
-            <span class="counter {tooLong ? 'counter-over' : ''}" aria-live="polite">
-              {contentLength} / {MAX_CONTENT_CODEPOINTS}
-            </span>
+          <span class="counter {tooLong ? 'counter-over' : ''}" aria-live="polite">
+            {contentLength} / {MAX_CONTENT_CODEPOINTS}
           </span>
+        </div>
+        <div class="field-toolbar">
+          {#if !isEdit}
+            <button class="linklike" type="button" onclick={editTemplate}>编辑模板</button>
+          {/if}
+          <button
+            class="linklike"
+            type="button"
+            disabled={!canOptimize}
+            onclick={optimize}
+          >
+            {aiBusy ? '优化中…' : '用 AI 优化格式'}
+          </button>
+          {#if aiModels.length > 1}
+            <!-- 不用 bind:：<select> 挂载时会把自己的空值写回去，把默认模型冲掉 -->
+            <select
+              id="ai-model"
+              value={aiModel}
+              disabled={aiBusy}
+              aria-label="优化用的模型"
+              onchange={(event) => (aiModel = event.currentTarget.value)}
+            >
+              {#each aiModels as model (model)}
+                <option value={model}>{model}</option>
+              {/each}
+            </select>
+          {/if}
         </div>
         <textarea
           id="note-content"

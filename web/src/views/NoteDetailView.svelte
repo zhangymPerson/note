@@ -14,7 +14,12 @@
   import { toast } from '../lib/toast'
   import { navigate } from '../router/router'
 
-  let { id = '' }: { id: string } = $props()
+  // inline：嵌在列表页就地展开，不跳页；onclose(removed) 让列表收起后自行决定要不要刷新。
+  let {
+    id = '',
+    inline = false,
+    onclose,
+  }: { id?: string; inline?: boolean; onclose?: (removed: boolean) => void } = $props()
 
   let note = $state<NoteMeta | null>(null)
   // 解密出来的正文只活在这一个变量里：锁定或离开本页必须清空（设计文档 §5.1）。
@@ -135,7 +140,8 @@
       await deleteNote(note.id)
       lock()
       toast('已移入回收站')
-      navigate('/notes')
+      if (inline) onclose?.(true)
+      else navigate('/notes')
     } catch (cause) {
       error = message(cause)
     } finally {
@@ -164,7 +170,8 @@
       await purgeNote(note.id)
       lock()
       toast('已彻底删除')
-      navigate('/trash')
+      if (inline) onclose?.(true)
+      else navigate('/trash')
     } catch (cause) {
       error = message(cause)
     } finally {
@@ -180,7 +187,51 @@
   }
 </script>
 
-<section class="page detail">
+{#snippet copyButton()}
+  {#if !awaitingKey && body !== ''}
+    <button
+      class="icon-button"
+      type="button"
+      title="复制原文"
+      aria-label="复制原文"
+      onclick={copyBody}
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+        <rect
+          x="8"
+          y="8"
+          width="12"
+          height="12"
+          rx="2.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+        />
+        <path
+          d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+        />
+      </svg>
+    </button>
+  {/if}
+{/snippet}
+
+{#snippet metaLine(entry: NoteMeta)}
+  <p class="note-meta">
+    更新于 {shownAt(entry.updated_at)} · 第 {entry.rev} 版
+    {#if entry.category_name}
+      · 分类「{entry.category_name}」
+    {/if}
+    {#if entry.deleted_at}
+      · 移入回收站于 {shownAt(entry.deleted_at)}
+    {/if}
+  </p>
+{/snippet}
+
+<section class="page detail" class:detail-inline={inline}>
   {#if loading}
     <p class="muted">笔记载入中…</p>
   {:else if error && !note}
@@ -190,52 +241,24 @@
     </a>
   {:else if note}
     <header class="detail-head">
-      <div class="detail-title">
-        <h1>
-          {note.title}
-          {#if encrypted}
-            <span class="badge">已加密</span>
-          {/if}
-        </h1>
-        {#if !awaitingKey && body !== ''}
-          <button
-            class="icon-button"
-            type="button"
-            title="复制原文"
-            aria-label="复制原文"
-            onclick={copyBody}
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-              <rect
-                x="8"
-                y="8"
-                width="12"
-                height="12"
-                rx="2.5"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-              />
-              <path
-                d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-              />
-            </svg>
-          </button>
-        {/if}
-      </div>
-      <p class="note-meta">
-        更新于 {shownAt(note.updated_at)} · 第 {note.rev} 版
-        {#if note.category_name}
-          · 分类「{note.category_name}」
-        {/if}
-        {#if inTrash && note.deleted_at}
-          · 移入回收站于 {shownAt(note.deleted_at)}
-        {/if}
-      </p>
+      {#if inline}
+        <!-- 就地展开时标题已在上面那一行，这里只留元信息与复制图标 -->
+        <div class="detail-meta-row">
+          {@render metaLine(note)}
+          {@render copyButton()}
+        </div>
+      {:else}
+        <div class="detail-title">
+          <h1>
+            {note.title}
+            {#if encrypted}
+              <span class="badge">已加密</span>
+            {/if}
+          </h1>
+          {@render copyButton()}
+        </div>
+        {@render metaLine(note)}
+      {/if}
     </header>
 
     {#if inTrash}
@@ -311,9 +334,13 @@
         {#if canDelete}
           <button class="button button-quiet" type="button" disabled={busy} onclick={remove}>移入回收站</button>
         {/if}
-        <a class="button button-quiet" href="/notes" onclick={(event) => { event.preventDefault(); navigate('/notes') }}>
-          返回
-        </a>
+        {#if inline}
+          <button class="button button-quiet" type="button" onclick={() => onclose?.(false)}>收起</button>
+        {:else}
+          <a class="button button-quiet" href="/notes" onclick={(event) => { event.preventDefault(); navigate('/notes') }}>
+            返回
+          </a>
+        {/if}
       </div>
       {#if encrypted && awaitingKey}
         <p class="muted">解锁后才能删除这条加密笔记。</p>
