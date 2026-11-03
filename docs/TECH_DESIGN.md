@@ -1124,8 +1124,8 @@ GET /api/csrf
   "version": "1.4.0",
   "git_hash": "805b6a1",
   "git_dirty": false,
-  "build_date": "2026-10-27T12:45:05Z",
-  "build_label": "1.4.0 (805b6a1, 2026-10-27T12:45:05Z)",
+  "build_date": "2026-11-03T20:45:05+08:00",
+  "build_label": "1.4.0 (805b6a1, 2026-11-03T20:45:05+08:00)",
   "go_version": "go1.27.0",
   "goos": "windows",
   "goarch": "amd64",
@@ -1142,7 +1142,7 @@ GET /api/csrf
 }
 ```
 
-- `version / git_hash / git_dirty / build_date` 来自 `internal/build`：`just build` 用 `-ldflags -X` 注入，未注入时 `Describe()` 回落到 `debug.ReadBuildInfo()` 的 `vcs.revision / vcs.time / vcs.modified`，此时 `build_label` 是「1.4.0（开发构建）」。
+- `version / git_hash / git_dirty / build_date` 来自 `internal/build`：`just build` 用 `-ldflags -X` 注入，未注入时 `Describe()` 回落到 `debug.ReadBuildInfo()` 的 `vcs.revision / vcs.time / vcs.modified`，此时 `build_label` 是「1.4.0（开发构建）」。`build_date` 取**构建机本地时区**（RFC3339 带偏移，如 `2026-11-03T17:29:33+08:00`）——它只在信息页与 `note info` 里展示、不参与排序，所以不受「时间戳统一 UTC」约束；回落路径的 `vcs.time`（UTC）也经 `localBuildTime` 换成本地时区，两条路径口径一致（解析失败就原样返回，绝不因此让 `Describe` 出错）。
 - `started_at` 在 `newApplication` 里记 `time.Now().UTC()`，以 RFC3339 输出，UTC 时形如 `2006-01-02T15:04:05Z`，遵守时间戳约定。
 - `schema_version` 由 `Store.SchemaVersion` 读 `PRAGMA user_version`。
 - 响应里没有密文、盐、助记问题、口令或令牌；`hostname`、`db_path`、`addr` 是本机自用信息的展示，不构成对外泄露面（应用只监听回环，除非显式 `--allow-remote`）。
@@ -1403,7 +1403,7 @@ check:
 ```
 
 - 发布统一使用 `just build`：`npm ci` → 前端构建 → Go 编译；Windows 产出 `note.exe`，其它平台 `note`。
-- `ldflags` 是 just 表达式，按 `os()` 分两支（Windows 走 PowerShell、其余走 bash 命令替换），拼出四个 `-X note/internal/build.*` 注入变量：`GitHash`、`BuildDate`（UTC 秒级）、`GitDirty`（`git status --porcelain` 非空才加）、以及源码里已有的 `Version`。两个要点：不在 git 仓库内或 `git` 不存在时命令失败**必须退化成空值**，不能让构建挂掉（`internal/build.Describe()` 会回落到 `debug.ReadBuildInfo()`）；just 在 Windows 上把命令包成 `cmd /C "powershell -Command …"` 且只保留最后一行输出，因此 PowerShell 分支必须以裸 `$a` 结尾。
+- `ldflags` 是 just 表达式，按 `os()` 分两支（Windows 走 PowerShell、其余走 bash 命令替换），拼出四个 `-X note/internal/build.*` 注入变量：`GitHash`、`BuildDate`、`GitDirty`（`git status --porcelain` 非空才加）、以及源码里已有的 `Version`。`BuildDate` 是构建机本地时区的 RFC3339 秒级时刻（带偏移，如 `2026-11-03T17:29:33+08:00`）：PowerShell 用 `[DateTimeOffset]::Now.ToString('yyyy-MM-ddTHH:mm:sszzz')`，bash 用 `date +%Y-%m-%dT%H:%M:%S` 与 `date +%z` 拼出 `+08:00`（手插冒号，因为 BSD/macOS 的 `date` 不认 GNU 的 `%:z`）。两个要点：不在 git 仓库内或 `git` 不存在时命令失败**必须退化成空值**，不能让构建挂掉（`internal/build.Describe()` 会回落到 `debug.ReadBuildInfo()`）；just 在 Windows 上把命令包成 `cmd /C "powershell -Command …"` 且只保留最后一行输出，因此 PowerShell 分支必须以裸 `$a` 结尾。
 - `just test` 依赖 `frontend`，因此跑 Go 测试前会重建 `internal/web/dist`——embed 的产物永远与被测代码一致。
 - `internal/web/dist` 为生成物，不提交；缺失时 `go build` 因 embed 失败而中止。
 - 另有 `just start` / `just stop` / `just restart`（后台开发服务，日志与 pid 写入 `.run/`）与 `just pull` / `just push`（多远程同步）。
@@ -1414,7 +1414,7 @@ check:
 
 1. 干净目录执行 `npm ci` 与前端构建。
 2. `go test ./...` 与 `go test -race ./...`。
-3. `just build` 产出单二进制，并确认 `GET /api/info` 返回真实 commit hash 与 UTC 构建日期（`go run` 下应显示「开发构建」）。
+3. `just build` 产出单二进制，并确认 `GET /api/info` 返回真实 commit hash 与本地时区构建日期（带偏移，如 `2026-11-03T17:29:33+08:00`；`go run` 下应显示「开发构建」）。
 4. 将二进制复制到未安装 Node 的机器，验证页面、深链接、API。
 5. 在空数据目录首次 `note web` 启动，确认自动建库与迁移；修改配置文件与命令行覆盖（含 `-p` 只换端口）的优先级符合 4.2；`note info` 输出与 `/api/info` 一致。
 6. 执行 PRD 第 9 节验收项，特别是明文残留检查。
@@ -1582,7 +1582,7 @@ v1.4 的信息页与改密链路由 `.run/info-e2e.mjs` 覆盖（同样 Playwrig
 
 - **空库引导**：步骤 1 只填名字就刷新，必须仍在引导页且直接落在步骤 2；两次口令不一致或未勾选确认时 `POST` 次数为 0；成功后 `master_password` 只有一行、16 字节盐与 `GET /api/master-password.salt_b64` 一致；浏览器存储里没有口令与密钥。
 - **已配置形态**：用两个页签确定性地复现「POST 已成功、解锁前刷新」—— parked 在步骤 1 的页签存名字时，另一页签已完成引导，此时步骤 2 必须渲染解锁输入框且 `POST` 次数为 0（重复 POST 会 409，缺这条分支就把用户永久卡在第二步）。老库（已配主密码、`name_set: false`）重启后填完名字直接进主界面，无死路。
-- **改密主链路**：`/info` 的 14 行运行信息含真实 commit hash 与 UTC 构建日期 → 改名（UI / `/api/settings` / 配置文件三处一致）→ 改助记问题（盐不变）→ 错误旧口令被拦下且两条密文的 `cipher`/`updated_at`/`rev` 全不变 → 正确旧口令跑完迁移（密文全换、元数据不动）→ 刷新后用新口令解锁两条 → **中断续跑**：用 `page.route` 让第二条 `PUT /cipher` 失败，界面给出「成功 1 · 跳过 0 · 失败 1（还有 1 条未迁移）」；刷新后状态卡不在任何浏览器存储留痕；用最新口令续跑时未迁移那条判为 `failed_old_key` 且字节不变，此时在浏览器里点状态卡的「继续迁移」，断言按钮文案是「继续迁移（请输入上一个主密码）」且点完旧密码栏为空（不预填刚设的新密码）；再用它的真实旧口令续跑后状态卡消失、两条都可用新口令解开。收尾对 `.db` 与 `-wal` 检索本次用过的 4 个口令与 2 段加密正文，全部不出现，对照明文哨兵照常出现。
+- **改密主链路**：`/info` 的 14 行运行信息含真实 commit hash 与本地时区构建日期（带偏移，如 `+08:00`） → 改名（UI / `/api/settings` / 配置文件三处一致）→ 改助记问题（盐不变）→ 错误旧口令被拦下且两条密文的 `cipher`/`updated_at`/`rev` 全不变 → 正确旧口令跑完迁移（密文全换、元数据不动）→ 刷新后用新口令解锁两条 → **中断续跑**：用 `page.route` 让第二条 `PUT /cipher` 失败，界面给出「成功 1 · 跳过 0 · 失败 1（还有 1 条未迁移）」；刷新后状态卡不在任何浏览器存储留痕；用最新口令续跑时未迁移那条判为 `failed_old_key` 且字节不变，此时在浏览器里点状态卡的「继续迁移」，断言按钮文案是「继续迁移（请输入上一个主密码）」且点完旧密码栏为空（不预填刚设的新密码）；再用它的真实旧口令续跑后状态卡消失、两条都可用新口令解开。收尾对 `.db` 与 `-wal` 检索本次用过的 4 个口令与 2 段加密正文，全部不出现，对照明文哨兵照常出现。
 
 v1.8 的移动端与兼容性由 `.run/responsive-verify.mjs` 覆盖（Playwright-core + Edge headless，端口 8096 与 `.run/responsive-verify.db`，116 项断言）：
 

@@ -6,12 +6,15 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
 var (
 	// Version 是源码里的当前版本，构建时可用 -X note/internal/build.Version 覆盖。
 	Version = "1.4.0"
-	// GitHash / GitDirty / BuildDate 由 justfile 的 build _recipe 注入，未注入时为空串。
+	// GitHash / GitDirty / BuildDate 由 justfile 的 build 子命令注入，未注入时为空串。
+	// BuildDate 是构建机本地时区的 RFC3339 秒级时刻（如 2026-11-03T17:29:33+08:00）：
+	// 带偏移既保留了绝对时刻，也让「我刚才打的包」看起来就是刚才。
 	GitHash   = ""
 	GitDirty  = ""
 	BuildDate = ""
@@ -58,9 +61,21 @@ func Describe() Info {
 		info.GitDirty = "true"
 	}
 	if info.BuildDate == "" {
-		info.BuildDate = info.VcsTime
+		// vcs.time 是 UTC；展示口径要与注入值一致，所以换成本地时区。
+		info.BuildDate = localBuildTime(info.VcsTime)
 	}
 	return info
+}
+
+// localBuildTime 把 go build 记下的 vcs.time（UTC 的 RFC3339）换成构建栈的本地时区，
+// 与 justfile 注入的 BuildDate 同口径。解析不了就原样返回——时间只是展示项，
+// 不能因为一行字符串让 Describe 失败或丢掉已有信息。
+func localBuildTime(vcsTime string) string {
+	t, err := time.Parse(time.RFC3339, vcsTime)
+	if err != nil {
+		return vcsTime
+	}
+	return t.In(time.Local).Format(time.RFC3339)
 }
 
 // Label 是信息页唯一的版本展示串：注入时带 hash 与构建时间，否则标记开发构建。

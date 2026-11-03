@@ -45,9 +45,11 @@ push:
     git pull --rebase
     {{ if os() == "windows" { "git remote | ForEach-Object { git push $_ }" } else { "git remote | xargs -n1 git push" } }}
 
-# 构建时注入 git 短 hash 与 UTC 构建时间；git 不可用或不在仓库内时退化成空值，
-# 绝不能让 build 因此失败（internal/build 会回落到 debug.ReadBuildInfo）。
-ldflags := if os() == "windows" { `$h = git rev-parse --short HEAD 2>$null; $now = [DateTime]::UtcNow; $a = '-X note/internal/build.GitHash=' + $h + ' -X note/internal/build.BuildDate=' + $now.ToString('yyyy-MM-dd') + 'T' + $now.ToString('HH:mm:ss') + 'Z'; if (git status --porcelain 2>$null) { $a += ' -X note/internal/build.GitDirty=true' }; $a` } else { `a="-X note/internal/build.GitHash=$(git rev-parse --short HEAD 2>/dev/null) -X note/internal/build.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; if test -n "$(git status --porcelain 2>/dev/null)"; then a="$a -X note/internal/build.GitDirty=true"; fi; printf %s "$a"` }
+# 构建时注入 git 短 hash 与构建时间；时间取构建机本地时区（带偏移，如 +08:00），
+# 不是 UTC——信息页与 `note info` 里看到的就是「我刚打这个包的时刻」。
+# git 不可用或不在仓库内时退化成空值，绝不能让 build 因此失败
+# （internal/build 会回落到 debug.ReadBuildInfo）。
+ldflags := if os() == "windows" { `$h = git rev-parse --short HEAD 2>$null; $now = [DateTimeOffset]::Now.ToString('yyyy-MM-ddTHH:mm:sszzz'); $a = '-X note/internal/build.GitHash=' + $h + ' -X note/internal/build.BuildDate=' + $now; if (git status --porcelain 2>$null) { $a += ' -X note/internal/build.GitDirty=true' }; $a` } else { `t=$(date +%Y-%m-%dT%H:%M:%S); z=$(date +%z); d="$t${z:0:3}:${z:3:2}"; a="-X note/internal/build.GitHash=$(git rev-parse --short HEAD 2>/dev/null) -X note/internal/build.BuildDate=$d"; if test -n "$(git status --porcelain 2>/dev/null)"; then a="$a -X note/internal/build.GitDirty=true"; fi; printf %s "$a"` }
 
 # 构建单二进制
 build: frontend

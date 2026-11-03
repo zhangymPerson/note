@@ -37,7 +37,7 @@ docs/              PRD、技术方案、构建指南
 
 ## 硬性约定
 
-- 时间戳统一为 UTC 秒级文本 `2006-01-02T15:04:05Z`，可直接按字符串排序。
+- 时间戳统一为 UTC 秒级文本 `2006-01-02T15:04:05Z`，可直接按字符串排序。唯一例外是构建时间（`internal/build.BuildDate`）：它只在信息页与 `note info` 里展示、不参与任何排序，所以取构建机本地时区（RFC3339 带偏移，如 `2026-11-03T17:29:33+08:00`），别「顺手」改回 UTC；回落路径的 `vcs.time` 也经 `localBuildTime` 换成本地时区，保持两条路径同口径。
 - 数据库结构变更只能新增 `sql/NNNN_*.sql` 迁移，禁止手改既有迁移。
 - 状态变更类 API（PUT/POST/DELETE）必须通过 CSRF 双提交校验；前端经 `web/src/lib/api.ts` 统一携带 `X-CSRF-Token`。唯一例外是 `/api/shutdown`（凭证即关停令牌），该豁免不得扩大。
 - `/api/shutdown` 只在后台模式存在（`web.Control.Token` 为空时注册的 handler 一律 403 `shutdown_disabled`），凭状态文件里的 32 字节令牌；令牌不得进日志、响应、命令行或环境变量，仍受 `hostGuard` 约束。

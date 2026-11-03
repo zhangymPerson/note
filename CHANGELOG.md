@@ -20,6 +20,13 @@
 
 ### Changed
 
+- 构建时间改用构建机本地时区（实现过程与关键逻辑）：
+  - **问题**：`justfile` 的 `ldflags` 用 `[DateTime]::UtcNow` / `date -u` 写死 UTC，`note info` 与信息页的「构建时间」显示成 `2026-11-03T09:29:33Z`——在东八区对着自己刚打的包看，像是九小时前/昨天打的。
+  - **注入**：Windows 分支改 `[DateTimeOffset]::Now.ToString('yyyy-MM-ddTHH:mm:sszzz')`；bash 分支用 `date +%Y-%m-%dT%H:%M:%S` 与 `date +%z` 拼出 `+08:00`（手插冒号：BSD/macOS 的 `date` 不认 GNU 的 `%:z`，`%z` 两端都支持）。输出仍是 RFC3339 秒级，带偏移既保留绝对时刻，显示又对得上本地时间。
+  - **回落**：`internal/build` 新增 `localBuildTime`，把 `debug.ReadBuildInfo()` 的 `vcs.time`（UTC）换成本地时区，让 `go build` / `just start` 这类未注入路径与注入路径同口径；空串或解析失败原样返回，时间只是展示项，不能因此让 `Describe` 出错。
+  - **约定**：`AGENTS.md`「时间戳统一 UTC 秒级」加一条例外——`BuildDate` 只展示、不参与排序，所以用本地时区；`docs/PRD.md` FR-6.4、`docs/TECH_DESIGN.md` §8.6 / §10.4 / 发布检查同步。
+  - **验证**：`just build` 后的 `note.exe info` 显示 `1.4.0 (850370a, 2026-11-03T20:49:39+08:00, dirty)`；`go build` 的回落路径显示 `2026-11-03T20:08:20+08:00`（`vcs.time` 是 `2026-11-03T12:08:20Z`）；新增 `TestLocalBuildTimeUsesLocalZone` / `TestLocalBuildTimeKeepsUnparsable`（先跑出 RED：`undefined: localBuildTime`）；`just test` 与 `just check` 通过。
+
 - 内置默认提示词补两条硬约束（实现过程与关键逻辑）：`config.DefaultAIPrompt` 的六条要求里，第 1 条补「压缩的是措辞与重复表达，不是要点」，新增第 4 条「以压缩为主——能用更少的字说清同一件事就不要扩写，不添加原文没有的描述、背景、延伸或总结，确需展开也要精简」与第 5 条「优化后的全文不超过 2000 字符（含标题与列表符号），超了优先删掉重复表述与客套话」，原「只输出优化后的 Markdown 正文」从第 4 条挪到第 6 条。其余措辞不动。与前端「结果超 2000 码点禁止替换」是同一意图，写进模板能少一轮无效调用。
 
 - 页面宽度自适应 + 新建笔记正文工具条不再挤成一团 + 全部笔记就地展开详情（实现过程与关键逻辑）：
