@@ -8,6 +8,13 @@
 
 ### Added
 
+- 新增 `just install-mac` / `just install-linux`，把单二进制安装到本机（实现过程与关键逻辑）：
+  - **需求**：`install-win` 只覆盖 Windows；macOS / Linux 用户要装新版本得自己手动关停后台 `note web`、拷二进制、再拉起。两个任务统一为「先判断旧版本是否存在，存在则先关停 → 替换 → 启动」。
+  - **`justfile`**：新增 `[macos] install-mac` / `[linux] install-linux`（与 `[windows] install-win` 同构，平台属性保证只在对应系统上可用），都依赖 `build` 并调用同一份脚本 `bash scripts/install.sh macos|linux`。
+  - **`scripts/install.sh`**（新建，Unix 共用一份，避免 mac/linux 两套漂移）：顺序固定为——① 确认构建产物存在；② 旧版本存在时用旧二进制跑 `note web status`（退出码 0/1 = 在运行、3 = 未运行，其它码一律中止），在运行则 `web stop` 并轮询到 `status` 退出码变成 3 才算退干净（上限 20 秒），关停失败绝不删旧版本；③ 建目录并删旧版本；④ 复制新版本并就地跑 `--help` 校验；⑤ 把安装目录写进 shell 配置 PATH（优先已存在的 `~/.zshrc` → `~/.bashrc` → `~/.profile`，全不存在退回 `~/.profile`；当前会话 PATH 与 rc 文件内容都查，幂等不重复追加）；⑥ `note web start` 启动后台服务（已在运行则直接打印信息）。默认安装目录 `~/.local/bin`（用户级、免 sudo，与 Windows 的 `%LOCALAPPDATA%\Programs\note` 对齐），第二个参数可覆盖：`bash scripts/install.sh macos /opt/tools`。
+  - **安全不变量**：替换前先关停正在运行的后台实例，`web start` 才会拉起新版本而不是误报「已在后台运行」；关停失败、`--help` 校验失败或 `web start` 失败都立即中止，不留半装状态。
+  - **验证**：`bash -n` 通过；用桩二进制端到端跑通四种路径——全新安装（无旧版本，跳过关停直接复制 + 启动）、旧版本运行中（关停 → 替换 → 重启）、旧版本未运行（替换 + 启动）、`web stop` 失败（退出码 1 且旧版本未被删除）；同一会话连装两次 rc 文件只有一行 PATH；非法平台参数退出 2；`just --list` 正常列出两个新任务。
+
 - 编辑器按次的「自定义提示词」（实现过程与关键逻辑）：
   - **需求**：默认提示词管格式，但同一个人不同场景要的不一样（要图、要更短、要突出待办）。所以除模型下拉之外再给一栏临时要求，只对这一次优化生效。
   - **`internal/ai/client.go`**：`Optimize` 的入参从 `(ctx, content, model)` 改成 `(ctx, Request)`——三个都是 `string` 的位置参数太容易传反，`Request{Content, Model, CustomPrompt}` 一眼能看出谁是谁；新增 `MaxCustomPromptRunes = 500`、`ValidateCustomPrompt`（空串合法、超长拒绝）与 `BuildPromptWithCustom`（先 `BuildPrompt` 代入正文，再把额外要求追加到模板末尾，并重申「在满足上面全部要求的前提下，仍然只输出优化后的 Markdown 正文」——不重申的话「用 mermaid 展示」这类补充容易把「不超 2000 字符」「不要客套话」冲掉；额外要求里写 `{{content}}` 同样不展开）。

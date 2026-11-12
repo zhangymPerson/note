@@ -60,6 +60,16 @@ build: frontend
 install-win: build
     powershell.exe -NoLogo -ExecutionPolicy Bypass -File scripts/install-win.ps1
 
+# 构建并安装到本机（macOS）：旧版本存在时先关停后台 note web → 替换 → 启动
+[macos]
+install-mac: build
+    bash scripts/install.sh macos
+
+# 构建并安装到本机（Linux）：旧版本存在时先关停后台 note web → 替换 → 启动
+[linux]
+install-linux: build
+    bash scripts/install.sh linux
+
 # 运行后端与前端测试
 test: frontend
     go test ./...

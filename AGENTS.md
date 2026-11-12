@@ -31,6 +31,7 @@ docs/              PRD、技术方案、构建指南
 
 - `just install` / `just frontend` / `just build`：前端依赖、前端产物、单二进制（Windows 输出 `note.exe`）
 - `just install-win`（Windows）：先 `just build`，再关停后台 `note web`、替换 `%LOCALAPPDATA%\Programs\note\note.exe`（日志与状态文件仍在数据目录，不动），并幂等地写入用户 PATH
+- `just install-mac`（macOS）/ `just install-linux`（Linux）：先 `just build`，再检查旧版本：存在且 `note web` 在运行就先关停，然后替换 `~/.local/bin/note`（可用第二参数改安装目录），幂等地写入 shell 配置 PATH，最后 `note web start` 拉起后台服务
 - `just test`：`go test ./...` + 前端 Vitest
 - `just check`：`go vet` + `svelte-check`/`tsc`
 - 改动合入前必须 `just test` 与 `just check` 全部通过。

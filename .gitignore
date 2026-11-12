@@ -45,6 +45,9 @@ node_modules/
 .claude/
 skills-lock.json
 
+# CodeGraph 索引（本地生成，不入库）
+.codegraph/
+
 # Built binary
 /note
 
