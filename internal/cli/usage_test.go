@@ -66,7 +66,7 @@ func TestUsageListsAddCommand(t *testing.T) {
 
 func TestUsageForAddDescribesThreeSteps(t *testing.T) {
 	text := UsageFor("add")
-	for _, want := range []string{"分类", "标题", "正文", "Ctrl+D"} {
+	for _, want := range []string{"分类", "标题", "正文", "Ctrl+D", "note add <正文>", "--ai", "速记-"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("addUsage 缺少 %q", want)
 		}

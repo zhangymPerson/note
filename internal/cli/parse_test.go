@@ -192,9 +192,60 @@ func TestParseAddHelpFlag(t *testing.T) {
 	}
 }
 
-func TestParseAddRejectsExtraArgs(t *testing.T) {
-	if _, _, err := Parse([]string{"add", "foo"}); err == nil {
-		t.Fatal("note add 不接受多余参数，应报错")
+func TestParseAddContent(t *testing.T) {
+	cmd, opts, err := Parse([]string{"add", "买牛奶"})
+	if err != nil || cmd != CommandAdd {
+		t.Fatalf("Parse(add 买牛奶) = %v, %v; want CommandAdd", cmd, err)
+	}
+	if opts.Add.Content != "买牛奶" || opts.Add.AI {
+		t.Fatalf("opts.Add = %+v", opts.Add)
+	}
+}
+
+func TestParseAddContentWithAI(t *testing.T) {
+	cmd, opts, err := Parse([]string{"add", "买牛奶", "--ai"})
+	if err != nil || cmd != CommandAdd {
+		t.Fatalf("Parse(add 买牛奶 --ai) = %v, %v; want CommandAdd", cmd, err)
+	}
+	if opts.Add.Content != "买牛奶" || !opts.Add.AI {
+		t.Fatalf("opts.Add = %+v", opts.Add)
+	}
+}
+
+func TestParseAddAIWithoutContent(t *testing.T) {
+	if _, _, err := Parse([]string{"add", "--ai"}); err == nil {
+		t.Fatal("note add --ai 缺正文应报错")
+	}
+}
+
+func TestParseAddEmptyContent(t *testing.T) {
+	if _, _, err := Parse([]string{"add", ""}); err == nil {
+		t.Fatal("空正文应报错")
+	}
+	if _, _, err := Parse([]string{"add", "   "}); err == nil {
+		t.Fatal("全空白正文应报错")
+	}
+}
+
+func TestParseAddTooLongContent(t *testing.T) {
+	if _, _, err := Parse([]string{"add", strings.Repeat("😀", 2001)}); err == nil {
+		t.Fatal("超 2000 码点的正文应报错")
+	}
+}
+
+func TestParseAddExtraPositional(t *testing.T) {
+	if _, _, err := Parse([]string{"add", "a", "b"}); err == nil {
+		t.Fatal("note add 只接受一个正文参数，多给应报错")
+	}
+}
+
+func TestParseAddNoArgKeepsWizard(t *testing.T) {
+	cmd, opts, err := Parse([]string{"add"})
+	if err != nil || cmd != CommandAdd {
+		t.Fatalf("Parse(add) = %v, %v; want CommandAdd", cmd, err)
+	}
+	if opts.Add.Content != "" || opts.Add.AI {
+		t.Fatalf("无参数应保持向导形态，opts.Add = %+v", opts.Add)
 	}
 }
 
@@ -358,9 +409,12 @@ func TestParseShowWithoutIDIsPicker(t *testing.T) {
 }
 
 func TestParseAddAcceptsConfigFlags(t *testing.T) {
-	cmd, opts, err := Parse([]string{"add", "--db", "x.db"})
+	cmd, opts, err := Parse([]string{"add", "买牛奶", "--db", "x.db"})
 	if err != nil || cmd != CommandAdd {
 		t.Fatalf("note add --db 应被接受，得到 cmd=%v err=%v", cmd, err)
+	}
+	if opts.Add.Content != "买牛奶" {
+		t.Fatalf("opts.Add = %+v", opts.Add)
 	}
 	if !slices.Equal(opts.Args, []string{"--db", "x.db"}) {
 		t.Fatalf("args = %v", opts.Args)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"note/internal/config"
 )
@@ -80,6 +81,16 @@ type Options struct {
 	Set SetOptions
 	Get GetOptions
 	Del DelOptions
+	// Add 仅对 CommandAdd 有意义：Content 非空时走快速记法（直接记速记），
+	// AI 为 true 表示先 AI 整理+生成标题，预览确认后再保存。
+	Add AddOptions
+}
+
+// AddOptions 是 note add 自己的参数：Content 为空时保持三步交互向导；
+// 非空时直接落一条速记（标题自动生成）；AI 表示先 AI 整理再预览确认。
+type AddOptions struct {
+	Content string
+	AI      bool
 }
 
 // ListOptions 是 note list 自己的开关。
@@ -194,10 +205,12 @@ func Parse(args []string) (Command, Options, error) {
 				opts.Args = []string{"add"}
 				return CommandHelp, opts, nil
 			}
-			if err := validateConfigOnlyArgs("add", rest); err != nil {
+			addOpts, configArgs, err := parseAddArgs(rest)
+			if err != nil {
 				return CommandMenu, Options{}, err
 			}
-			opts.Args = rest
+			opts.Add = addOpts
+			opts.Args = configArgs
 			return CommandAdd, opts, nil
 		case arg == "status":
 			rest := args[i+1:]
@@ -324,8 +337,9 @@ var addConfigFlags = map[string]bool{
 	"--db":     true,
 }
 
-// validateConfigOnlyArgs 校验只带配置参数的只读子命令（note add / note status）：
+// validateConfigOnlyArgs 校验只带配置参数的只读子命令（note status）：
 // 交互形态本身不带任何开关，多余参数直接报错而不是被静默忽略。
+// note add 已改用 parseAddArgs（它要认正文与 --ai），status 仍走这里。
 func validateConfigOnlyArgs(command string, args []string) error {
 	for i := 0; i < len(args); i++ {
 		if !addConfigFlags[args[i]] {
@@ -337,6 +351,52 @@ func validateConfigOnlyArgs(command string, args []string) error {
 		i++ // 跳过值
 	}
 	return nil
+}
+
+// parseAddArgs 拆 note add 的参数。形态：
+//
+//	note add              → 三步交互向导（Content 为空）
+//	note add <正文>       → 快速记法：直接落一条速记，标题自动生成
+//	note add <正文> --ai  → AI 整理+生成标题，预览确认后再保存
+//
+// 正文长度按码点校验（与 store/web 同一口径，超长直接用法错误退出 2）。
+func parseAddArgs(args []string) (AddOptions, []string, error) {
+	var opts AddOptions
+	var configArgs []string
+	hasContent := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case addConfigFlags[arg]:
+			if i+1 >= len(args) {
+				return AddOptions{}, nil, fmt.Errorf("%s 需要一个值", arg)
+			}
+			configArgs = append(configArgs, arg, args[i+1])
+			i++
+		case arg == "--ai":
+			opts.AI = true
+		case strings.HasPrefix(arg, "-"):
+			return AddOptions{}, nil, fmt.Errorf("note add 无法识别的参数 %s（用 note add --help 查看用法）", arg)
+		default:
+			if hasContent {
+				return AddOptions{}, nil, fmt.Errorf("note add 只接受一个正文参数，多给了 %q（正文里有空格请用引号括起来）", arg)
+			}
+			opts.Content = arg
+			hasContent = true
+		}
+	}
+
+	if hasContent {
+		if strings.TrimSpace(opts.Content) == "" {
+			return AddOptions{}, nil, fmt.Errorf("note add 的正文不能为空")
+		}
+		if n := utf8.RuneCountInString(opts.Content); n > maxQuickContentRunes {
+			return AddOptions{}, nil, fmt.Errorf("note add 的正文最多 %d 码点，当前 %d 码点", maxQuickContentRunes, n)
+		}
+	} else if opts.AI {
+		return AddOptions{}, nil, fmt.Errorf("note add --ai 需要正文：note add <正文> --ai")
+	}
+	return opts, configArgs, nil
 }
 
 // parseListArgs 拆 note list 的参数：自己消费开关，把配置参数原样留在第二个返回值里。
