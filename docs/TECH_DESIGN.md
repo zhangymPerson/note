@@ -257,8 +257,8 @@ v1.5 起入口是 CLI 子命令（`internal/cli.Parse` 分发）：
 | `note get <标题[@分类]>` / `@<分类>` / `--list` | 读一条正文到 stdout（缺结尾换行时补一个）/ 列分类下笔记（默认每行一个标题，`--detail` 用 `renderTable` 输出「标题 / 更新时间 / 正文摘要」表格）/ 列全部分类（ID、名字、笔记数、固定分类标记）                                                                                       |
 | `note del <标题[@分类]>` / `@<分类> --yes`      | 软删除一条；`@分类` 删除该分类下所有未删除笔记，缺 `--yes` 是用法错误（退出 2）。不做 CLI 恢复，恢复与彻底删除仍在网页                                                                                                                                                              |
 | `note show [<id>] [参数]`                       | 渲染一条笔记（`internal/markdown` → glamour）并把库里的原始 Markdown 复制到剪贴板（仅 stdout 是终端时复制，失败只提示）；省略 id 时进与 `note list` 同一个选择器（要求 stdin/stdout 都是终端）；真终端打印三行头部，非终端无头部且默认 `notty`（无 ANSI）；加密笔记打印提示并退出 4 |
-| `note web [参数]`                               | 前台启动 Web 服务，唯一会启动前端页面的基线命令（日志进终端，不建日志文件）                                                                                                                                                                                                         |
-| `note web start [参数]`                         | 后台启动；已在运行则打印地址后退出 0                                                                                                                                                                                                                                                |
+| `note web [参数]`                               | 前台启动 Web 服务，唯一会启动前端页面的基线命令（日志进终端，不建日志文件）；配置端口被占时顺延 8080-8090 第一个空闲端口                                                                                                                                                            |
+| `note web start [参数]`                         | 后台启动；已在运行则打印地址后退出 0；配置端口被占时顺延 8080-8090 第一个空闲端口（实际地址进 `note.json`）                                                                                                                                                                         |
 | `note web stop [参数]`                          | 请求后台实例优雅停止；未运行则提示并退出 0                                                                                                                                                                                                                                          |
 | `note web status [参数]`                        | 输出运行情况；运行中 0 / 进程在但不响应 1 / 未运行 3                                                                                                                                                                                                                                |
 | `note info [参数]`                              | 输出软件与运行信息（见 8.6 同源口径）后退出；数据库文件已存在时才打开，不产生新文件                                                                                                                                                                                                 |
@@ -364,7 +364,7 @@ ai:
 - 相对路径基于进程工作目录解析。
 - 未启用 `allow_remote` 时，`addr` 必须是回环地址；否则拒绝启动。
 - 启动日志记录最终生效的监听地址、数据库路径与 `allow_remote`，不打印其他配置内容。
-- 监听成功后另向 stdout 打印可直接点击的访问地址（`http://host:port`，IPv6 一律加方括号），每地址一行；结构化 slog 字段与格式不变。地址由 `internal/config` 的 `StartupURLs(请求地址, listener 实际地址)` 推导：家族取请求 host（`0.0.0.0` 枚举本机非回环 IPv4，`::` 枚举 IPv6），端口取 listener 实际端口（兼容 `:0`）；枚举跳过回环与链路本地地址并去重排序，结果为空时回退回环地址。Windows 对 `0.0.0.0` 监听会建立双栈 socket 并把 `Addr()` 汇报成 `[::]`，家族因此不能取自 listener 地址。监听失败时错误信息回带尝试的地址。
+- 监听成功后另向 stdout 打印可直接点击的访问地址（`http://host:port`，IPv6 一律加方括号），每地址一行；结构化 slog 字段与格式不变。地址由 `internal/config` 的 `StartupURLs(请求地址, listener 实际地址)` 推导：家族取请求 host（`0.0.0.0` 枚举本机非回环 IPv4，`::` 枚举 IPv6），端口取 listener 实际端口（兼容 `:0`）；枚举跳过回环与链路本地地址并去重排序，结果为空时回退回环地址。Windows 对 `0.0.0.0` 监听会建立双栈 socket 并把 `Addr()` 汇报成 `[::]`，家族因此不能取自 listener 地址。监听失败时错误信息回带尝试的地址。配置端口被占用（EADDRINUSE）时自动顺延（v1.17）：前台与后台子进程共用 `cmd/note` 的 `listenWeb`，在同一主机上依次尝试 8080-8090，命中第一个可用端口即监听，实际端口照常进打印地址与 `note.json` 的 `addr`（`stop` / `status` 不用改）；全部被占用时返回带范围说明的错误，后台 `start` 通过日志尾 20 行回显。
 - 日志与状态文件位置（v1.6）：纯函数 `daemon.StatePath(dbPath) = dir(dbPath)/note.json`、`daemon.LogPath(dbPath) = dir(dbPath)/note.log`；不读环境变量、不引入新配置项。`note info` 与 `note web status` 都从同一个纯函数推导，不会不一致。
 - 新建笔记骨架位置（v1.7）：纯函数 `template.Path(configPath) = dir(configPath)/note-example.md`，与 `note.yaml` 同目录，不读环境变量、不引入新配置项；`note web` 启动时（前台与后台子进程共用 `serve`）只在文件缺失时写入 `go:embed` 的内置默认骨架，**已存在的文件绝不覆盖**，配置目录不可写只记 `slog.Warn`、不影响启动；写入走临时文件 + rename，权限 `0644`（内容不含正文与密码，配置目录本身是 `0700`）。`GET/PUT /api/template` 返回的 `path` 与 `/api/info` 的 `db_path` 属同一尺度的路径信息公开。
 - 数据目录不存在时自动创建，权限 `0700`。
@@ -1667,7 +1667,7 @@ note -c /path/note.yaml web             # 全局 -c 指定配置文件
 - 远程绑定必须显式 `note web --allow-remote`（或 `--remote`），且应置于 TLS + 认证反向代理之后；MVP 不提供这些能力。
 - 管道/脚本环境（stdin 非终端）运行裸 `note` 不会进入菜单，直接打印帮助并退出；子命令与参数错误退出码 2，服务错误退出码 1。
 - 从 v1.5 之前的默认位置迁移：旧配置在 `./config/note.yaml`、旧数据在 `./data/notes.db`，用 `note web -c ./config/note.yaml --db ./data/notes.db` 继续使用原文件，或把两个文件拷到 4.2 表中的用户目录位置。
-- 后台模式（v1.6）：`start` 成功后终端可以关。日志追加写 `note.log`，不轮转，需要时自行清理（删除运行中的日志文件会让写入继续落到旧 inode，建议先 `stop`）。`note.json` 只是运行期凭据（pid + 地址 + 令牌），可安全删除；残留文件会在下一次 `start` / `status` 被识别并清理。`start` 失败时打印 `note.log` 最后 20 行，端口占用这类启动期错误能直接看到原因。
+- 后台模式（v1.6）：`start` 成功后终端可以关。日志追加写 `note.log`，不轮转，需要时自行清理（删除运行中的日志文件会让写入继续落到旧 inode，建议先 `stop`）。`note.json` 只是运行期凭据（pid + 地址 + 令牌），可安全删除；残留文件会在下一次 `start` / `status` 被识别并清理。`start` 失败时打印 `note.log` 最后 20 行帮助定位。配置端口被占用不再是失败（v1.17）：`serve` 的 `listenWeb` 自动顺延到 8080-8090 里第一个可用端口（前台 `note web` 同样生效），`note.json` 的 `addr` 与打印的访问地址都是实际端口；只有 8080-8090 全部被占用时才退出 1，日志尾能看到「备用端口 8080-8090 也全部被占用」。
 - 同一目录只有一个状态文件，因此同一个数据目录里不要用两个不同 `--db` 起两个后台实例；`start` / `stop` 会拒绝并提示。
 
 ### 14.2 备份

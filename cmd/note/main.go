@@ -212,9 +212,11 @@ func serve(cfg config.Config) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	ln, err := net.Listen("tcp", cfg.Addr)
+	// 配置端口被占用时自动顺延到 8080-8090 里第一个可用端口（见 listen.go）；
+	// 状态文件与打印的访问地址都取 ln.Addr() 的实际端口，stop/status 无需改动。
+	ln, err := listenWeb(cfg.Addr)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
+		return err
 	}
 	defer ln.Close()
 
@@ -240,7 +242,7 @@ func serve(cfg config.Config) error {
 	go func() {
 		serverErr <- server.Serve(ln)
 	}()
-	slog.Info("listening", "addr", cfg.Addr)
+	slog.Info("listening", "addr", ln.Addr().String())
 	fmt.Println("note 已启动，在浏览器打开：")
 	for _, url := range config.StartupURLs(cfg.Addr, ln.Addr().String()) {
 		fmt.Println(url)

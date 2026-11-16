@@ -32,6 +32,7 @@
     "Noto Serif SC", "Source Han Serif SC", "Source Han Serif CN", "Songti SC",
     "SimSun", Georgia, serif;
   --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  /* 热力图格子的最小尺寸：宽屏下 1fr 会把富余宽度分给格子让它变大，窄屏保持这个最小值由容器横向滚动 */
   --cell: 11px;
   /* 内容栏宽度随视口自适应：窄屏保持原来的 880px 手感，
      宽屏（PC）爬到 1280px，编辑页两栏与列表右侧分类树都不再被压瘪 */
@@ -540,9 +541,12 @@ input {
 
 .heat-field {
   display: grid;
-  grid-template-columns: 26px repeat(53, calc(var(--cell) + 3px));
-  grid-template-rows: 18px repeat(7, calc(var(--cell) + 3px));
-  width: max-content;
+  /* 列：1fr 平分富余宽度，格子随容器变大（最小 --cell，窄屏列宽合计仍超出容器，由 .heatmap 横向滚动）；
+     行：auto 跟随格子实际高度，aspect-ratio 让格子始终保持正方形 */
+  grid-template-columns: 26px repeat(53, minmax(var(--cell), 1fr));
+  grid-template-rows: 18px repeat(7, auto);
+  gap: 3px;
+  width: 100%;
 }
 
 .heat-weekday {
@@ -556,7 +560,7 @@ input {
 .heat-month {
   grid-row: 1;
   align-self: end;
-  /* 网格列只有 --cell 宽，不换行并撑出内容宽度，否则月份文本会被裁掉 */
+  /* 列宽可能比月份文本窄（尤其窄屏 --cell 处于最小值时），不换行并撑出内容宽度，否则月份文本会被裁掉 */
   justify-self: start;
   width: max-content;
   white-space: nowrap;
@@ -571,6 +575,14 @@ input {
   border-radius: 2px;
   background: var(--heat-0);
   place-self: center;
+}
+
+/* 热力图主体格子不固定尺寸：填满所在列（列宽由 1fr 自适应），aspect-ratio 保持正方形，
+   行高随之自动增长；图例里的格子仍走上面的固定尺寸 */
+.heat-field .heat-cell {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
 }
 
 .heat-cell[data-level="1"] {

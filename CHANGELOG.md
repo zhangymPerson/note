@@ -8,6 +8,20 @@
 
 ### Added
 
+- 概览页「近一年使用频率」热力图宽屏自适应（实现过程与关键逻辑）：
+  - **问题**：`.heat-field` 是 26px 周标列 + 53 个固定宽度周列、`width: max-content`，总宽恒为 768px（11px 格子）。页面 `--page-max` 加宽到 `clamp(880px, 84vw, 1280px)` 后卡片比热力图宽，右缘空出一大块，右侧对齐的图例与网格脱节。
+  - **改动**：`web/src/app.css` 的 `.heat-field` 改 `width: 100%` + `justify-content: space-between`——多余宽度平均分到 53 个周列之间（格子尺寸不变，列间空隙变大），首个周标列贴左缘、最后一周贴右缘，图例/月份标签跟随；窄屏下列宽合计仍超容器，`.heatmap` 横向滚动与 640px 以下 `--cell: 10px` 的既有行为不变。
+  - **验证**：`just test`（Go 全包 + 前端 183 项）与 `just check`（vet + svelte-check 0 errors/0 warnings）通过；`just build` + `just install-mac` 后服务重启，`note web status` 正常（8080 被占用顺延到 8081）。
+
+- `note web` / `note web start` 端口被占用时自动顺延 8080-8090（实现过程与关键逻辑）：
+  - **需求**：本服务默认监听 `127.0.0.1:8080`，8080 被其它进程占用时 `note web`（前台）与 `note web start`（后台）都只能报错退出。改为：先按配置地址监听，地址被占用（EADDRINUSE）时在同一主机上从 8080 顺延到 8090 选第一个可用端口；全部被占用才退出并提示「备用端口 8080-8090 也全部被占用」。「先判断是否已启动、已启动则提示」的判定原样保留在 `runWebStart`（重复 `start` 打印「已在后台运行」与地址、退出 0）。
+  - **`cmd/note/listen.go`**（新建）：`listenWeb(addr)` 先试 `net.Listen("tcp", addr)`，成功即用；失败且 `isAddrInUse` 为真时按 `fallbackPortStart..fallbackPortEnd`（8080-8090，含两端）逐端口重试，跳过与配置相同的端口，命中即 `slog.Warn("configured port in use, falling back")` 并返回；全部失败返回带范围说明的错误。`listenWebRange(addr, start, end)` 是范围可注入的实现，生产只经 `listenWeb` 调用，测试用高位端口保证确定性。
+  - **平台判定**：`cmd/note/listen_unix.go`（`!windows`）用 `errors.Is(err, syscall.EADDRINUSE)`；`cmd/note/listen_windows.go` 用 `syscall.Errno(10048)`（WSAEADDRINUSE，Go 的 `syscall` 没导出这个名字，zerrors 里的 `EADDRINUSE` 是自造的 APPLICATION_ERROR 值不会相等），`GOOS=windows go build` 验证可编译。
+  - **`cmd/note/main.go`**：`serve`（前台 `note web` 与后台子进程共用）的 `net.Listen` 换成 `listenWeb(cfg.Addr)`，`slog.Info("listening")` 改用 `ln.Addr().String()` 打实际端口。顺延后 `note.json` 的 `addr`、打印的访问地址、`stop` / `status` 的探测目标都自动跟随实际端口（状态文件与 URL 本来就从 `ln.Addr()` 推导），daemon 层零改动。
+  - **文档**：PRD 升 v1.17（修订记录、`note web` / `note web start` 命令表、AC-51 改写、新增 AC-64 与 M16）、TECH_DESIGN 监听与后台运行两段 + 命令表同步。
+  - **测试**：新增 `cmd/note/listen_test.go` 三项——占用配置端口后顺延到范围内首个空闲端口、备用范围全占返回「全部被占用」、非占用错误原样回带地址不触发顺延；真实二进制冒烟——8080 被 dagu 占用时 `start` 落到 8081（访问地址与实际端口一致、`status` / `stop` 正常、重复 `start` 提示已在运行）、8080-8090 全占满时退出 1 且日志尾可见「备用端口 8080-8090 也全部被占用」、前台 `note web` 同样顺延。
+  - **验证**：`go test ./...`（Go 410 项）、`go vet ./...`、`npm --prefix web run check`（svelte-check 0 errors / 0 warnings）、`npm --prefix web test`（前端 183 项）均通过。
+
 - 新增 `just install-mac` / `just install-linux`，把单二进制安装到本机（实现过程与关键逻辑）：
   - **需求**：`install-win` 只覆盖 Windows；macOS / Linux 用户要装新版本得自己手动关停后台 `note web`、拷二进制、再拉起。两个任务统一为「先判断旧版本是否存在，存在则先关停 → 替换 → 启动」。
   - **`justfile`**：新增 `[macos] install-mac` / `[linux] install-linux`（与 `[windows] install-win` 同构，平台属性保证只在对应系统上可用），都依赖 `build` 并调用同一份脚本 `bash scripts/install.sh macos|linux`。
@@ -26,6 +40,11 @@
   - **验证**：`just test`（Go 410 项、前端 183 项）、`just check`（`go vet` + svelte-check 0 errors / 0 warnings）、`npm --prefix web run build` 均通过。
 
 ### Changed
+
+- 热力图格子尺寸改为随容器自适应，不再固定（实现过程与关键逻辑）：
+  - **问题**：上一版宽屏自适应只把富余宽度分到列间空隙（`justify-content: space-between`，格子恒 11px），宽屏下格子还是小方块、列间空隙反而越来越大，图例与网格整体显松散。
+  - **改动**：`web/src/app.css` 的 `.heat-field` 列改为 `26px repeat(53, minmax(var(--cell), 1fr))`——`1fr` 平分容器富余宽度给每个周列，格子随容器变大；行从 `calc(var(--cell) + 3px)` 改成 `auto`，`gap: 3px` 显式化；主体格子新增 `.heat-field .heat-cell` 覆盖：`width: 100%; height: auto; aspect-ratio: 1`，宽屏变大时保持正方形、行高自动跟随，图例里的 `.heat-cell`（`width/height: var(--cell)`）不受影响仍是固定小方块。窄屏行为不变：列宽合计仍超容器，由 `.heatmap` 横向滚动，`≤640px` 的 `--cell: 10px` 照旧生效。
+  - **验证**：`just test`（Go 全包 + 前端 183 项）、`just check`（vet + svelte-check 0 errors / 0 warnings）均通过。
 
 - 构建时间改用构建机本地时区（实现过程与关键逻辑）：
   - **问题**：`justfile` 的 `ldflags` 用 `[DateTime]::UtcNow` / `date -u` 写死 UTC，`note info` 与信息页的「构建时间」显示成 `2026-11-03T09:29:33Z`——在东八区对着自己刚打的包看，像是九小时前/昨天打的。
