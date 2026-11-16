@@ -31,6 +31,10 @@ var (
 	ErrEncryptedImmutable = errors.New("encrypted note cannot be converted back to plaintext")
 	// ErrNotEncrypted 表示对明文笔记调用只适用于加密笔记的操作。
 	ErrNotEncrypted = errors.New("note is not encrypted")
+	// ErrNoteEncrypted 表示操作需要明文正文但笔记是加密的（服务端读不到正文）。
+	ErrNoteEncrypted = errors.New("note is encrypted")
+	// ErrNoteInTrash 表示操作要求笔记在库中可见，但它已在回收站里。
+	ErrNoteInTrash = errors.New("note is in trash")
 	// ErrInvalidNote 表示明文/密文结构不合法。
 	ErrInvalidNote = errors.New("invalid note payload")
 )
