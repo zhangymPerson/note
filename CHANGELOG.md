@@ -39,6 +39,17 @@
   - **测试**：`internal/ai` 新增 `TestBuildPromptWithCustom`（空额外要求与 `BuildPrompt` 完全一致、非空追加在后面且重申约束、变量不二次展开）、`TestValidateCustomPrompt`、`TestOptimizeSendsCustomPrompt`（上游收到的提示词含额外要求、正文只出现一次）；`internal/web` 新增 `TestOptimizeAPICustomPrompt`（透传且响应不回显）与 `TestOptimizeAPICustomPromptTooLong`（400 字段级，且不发请求）；`ai.test.ts` 新增载荷用例（trim 后带上、空白不带）；`NoteEditorView.test.ts` 新增占位文字与发调用例，并把两条旧断言补上第三个参数。
   - **验证**：`just test`（Go 410 项、前端 183 项）、`just check`（`go vet` + svelte-check 0 errors / 0 warnings）、`npm --prefix web run build` 均通过。
 
+- 速记快速入口：`note add <正文>` / 网页首页速记卡片 / `POST /api/quick` 与 `POST /api/ai/quick`（实现过程与关键逻辑）：
+  - **需求**：想随手记一条不需要标题的笔记，现在得走完整的向导/编辑页。目标是「正文 → 落库」两步走完：网页首页查询区下方一块速记卡片（只有一个正文框），点「速记」直接落库、标题自动 `速记-<UTC 秒级>`；点「AI 速记」由服务端代发整理并生成概括标题，先预览确认后才落库。CLI 同步：`note add <正文>` 非交互直接落速记（可 `echo … | xargs note add` 脚本化），`note add <正文> --ai` 进 bubbletea 单屏预览（Enter 保存 / Esc 放弃退出 130）；无参 `note add` 三步向导保持不变（向后兼容）。
+  - **`internal/store/quick.go`**（新建）：`CreateQuickNote(ctx, content, title)`——`title` 空 → 自动 `速记-<UTC 秒级>`（`nowUTC()`），同秒撞名（`ErrNoteTitleExists` / `ErrNoteTitleInTrash`）自动顺延下一秒重试 ≤5 次，永不覆盖已有笔记；`title` 非空 → 单次创建、撞名原样返回。固定落 `QuickCategoryID`（「速记」`id=2`），正文/标题长度复用 `maxContentRunes` / `maxTitleRunes`。
+  - **`internal/ai/quick.go`**（新建）：`QuickNote(ctx, req)` 用内建 JSON 提示词常量 `defaultQuickPrompt` 让模型输出 `{"title","content"}`，复用抽出来的 `chat(ctx, model, prompt)` 共用管线（`client.go` 里 `Optimize` 与 `QuickNote` 共用）；`QuickNoteResult{Content, Title, Model}`；标题 ≤60 / 正文 ≤2000 码点，超限**不截断**、返回 `QuickResultError{Reason}` 明确报错（围栏内 JSON 解析失败、字段缺失、超限、空结果各有原因）；提示词不是 `ai.prompt` 模板变体，不新增 AI 配置项。
+  - **`internal/web/handlers_quick.go`**（新建）：`POST /api/quick`（`{content, title?}` → 201，正文空/超 2000 码点 400，撞名 409 `title_conflict`/`title_in_trash`）与 `POST /api/ai/quick`（`{content}` → `{title, content, model}`，只回预览**不落库**；未配置 409 `ai_not_configured` 点名缺项、解析/上游失败 502 `ai_bad_response` 带 Reason、超时 504）。两条路由注册在 `server.go`，走既有中间件链（CSRF 双提交、`Cache-Control: no-store`），日志只记 host/model/错误摘要，不记正文、AI 标题与密钥。
+  - **`internal/cli/quick_add.go`**（新建）+ `cmd/note/add.go`：`RunAddQuick(ctx, deps, content, ai)`——非 AI 直接 `CreateQuick(ctx, content, "")` 落库（stdout 干净、提示写 stderr、管道可用）；AI 路径先 `cli.IsTerminal(os.Stdin)` 判定（管道退出 1 不挂起），`tea.NewProgram` 单屏两阶段：工作步（「正在用 <模型> 整理…（正文会发送到 <主机>）」，状态由 `View()` 从字段推导——bubbletea `Init()` 是值接收者，改不到模型上）→ 预览步（标题只读、Markdown 正文、模型名，「Enter 保存 · Esc 放弃 · Ctrl+O 重新整理」），Enter 用预览锁定的 content/title 落库，Esc 放弃退出 130。`parse.go` 新增 `AddOptions{Content, AI}` 与 `parseAddArgs`（正文 ≤2000 码点、`--ai` 需正文否则退出 2、空/全空白正文报错、配置参数保留在 `opts.Args` 交给 `config.Load`）。
+  - **网页**：`lib/notes.ts` 的 `createQuickNote(content, title?)`（title trim 后全空白等同不传）、`lib/ai.ts` 的 `aiQuickNote(content)`；`HomeView.svelte` 查询区下方速记卡片（正文框 + 「速记」/「AI 速记」两按钮），AI 预览面板标题可编辑、Markdown 正文、模型名，「保存」用锁定结果落库、「返回修改」清预览保留正文，未配 AI 时按钮可见但提示补齐三项、绝不静默落库。
+  - **文档**：PRD 升 v1.18（修订记录、FR-1.15/FR-1.16、路由表 +2 行、AC-54 改写、新增 AC-65 ~ AC-67、里程碑 M17）、TECH_DESIGN（1.2 新增第 12 条安全不变量、目录树 +4 文件、8.3 端点表 +2 行）。
+  - **测试**：`internal/store` 5 项（自动标题、撞秒顺延、非空单次、撞名返回、长度校验）、`internal/ai` 5 项（载荷、解析、超限、空结果、围栏）、`internal/web` 10 项（201/200、CSRF 403、空正文 400、未配置 409、上游失败、no-store、不落库）、`internal/cli` 6 项（直落、空正文、未配置提示、预览 Enter 保存/Esc 放弃、失败重试）+ parse/usage 改写、前端 4 项（createQuickNote 与 aiQuickNote）+ HomeView 5 项。
+  - **验证**：`just test`（Go 全包 + 前端 192 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过；真实二进制冒烟——管道 `add` 退出 0、向导无终端退出 1、`--ai` 缺正文退出 2、假上游下网页 201/预览/403/400、`note.log` 与响应体搜不到 `sk-test` 与正文、同秒两次速记标题差 1 秒（顺延生效）。
+
 ### Changed
 
 - 热力图格子尺寸改为随容器自适应，不再固定（实现过程与关键逻辑）：

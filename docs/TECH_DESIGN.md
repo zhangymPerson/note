@@ -34,6 +34,7 @@
 9. AI 配置里的 `api_key` 是唯一以明文存放在磁盘上的凭据：它只存在 `note.yaml`（文件 `0600`、目录 `0700`），任何 API 响应（含 `GET /api/ai-config` 与 `/api/info`）、网页与日志都只能看到掩码；`GET /api/ai-config` 与其它 API 一样 `Cache-Control: no-store`。
 10. 主密码可修改，但仍不可找回。「旧密码是否正确」只由浏览器试解已有密文的 GCM 认证标签判定，服务端永远不具备验证口令的能力；改密全程密码与派生密钥都不落盘、不进任何浏览器存储，`PUT /api/notes/{id}/cipher` 的密文请求体也不入日志（`accessLog` 从不记 body）。
 11. **唯一的对外网络出口是 `internal/ai`**：只有用户显式点「用 AI 优化格式」或按 `Ctrl+O` 时才由它向 `ai.base_url` 发起请求，正文只在这一刻外发；服务端不后台轮询、不自动重试、不换模型。日志只记 host / model / 状态与错误摘要，不记正文、渲染后的提示词与密钥；含正文的优化响应（`POST /api/ai/optimize`）与其它 API 一样 `Cache-Control: no-store`。
+12. **速记（quick note）与其它笔记同一条安全线**：`POST /api/quick` 与 `POST /api/ai/quick` 都走 CSRF 双提交、响应 `Cache-Control: no-store`；`POST /api/ai/quick` 只回预览**不落库**，落库只能走 `POST /api/quick`（用户确认后由前端带着 AI 结果调用）；速记提示词是 `internal/ai` 内建的 JSON 常量（非 `ai.prompt` 模板变体），AI 返回的标题/正文超限（60/2000 码点）一律不截断、明确报错，日志不记正文、AI 标题与密钥。
 
 ### 1.3 非目标
 
@@ -114,11 +115,13 @@ note/
 │   └── 0007_quick_category_and_unique_title.sql # 「速记」分类 + 存量重名清理 + 两条标题唯一索引
 ├── internal/
 │   ├── build/info.go             # 版本/git hash/构建日期变量（ldflags 注入）+ vcs 回落
-│   ├── ai/                       # 唯一对外网络出口：OpenAI 兼容的 optimize 客户端（模板渲染、剥围栏、超时与错误映射）
-│   │   └── client.go             # Client/NewClient/Configured/Missing/DefaultModel/Host/Optimize、BuildPrompt、StripFence
+│   ├── ai/                       # 唯一对外网络出口：OpenAI 兼容客户端（模板渲染、剥围栏、超时与错误映射）
+│   │   ├── client.go             # Client/NewClient/Configured/Missing/DefaultModel/Host/Optimize、BuildPrompt、StripFence、chat 共用管线
+│   │   └── quick.go              # QuickNote：速记内建提示词（JSON 常量，非 ai.prompt 变体）、标题+正文解析、超限不截断只报错
 │   ├── cli/                      # 命令行界面：解析、note add 向导（含 Ctrl+O AI 优化预览）、note list/show 渲染、共用选择器、复制原文、信息/状态渲染、帮助
 │   │   ├── parse.go              # 子命令与全局 -c 解析、web 动作（start/stop/status）、list/show 开关、-h 预扫描
 │   │   ├── add.go                # note add 三步向导 + AI 优化预览屏（stepOptimized；Ctrl+O 调用、Enter 采用、Esc 保留原文）
+│   │   ├── quick_add.go          # note add <正文> 快速记法：RunAddQuick（非 AI 直接落库；--ai 单屏预览 Enter 保存 / Esc 放弃 130）
 │   │   ├── pick.go               # 共用选择器：bubbles/list + gum filter 键位语义（note list 与分类步都用）
 │   │   ├── list.go               # note list：交互列表（标题/分类 fuzzy + 正文子串）、非交互纯文本、行渲染与命中片段
 │   │   ├── show.go               # note show：渲染参数解析、头部拼接、Source 原文（供复制）、加密笔记的拒绝与退出码 4
@@ -149,6 +152,7 @@ note/
 │   ├── store/
 │   │   ├── store.go              # 打开、PRAGMA、迁移、关闭 checkpoint、SchemaVersion
 │   │   ├── note.go               # 笔记 CRUD、搜索、加密清单、密文替换、删除后 checkpoint
+│   │   ├── quick.go              # CreateQuickNote：速记自动标题（速记-<UTC 秒级>，同秒撞名顺延 ≤5 次）、落内置「速记」分类
 │   │   ├── category.go           # 分类 CRUD、默认分类与占用守卫
 │   │   ├── master.go             # 主密码单行（盐 + 助记问题）与问题单独修改
 │   │   └── activity.go           # 搜索记录与统计
@@ -167,6 +171,7 @@ note/
 │       ├── handlers_template.go  # GET/PUT /api/template（新建笔记骨架）
 │       ├── handlers_ai.go        # GET/PUT /api/ai-config（密钥只回掩码，写入原子；models 逗号串 ↔ YAML 序列）
 │       ├── handlers_optimize.go  # POST /api/ai/optimize（服务端代发，结果只回预览；错误映射 400/409/502/504）
+│       ├── handlers_quick.go     # POST /api/quick（201 落速记）与 POST /api/ai/quick（只回预览不落库；错误映射 400/409/502/504）
 │       ├── handlers_stats.go
 │       ├── handlers_csrf.go
 │       ├── errors.go
@@ -1006,32 +1011,34 @@ web/src/lib/session-key.ts
 
 ### 8.3 端点
 
-| 方法   | 路径                            | 请求                                        | 成功响应                                                                                                                            |
-| ------ | ------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/csrf`                     | 无                                          | 200 `{"token":"…"}` + Set-Cookie                                                                                                    |
-| GET    | `/api/settings`                 | 无                                          | 200 设置                                                                                                                            |
-| PUT    | `/api/settings/name`            | `{"name":"…"}`                              | 200 设置                                                                                                                            |
-| GET    | `/api/template`                 | 无                                          | 200 `{"content","path","source","default_content"}`；`source` 为 `file` 或 `default`（文件缺失/不可读时回退内置默认）               |
-| PUT    | `/api/template`                 | `{"content":"…"}`                           | 200 同上（`source` 恒为 `file`）；超过 2000 码点 400 `validation_failed`                                                            |
-| GET    | `/api/notes?q=&category=&page=` | 查询参数                                    | 200 分页                                                                                                                            |
-| POST   | `/api/notes`                    | 笔记载荷                                    | 201 全量笔记                                                                                                                        |
-| GET    | `/api/notes/{id}`               | 无                                          | 200 全量笔记                                                                                                                        |
-| PUT    | `/api/notes/{id}`               | 笔记载荷                                    | 200 全量笔记                                                                                                                        |
-| DELETE | `/api/notes/{id}`               | 无                                          | 204                                                                                                                                 |
-| GET    | `/api/notes/encrypted`          | 无                                          | 200 `{"notes":[{"id","cipher_b64","kdf_params"}]}`，空清单为 `[]`；静态段优先于 `{id}` 通配                                         |
-| PUT    | `/api/notes/{id}/cipher`        | `{"cipher_b64":"…","kdf_params":"…"}`       | 200 全量笔记；只换密文，`title/content/category_id/rev/updated_at` 逐字不变                                                         |
-| GET    | `/api/categories`               | 无                                          | 200 分类数组                                                                                                                        |
-| POST   | `/api/categories`               | `{"name":"…"}`                              | 201 分类                                                                                                                            |
-| PUT    | `/api/categories/{id}`          | `{"name":"…"}`                              | 200 分类数组                                                                                                                        |
-| DELETE | `/api/categories/{id}`          | 无                                          | 204                                                                                                                                 |
-| GET    | `/api/master-password`          | 无                                          | 200 主密码配置                                                                                                                      |
-| POST   | `/api/master-password`          | `{"salt_b64":"…","question":"…"}`           | 201 `{"configured":true,"question":"…"}`；仅首次配置                                                                                |
-| PUT    | `/api/master-password/question` | `{"question":"…"}`                          | 200 主密码配置（盐不变）                                                                                                            |
-| GET    | `/api/info`                     | 无                                          | 200 运行信息与构建版本（见 8.6）                                                                                                    |
-| GET    | `/api/ai-config`                | 无                                          | 200 `{"base_url","models","prompt","default_prompt","prompt_variable","api_key_set","api_key_masked","path"}`（`models` 空为 `[]`） |
-| PUT    | `/api/ai-config`                | `{"base_url","models","prompt","api_key"?}` | 200 同上；`api_key` 省略=沿用、空串=清除                                                                                            |
-| POST   | `/api/ai/optimize`              | `{"content","model"?,"custom_prompt"?}`     | 200 `{"content","model"}`（已剥围栏）；`custom_prompt` 上限 500 码点，超长 400 字段级                                               |
-| GET    | `/api/stats?days=`              | 查询参数（默认 370 天）                     | 200 统计（见 8.2；事件口径覆盖查询与笔记/分类读写）                                                                                 |
+| 方法   | 路径                            | 请求                                        | 成功响应                                                                                                                                                                                                     |
+| ------ | ------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/api/csrf`                     | 无                                          | 200 `{"token":"…"}` + Set-Cookie                                                                                                                                                                             |
+| GET    | `/api/settings`                 | 无                                          | 200 设置                                                                                                                                                                                                     |
+| PUT    | `/api/settings/name`            | `{"name":"…"}`                              | 200 设置                                                                                                                                                                                                     |
+| GET    | `/api/template`                 | 无                                          | 200 `{"content","path","source","default_content"}`；`source` 为 `file` 或 `default`（文件缺失/不可读时回退内置默认）                                                                                        |
+| PUT    | `/api/template`                 | `{"content":"…"}`                           | 200 同上（`source` 恒为 `file`）；超过 2000 码点 400 `validation_failed`                                                                                                                                     |
+| GET    | `/api/notes?q=&category=&page=` | 查询参数                                    | 200 分页                                                                                                                                                                                                     |
+| POST   | `/api/notes`                    | 笔记载荷                                    | 201 全量笔记                                                                                                                                                                                                 |
+| GET    | `/api/notes/{id}`               | 无                                          | 200 全量笔记                                                                                                                                                                                                 |
+| PUT    | `/api/notes/{id}`               | 笔记载荷                                    | 200 全量笔记                                                                                                                                                                                                 |
+| DELETE | `/api/notes/{id}`               | 无                                          | 204                                                                                                                                                                                                          |
+| GET    | `/api/notes/encrypted`          | 无                                          | 200 `{"notes":[{"id","cipher_b64","kdf_params"}]}`，空清单为 `[]`；静态段优先于 `{id}` 通配                                                                                                                  |
+| PUT    | `/api/notes/{id}/cipher`        | `{"cipher_b64":"…","kdf_params":"…"}`       | 200 全量笔记；只换密文，`title/content/category_id/rev/updated_at` 逐字不变                                                                                                                                  |
+| GET    | `/api/categories`               | 无                                          | 200 分类数组                                                                                                                                                                                                 |
+| POST   | `/api/categories`               | `{"name":"…"}`                              | 201 分类                                                                                                                                                                                                     |
+| PUT    | `/api/categories/{id}`          | `{"name":"…"}`                              | 200 分类数组                                                                                                                                                                                                 |
+| DELETE | `/api/categories/{id}`          | 无                                          | 204                                                                                                                                                                                                          |
+| GET    | `/api/master-password`          | 无                                          | 200 主密码配置                                                                                                                                                                                               |
+| POST   | `/api/master-password`          | `{"salt_b64":"…","question":"…"}`           | 201 `{"configured":true,"question":"…"}`；仅首次配置                                                                                                                                                         |
+| PUT    | `/api/master-password/question` | `{"question":"…"}`                          | 200 主密码配置（盐不变）                                                                                                                                                                                     |
+| GET    | `/api/info`                     | 无                                          | 200 运行信息与构建版本（见 8.6）                                                                                                                                                                             |
+| GET    | `/api/ai-config`                | 无                                          | 200 `{"base_url","models","prompt","default_prompt","prompt_variable","api_key_set","api_key_masked","path"}`（`models` 空为 `[]`）                                                                          |
+| PUT    | `/api/ai-config`                | `{"base_url","models","prompt","api_key"?}` | 200 同上；`api_key` 省略=沿用、空串=清除                                                                                                                                                                     |
+| POST   | `/api/ai/optimize`              | `{"content","model"?,"custom_prompt"?}`     | 200 `{"content","model"}`（已剥围栏）；`custom_prompt` 上限 500 码点，超长 400 字段级                                                                                                                        |
+| POST   | `/api/quick`                    | `{"content","title"?}`                      | 201 笔记；`title` 省略/全空白 → 自动 `速记-<UTC 秒级>`（同秒撞名顺延下一秒重试 ≤5 次）；非空单次创建、撞名 409 `title_conflict`/`title_in_trash`；正文空/超 2000 码点 400                                    |
+| POST   | `/api/ai/quick`                 | `{"content"}`                               | 200 `{"title","content","model"}`（只回预览不落库）；正文空/超 2000 码点 400、未配置 409 `ai_not_configured`、解析/上游失败 502 `ai_bad_response`（带 Reason）、超时 504；标题 ≤60/正文 ≤2000 码点超限不截断 |
+| GET    | `/api/stats?days=`              | 查询参数（默认 370 天）                     | 200 统计（见 8.2；事件口径覆盖查询与笔记/分类读写）                                                                                                                                                          |
 
 没有 `/encrypt`、`/decrypt`、`/unlock`、`/lock` 这类端点：加解密在浏览器里完成，锁定是前端清内存密钥的本地动作。也没有口令校验端点——改密时的旧口令由浏览器试解已有密文来判定（6.9）。
 
