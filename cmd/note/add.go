@@ -13,9 +13,10 @@ import (
 	"note/internal/store"
 )
 
-// runAdd 跑 note add 向导：打开库、注入 store 能力、打印结果。
+// runAdd 跑 note add：带正文走快速记法（直接落速记，--ai 先预览确认），
+// 无参数走三步向导。打开库、注入 store 能力、打印结果。
 // 用户放弃（Esc/Ctrl+C）与缺终端都不是"失败"意义上的崩溃，用固定退出码表达。
-func runAdd(globalConfigPath string, args []string) error {
+func runAdd(globalConfigPath string, args []string, addOpts cli.AddOptions) error {
 	cfg, err := loadConfig(globalConfigPath, args)
 	if err != nil {
 		return err
@@ -26,6 +27,10 @@ func runAdd(globalConfigPath string, args []string) error {
 		return err
 	}
 	defer func() { _ = st.Close() }()
+
+	if addOpts.Content != "" {
+		return runAddQuick(cfg, st, addOpts)
+	}
 
 	ref, saved, err := cli.RunAdd(context.Background(), addDepsWithAI(addDeps(st), cfg))
 	if err != nil {
@@ -41,6 +46,52 @@ func runAdd(globalConfigPath string, args []string) error {
 	}
 
 	printAddedNote(ref, cfg)
+	return nil
+}
+
+// runAddQuick 执行快速记法：ai=false 直接落库，ai=true 进单屏预览确认。
+// AI 预览要终端；非 AI 的 echo … | xargs note add 管道不需要。
+func runAddQuick(cfg config.Config, st *store.Store, addOpts cli.AddOptions) error {
+	deps := cli.QuickAddDeps{
+		CreateQuick: func(ctx context.Context, content, title string) (cli.NoteRef, error) {
+			n, err := st.CreateQuickNote(ctx, content, title)
+			if err != nil {
+				return cli.NoteRef{}, err
+			}
+			return cli.NoteRef{ID: n.ID, Title: n.Title, CategoryName: n.CategoryName}, nil
+		},
+	}
+	if addOpts.AI {
+		if !cli.IsTerminal(os.Stdin) {
+			fmt.Fprintln(os.Stderr, cli.ErrNotTerminal)
+			return exitError(1)
+		}
+		client := ai.NewClient(cfg.AI)
+		deps.AIModel, deps.AIHost = client.DefaultModel(), client.Host()
+		if client.Configured() {
+			deps.QuickNote = func(ctx context.Context, content string) (cli.QuickNoteResult, error) {
+				res, err := client.QuickNote(ctx, ai.Request{Content: content})
+				if err != nil {
+					return cli.QuickNoteResult{}, err
+				}
+				return cli.QuickNoteResult{Title: res.Title, Content: res.Content, Model: res.Model}, nil
+			}
+		}
+	}
+
+	ref, saved, err := cli.RunAddQuick(context.Background(), deps, addOpts.Content, addOpts.AI)
+	if err != nil {
+		return err
+	}
+	if !saved {
+		fmt.Fprintln(os.Stderr, "已放弃，未新建笔记")
+		return exitError(130)
+	}
+
+	// 成功提示写 stderr：stdout 保持干净，脚本管道不被打扰。
+	fmt.Fprintf(os.Stderr, "已记入速记「%s」\n", ref.Title)
+	fmt.Fprintf(os.Stderr, "  ID    %s\n", ref.ID)
+	fmt.Fprintf(os.Stderr, "  链接  %s/notes/%s\n", baseURL(cfg.Addr), ref.ID)
 	return nil
 }
 

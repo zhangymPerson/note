@@ -77,7 +77,7 @@ func run(args []string) error {
 		return nil
 
 	case cli.CommandAdd:
-		return runAdd(opts.ConfigPath, opts.Args)
+		return runAdd(opts.ConfigPath, opts.Args, opts.Add)
 
 	case cli.CommandSet:
 		return runSet(opts.ConfigPath, opts.Args, opts.Set)
