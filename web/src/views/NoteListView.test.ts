@@ -169,7 +169,7 @@ describe("NoteListView", () => {
       id: "m1",
       title: "合并-2026-11-16 20:00:00",
       encrypted: false,
-      content: "摘要摘要二",
+      content: "摘要\n\n---\n\n摘要二",
       category_id: null,
       updated_at: "2026-11-16T12:00:00Z",
     });
@@ -252,7 +252,7 @@ describe("NoteListView", () => {
       id: "m1",
       title: "合并-2026-11-16 20:00:00",
       encrypted: false,
-      content: "摘要摘要二",
+      content: "摘要\n\n---\n\n摘要二",
       category_id: null,
       updated_at: "2026-11-16T12:00:00Z",
     });

@@ -13,8 +13,12 @@ import (
 // maxMergeNotes 单次合并最多接受的笔记条数（防病态请求）。
 const maxMergeNotes = 100
 
-// MergeNotes 按 ids 顺序把各明文笔记的正文直接拼接（不做去重/截断/格式化），
-// 落成一条「未分类」（category_id NULL）的新笔记；原文一行不写。
+// mergeSeparator 是合并正文的篇间分隔：空行 + Markdown 水平线 + 空行。
+// 前面必须有空行，否则 `---` 会被 CommonMark 解析成 setext 二级标题下划线。
+const mergeSeparator = "\n\n---\n\n"
+
+// MergeNotes 按 ids 顺序把各明文笔记的正文拼接（不做去重/截断/其它格式化），
+// 每两篇之间插入 mergeSeparator（空行 + ---），落成一条「未分类」（category_id NULL）的新笔记；原文一行不写。
 // title 为空 → 自动生成 合并-<本地时间>（同秒撞名顺延下一秒重试 ≤5 次）；
 // title 非空 → 单次创建，撞名原样返回。正文拼接后必须 ≤maxContentRunes 码点。
 //
@@ -67,7 +71,7 @@ func (s *Store) mergeNotesAt(ctx context.Context, ids []string, title string, no
 		contents = append(contents, *content)
 	}
 
-	joined := strings.Join(contents, "")
+	joined := strings.Join(contents, mergeSeparator)
 	if utf8.RuneCountInString(joined) > maxContentRunes {
 		return Note{}, fmt.Errorf("merged content exceeds %d characters: %w", maxContentRunes, ErrInvalidNote)
 	}

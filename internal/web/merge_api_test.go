@@ -40,8 +40,9 @@ func TestMergeAPISuccess(t *testing.T) {
 		t.Fatalf("expected no-store on merge response, got %q", got)
 	}
 	merged := decodeNote(t, rec)
-	if merged["content"] != "正文一正文二" {
-		t.Fatalf("content = %v, want 正文一正文二", merged["content"])
+	const wantContent = "正文一\n\n---\n\n正文二"
+	if merged["content"] != wantContent {
+		t.Fatalf("content = %v, want %q", merged["content"], wantContent)
 	}
 	if merged["category_id"] != nil {
 		t.Fatalf("merged note should be uncategorized, got %v", merged["category_id"])
@@ -80,8 +81,8 @@ func TestMergeAPIExplicitTitle(t *testing.T) {
 	if merged["category_id"] != nil {
 		t.Fatalf("merged note should be uncategorized, got %v", merged["category_id"])
 	}
-	if merged["content"] != "甲乙" {
-		t.Fatalf("content = %v, want 甲乙", merged["content"])
+	if merged["content"] != "甲\n\n---\n\n乙" {
+		t.Fatalf("content = %v, want %q", merged["content"], "甲\n\n---\n\n乙")
 	}
 }
 

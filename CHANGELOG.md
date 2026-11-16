@@ -9,12 +9,12 @@
 ### Added
 
 - 笔记合并：全部笔记列表把多条明文笔记拼成一条新笔记（实现过程与关键逻辑）：
-  - **需求**：几篇笔记经常要「拼到一起」，手工复制粘贴在长文里容易丢字。目标是列表里勾选 ≥2 条明文笔记 → 生成一条新笔记：正文按列表顺序直接拼接（不做去重/截断/格式化）、落「未分类」、不删除原笔记（原文不动）；默认标题 `合并-<本地时间>`，可手动指定。
-  - **`internal/store/merge.go`**（新建）：`MergeNotes(ctx, ids, title)`——只读原行、按 `ids` 顺序拼接明文正文，`CategoryID: nil` 落「未分类」，复用 `CreateNote` 单行插入（保 rev/timestamps/`note_create` 活动事件），原行永不写、不加事务；`maxMergeNotes = 100`；`note.go` 新增哨兵 `ErrNoteInTrash` / `ErrNoteEncrypted`。
+  - **需求**：几篇笔记经常要「拼到一起」，手工复制粘贴在长文里容易丢字。目标是列表里勾选 ≥2 条明文笔记 → 生成一条新笔记：正文按列表顺序拼接、每两篇之间以空行 + `---` 分隔（不做去重/截断/其它格式化）、落「未分类」、不删除原笔记（原文不动）；默认标题 `合并-<本地时间>`，可手动指定。
+  - **`internal/store/merge.go`**（新建）：`MergeNotes(ctx, ids, title)`——只读原行、按 `ids` 顺序拼接明文正文（`mergeSeparator = "\n\n---\n\n"` 篇间分隔：空行 + Markdown 水平线 + 空行，前面必须有空行否则 `---` 会被解析成 setext 标题下划线），`CategoryID: nil` 落「未分类」，复用 `CreateNote` 单行插入（保 rev/timestamps/`note_create` 活动事件），原行永不写、不加事务；`maxMergeNotes = 100`；`note.go` 新增哨兵 `ErrNoteInTrash` / `ErrNoteEncrypted`。
   - **`internal/store/quick.go`**：抽出 `createWithAutoTitleAt(ctx, prefix, content, categoryID, now)` 供速记/合并共用——`timeLayoutLocal = "2006-01-02 15:04:05"`（24 小时制、系统时区、无 T/Z 后缀；不调 `.UTC()`/`.Local()`，用注入时刻自身时区保证测试确定性），同秒撞名（`ErrNoteTitleExists` / `ErrNoteTitleInTrash`）顺延下一秒重试 ≤5 次，永不覆盖已有笔记。**速记自动标题同步从 `速记-<UTC 秒级>` 改为 `速记-<本地时间 YYYY-MM-DD HH:MM:SS>`**——自动标题是「时间戳统一 UTC」规则的唯一例外（除构建时间外），只作展示标题、不参与排序，`AGENTS.md` 已补约定。
   - **`internal/web/handlers_notes.go`**：`POST /api/notes/merge`（`{ids, title?}` → 201 新建 `NoteMeta`，走 CSRF 双提交、`Cache-Control: no-store`）；handler 先预校验形状（ids ≥2 且 ≤100、重复/非法 id、title ≤200 码点 → 400 字段级），store 错误映射 `writeMergeStoreError`：404 `not_found` / 409 `note_in_trash` / 409 `encrypted_in_selection`（整体拒绝、不静默跳过）/ 409 `title_conflict`/`title_in_trash`（复用 `writeConflictFields`）/ 400 字段 `content`「合并后的正文超过 2000 字上限…」（超长不截断）。
   - **前端**：`lib/notes.ts` 的 `mergeNotes(ids, title?)`（trim 后全空白等同不传 title）；`NoteListView.svelte` 头部「合并」按钮（列表空/加载中禁用）→ 勾选模式（行内复选框、加密行 `disabled` + title「加密笔记不能合并」、行点击只勾选不展开详情、隐藏删除按钮）→ 确认条（「已选 N 条」+ 标题输入框 `maxlength=200` 预填 `合并-<本机时间>` +「合并 N 条」按钮 N<2 或 busy 禁用 + 取消）；成功 toast「已合并为「<标题>」」、退出勾选模式并刷新列表与分类，失败错误文案落到列表顶部。
-  - **测试**：`internal/store` 9 项（顺序拼接、未分类、原文不动、默认/显式标题、同秒重试、校验 <2/重复/空、不存在、回收站、加密、超 2000 码点）、`internal/web` 9 项（201 / no-store / 内容拼接 / 未分类 / 自动标题格式 / 原笔记仍在、显式标题、CSRF 403、400 字段级、404、409 回收站、409 加密、409 撞名、400 超长）、前端 `notes.test.ts` 2 项 + `NoteListView.test.ts` 3 项（勾选合并全流程、加密行禁用、清空标题不带 title）。
+  - **测试**：`internal/store` 10 项（顺序拼接、未分类、原文不动、默认/显式标题、同秒重试、校验 <2/重复/空、不存在、回收站、加密、超 2000 码点；其中 TestMergeNotesSeparatesEveryPair 用三条验证篇间分隔）、`internal/web` 9 项（201 / no-store / 内容拼接 / 未分类 / 自动标题格式 / 原笔记仍在、显式标题、CSRF 403、400 字段级、404、409 回收站、409 加密、409 撞名、400 超长）、前端 `notes.test.ts` 2 项 + `NoteListView.test.ts` 3 项（勾选合并全流程、加密行禁用、清空标题不带 title）。
   - **验证**：`just test`（Go 全包 + 前端 197 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过。
 
 - 概览页「近一年使用频率」热力图宽屏自适应（实现过程与关键逻辑）：

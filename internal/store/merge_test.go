@@ -27,8 +27,9 @@ func TestMergeNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n.Content == nil || *n.Content != "甲乙" {
-		t.Fatalf("合并正文 = %+v, want 甲乙", n.Content)
+	const wantJoined = "甲\n\n---\n\n乙"
+	if n.Content == nil || *n.Content != wantJoined {
+		t.Fatalf("合并正文 = %+v, want %q", n.Content, wantJoined)
 	}
 	if n.CategoryID != nil {
 		t.Fatalf("合并笔记应在未分类, category = %+v", n.CategoryID)
@@ -103,8 +104,34 @@ func TestMergeNotesExplicitTitle(t *testing.T) {
 	if n.CategoryID != nil {
 		t.Fatalf("显式标题的合并笔记也应落未分类, category = %+v", n.CategoryID)
 	}
-	if n.Content == nil || *n.Content != "甲乙" {
-		t.Fatalf("合并正文 = %+v, want 甲乙", n.Content)
+	if n.Content == nil || *n.Content != "甲\n\n---\n\n乙" {
+		t.Fatalf("合并正文 = %+v, want %q", n.Content, "甲\n\n---\n\n乙")
+	}
+}
+
+func TestMergeNotesSeparatesEveryPair(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+	a, err := st.CreateNote(ctx, NoteInput{Title: "A", Content: strPtr("甲")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreateNote(ctx, NoteInput{Title: "B", Content: strPtr("乙")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := st.CreateNote(ctx, NoteInput{Title: "C", Content: strPtr("丙")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.MergeNotes(ctx, []string{a.ID, b.ID, c.ID}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantThree = "甲\n\n---\n\n乙\n\n---\n\n丙"
+	if n.Content == nil || *n.Content != wantThree {
+		t.Fatalf("合并正文 = %+v, want %q", n.Content, wantThree)
 	}
 }
 
