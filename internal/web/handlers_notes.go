@@ -23,6 +23,9 @@ const (
 	minCipherBytes  = 29
 	maxCipherBytes  = 65536
 
+	// maxMergeNotes 是单次合并的笔记条数上限（与 store 层同口径的 UX 预检）。
+	maxMergeNotes = 100
+
 	kdfAlgo    = "pbkdf2"
 	minKDFIter = 100_000
 	maxKDFIter = 1_000_000
@@ -162,6 +165,79 @@ func writeNoteStoreError(w http.ResponseWriter, err error, fields map[string]str
 		writeError(w, http.StatusConflict, "id_conflict", "该笔记 id 已存在，请刷新后重试")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", "保存笔记失败，请稍后重试")
+	}
+}
+
+// mergeNotesBody 是 POST /api/notes/merge 的载荷：ids 按序拼接，title 可选。
+type mergeNotesBody struct {
+	IDs   []string `json:"ids"`
+	Title string   `json:"title"`
+}
+
+// handleMergeNotes 把选中的多条明文笔记按 ids 顺序直接拼接成一条「未分类」新笔记，原文不动。
+// title 为空 → 自动 合并-<本地时间>。加密笔记在选中集合里 → 整体拒绝（服务端读不到正文）。
+func (app *application) handleMergeNotes(w http.ResponseWriter, r *http.Request) {
+	var body mergeNotesBody
+	if err := decodeJSON(w, r, &body, maxNoteBody); err != nil {
+		return
+	}
+
+	fields := map[string]string{}
+	title := strings.TrimSpace(body.Title)
+	if title != "" && utf8.RuneCountInString(title) > maxTitleRunes {
+		fields["title"] = "标题请控制在 200 个字以内"
+	}
+	switch {
+	case len(body.IDs) < 2:
+		fields["ids"] = "至少选择两条笔记"
+	case len(body.IDs) > maxMergeNotes:
+		fields["ids"] = "一次最多合并 100 条笔记"
+	default:
+		seen := make(map[string]bool, len(body.IDs))
+		for _, raw := range body.IDs {
+			id := strings.TrimSpace(raw)
+			if !noteIDPattern.MatchString(id) || seen[id] {
+				fields["ids"] = "选中的笔记不合法（含重复 id）"
+				break
+			}
+			seen[id] = true
+		}
+	}
+	if len(fields) > 0 {
+		writeValidationError(w, fields)
+		return
+	}
+
+	note, err := app.store.MergeNotes(r.Context(), body.IDs, title)
+	if err != nil {
+		writeMergeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, note)
+}
+
+// writeMergeStoreError 把合并端点的 store 层错误映射为语义化响应。
+// 形状类错误（条数/格式/重复/title 长度）已由 handler 预校验，这里的 ErrInvalidNote 只剩正文超长。
+func writeMergeStoreError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrNoteNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "选中的笔记不存在，请刷新后重试")
+	case errors.Is(err, store.ErrNoteInTrash):
+		writeError(w, http.StatusConflict, "note_in_trash", "选中的笔记在回收站里，先恢复或彻底删除它")
+	case errors.Is(err, store.ErrNoteEncrypted):
+		writeError(w, http.StatusConflict, "encrypted_in_selection", "选中的笔记含加密笔记：服务端读不到加密正文，请去掉加密笔记后重试")
+	case errors.Is(err, store.ErrNoteTitleExists):
+		writeConflictFields(w, "title_conflict", "该分类下已有同名笔记", map[string]string{
+			"title": "该分类下已有同名笔记",
+		})
+	case errors.Is(err, store.ErrNoteTitleInTrash):
+		writeConflictFields(w, "title_in_trash", "同名的笔记在回收站里，先恢复或彻底删除它", map[string]string{
+			"title": "同名的笔记在回收站里，先恢复或彻底删除它",
+		})
+	case errors.Is(err, store.ErrInvalidNote):
+		writeValidationError(w, map[string]string{"content": "合并后的正文超过 2000 字上限，请减少勾选条数"})
+	default:
+		writeError(w, http.StatusInternalServerError, "internal", "合并失败，请稍后重试")
 	}
 }
 

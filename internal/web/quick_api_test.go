@@ -20,7 +20,7 @@ func TestQuickNoteCreatesWithAutoTitle(t *testing.T) {
 		t.Fatal("含正文的响应必须 no-store")
 	}
 	note := decodeNote(t, rec)
-	if !regexp.MustCompile(`^速记-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`).MatchString(note["title"].(string)) {
+	if !regexp.MustCompile(`^速记-\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`).MatchString(note["title"].(string)) {
 		t.Fatalf("标题格式不符: %v", note["title"])
 	}
 	if note["category_id"] != float64(2) {
