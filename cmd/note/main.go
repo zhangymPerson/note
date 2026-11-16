@@ -213,9 +213,16 @@ func serve(cfg config.Config) error {
 	}
 
 	// 配置端口被占用时自动顺延到 8080-8090 里第一个可用端口（见 listen.go）；
+	// 占用方是「同一数据库的 note 实例」时拒绝启动，不重复拉起双实例。
 	// 状态文件与打印的访问地址都取 ln.Addr() 的实际端口，stop/status 无需改动。
-	ln, err := listenWeb(cfg.Addr)
+	ln, err := listenWeb(cfg.Addr, cfg.DBPath)
 	if err != nil {
+		var dup *duplicateNoteError
+		if errors.As(err, &dup) {
+			fmt.Fprintf(os.Stderr, "%s 上已有 note 实例在运行，且使用同一个数据库，不重复启动。\n", dup.addr)
+			fmt.Fprintf(os.Stderr, "打开 http://%s 继续使用；后台实例用 note web stop 停掉，前台实例回它的终端按 Ctrl+C。\n", dup.addr)
+			return exitError(1)
+		}
 		return err
 	}
 	defer ln.Close()

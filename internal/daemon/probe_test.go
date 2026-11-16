@@ -60,6 +60,22 @@ func TestProbeFailsWhenNothingListens(t *testing.T) {
 	}
 }
 
+// TestProbeShortSameShape ProbeShort 与 Probe 同口径，只是超时更短：
+// 正常 note 实例在回环上毫秒级响应，短超时用于顺延扫描里的身份探测。
+func TestProbeShortSameShape(t *testing.T) {
+	addr, _, _ := newFakeServer(t, "tok")
+	info, err := ProbeShort(addr)
+	if err != nil {
+		t.Fatalf("probe short: %v", err)
+	}
+	if info.DBPath != "/data/notes.db" || info.Addr != "127.0.0.1:8080" {
+		t.Fatalf("info = %+v", info)
+	}
+	if _, err := ProbeShort("127.0.0.1:1"); err == nil {
+		t.Fatal("没有服务在监听时应返回错误")
+	}
+}
+
 func TestRequestStopSendsTokenAndSucceeds(t *testing.T) {
 	addr, gotToken, calls := newFakeServer(t, "secret-token")
 	if err := RequestStop(State{Addr: addr, Token: "secret-token"}); err != nil {

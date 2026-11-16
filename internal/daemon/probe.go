@@ -21,6 +21,11 @@ const ShutdownTokenHeader = "X-Shutdown-Token"
 // 超过两秒基本可以认定「端口上不是我们在跑的 note」。
 const probeTimeout = 2 * time.Second
 
+// shortProbeTimeout 是身份探测（顺延扫描时判断占用端口上是不是同库 note）
+// 的上限：note 实例的 /api/info 在回环上毫秒级返回，短超时避免在
+// 「备用端口全部被无关进程占住」时每个端口都干等两秒。
+const shortProbeTimeout = 500 * time.Millisecond
+
 // ServerInfo 是 GET /api/info 中 status 需要展示的字段子集。
 type ServerInfo struct {
 	Addr          string `json:"addr"`
@@ -33,8 +38,18 @@ type ServerInfo struct {
 // Probe 探测给定监听地址上是否有 note 在响应。
 // 地址先经 ControlAddr 转成可连接的回环地址，因此对通配监听同样成立。
 func Probe(addr string) (ServerInfo, error) {
+	return probe(addr, probeTimeout)
+}
+
+// ProbeShort 与 Probe 同口径，但用短超时：只用于「顺延扫描时这个端口上是
+// 不是同库 note 实例」的身份判断，正常实例在回环上毫秒级就能答完。
+func ProbeShort(addr string) (ServerInfo, error) {
+	return probe(addr, shortProbeTimeout)
+}
+
+func probe(addr string, timeout time.Duration) (ServerInfo, error) {
 	url := "http://" + ControlAddr(addr) + "/api/info"
-	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
