@@ -25,6 +25,18 @@ export function optimizeNote(
   return postJSON<OptimizeResult>("/api/ai/optimize", payload);
 }
 
+// AI 速记：让模型生成概括标题 + 整理正文。结果只预览不落库，
+// 用户在界面上确认后才调 createQuickNote 保存。
+export interface QuickNoteResult {
+  title: string;
+  content: string;
+  model: string;
+}
+
+export function aiQuickNote(content: string): Promise<QuickNoteResult> {
+  return postJSON<QuickNoteResult>("/api/ai/quick", { content });
+}
+
 export function defaultModel(models: string[]): string {
   return models[0] ?? "";
 }

@@ -6,6 +6,7 @@ import {
   countCodePoints,
   createCategory,
   createNote,
+  createQuickNote,
   deleteCategory,
   deleteNote,
   getMasterPassword,
@@ -132,6 +133,35 @@ describe("createNote", () => {
     expect(posts[1].headers["X-CSRF-Token"]).not.toBe(
       posts[0].headers["X-CSRF-Token"],
     );
+  });
+});
+
+describe("createQuickNote", () => {
+  it("不传标题时 payload 不带 title 字段", async () => {
+    mockFetch([ok({ id: "q1", title: "速记-2026-01-01T00:00:00Z", encrypted: false })]);
+    const note = await createQuickNote("买牛奶");
+    expect(note.id).toBe("q1");
+    const post = calls.find((call) => call.method === "POST");
+    expect(post?.url).toBe("/api/quick");
+    expect(JSON.parse(post?.body ?? "{}")).toEqual({ content: "买牛奶" });
+  });
+
+  it("传标题时带上 title 字段", async () => {
+    mockFetch([ok({ id: "q2", title: "待办", encrypted: false })]);
+    await createQuickNote("买牛奶", "待办");
+    const post = calls.find((call) => call.method === "POST");
+    expect(post?.url).toBe("/api/quick");
+    expect(JSON.parse(post?.body ?? "{}")).toEqual({
+      content: "买牛奶",
+      title: "待办",
+    });
+  });
+
+  it("全空白标题等同不传", async () => {
+    mockFetch([ok({ id: "q3", title: "速记-2026-01-01T00:00:00Z", encrypted: false })]);
+    await createQuickNote("买牛奶", "   ");
+    const post = calls.find((call) => call.method === "POST");
+    expect(JSON.parse(post?.body ?? "{}")).toEqual({ content: "买牛奶" });
   });
 });
 

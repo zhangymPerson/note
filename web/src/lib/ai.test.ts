@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { defaultModel, hostOf, optimizeNote } from "./ai";
+import { aiQuickNote, defaultModel, hostOf, optimizeNote } from "./ai";
 
 let requests: { url: string; init: RequestInit }[] = [];
 
@@ -83,6 +83,17 @@ describe("ai", () => {
     await expect(optimizeNote("正文")).rejects.toMatchObject({
       code: "ai_not_configured",
     });
+  });
+
+  it("aiQuickNote 只带 content，返回标题+正文+模型", async () => {
+    stubFetch({ title: "待办", content: "- 买牛奶", model: "m1" });
+
+    const result = await aiQuickNote("买牛奶");
+    expect(result).toEqual({ title: "待办", content: "- 买牛奶", model: "m1" });
+
+    const quick = requests.find((request) => request.url === "/api/ai/quick");
+    expect(quick?.init.method).toBe("POST");
+    expect(JSON.parse(String(quick?.init.body))).toEqual({ content: "买牛奶" });
   });
 
   it("defaultModel 取第一个，hostOf 取主机", () => {

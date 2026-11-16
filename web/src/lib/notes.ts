@@ -98,6 +98,19 @@ export function createNote(payload: NotePayload): Promise<NoteMeta> {
   return postJSON<NoteMeta>("/api/notes", payload);
 }
 
+// 速记固定落「速记」分类：标题可省（服务端自动生成 速记-<UTC 秒级时间戳>）。
+// 全空白标题等同不传，避免把空 title 送过去触发标题必填以外的无意义校验。
+export function createQuickNote(
+  content: string,
+  title?: string,
+): Promise<NoteMeta> {
+  const trimmed = title?.trim() ?? "";
+  return postJSON<NoteMeta>(
+    "/api/quick",
+    trimmed === "" ? { content } : { content, title: trimmed },
+  );
+}
+
 export function getNote(id: string): Promise<NoteMeta> {
   return getJSON<NoteMeta>(`/api/notes/${encodeURIComponent(id)}`);
 }
