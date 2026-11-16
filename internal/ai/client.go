@@ -190,59 +190,9 @@ type Request struct {
 // Optimize 渲染提示词并发起一次调用。req.Content 原样代入模板，不截断、不改写
 // （长度由调用方预检）。
 func (c *Client) Optimize(ctx context.Context, req Request) (Result, error) {
-	if !c.Configured() {
-		return Result{}, ErrNotConfigured
-	}
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = c.DefaultModel()
-	} else if !c.hasModel(model) {
-		return Result{}, ModelError{Model: model}
-	}
-
-	payload := chatRequest{Model: model, Temperature: 0.2}
-	payload.Messages = []chatMessage{{
-		Role:    "user",
-		Content: BuildPromptWithCustom(c.Prompt, req.Content, req.CustomPrompt),
-	}}
-	body, err := json.Marshal(payload)
+	raw, model, err := c.chat(ctx, req.Model, BuildPromptWithCustom(c.Prompt, req.Content, req.CustomPrompt))
 	if err != nil {
-		return Result{}, fmt.Errorf("encode request: %w", err)
-	}
-
-	// 末尾斜杠不参与拼接：base_url 写成 .../v1 或 .../v1/ 都一样。
-	endpoint := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/") + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return Result{}, fmt.Errorf("build request: %w", err)
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: defaultTimeout}
-	}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return Result{}, wrapTransportError(err, model, effectiveTimeout(client))
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
-	if err != nil {
-		return Result{}, fmt.Errorf("read response: %w", err)
-	}
-	if len(raw) > maxResponseBytes {
-		return Result{}, ErrTooLarge
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return Result{}, UpstreamError{
-			Status:  resp.StatusCode,
-			Message: truncateRunes(errorMessage(raw, resp.StatusCode)),
-		}
+		return Result{}, err
 	}
 
 	var parsed struct {
@@ -259,11 +209,70 @@ func (c *Client) Optimize(ctx context.Context, req Request) (Result, error) {
 		return Result{}, ErrBadResponse
 	}
 
-	content2 := StripFence(parsed.Choices[0].Message.Content)
-	if content2 == "" {
+	content := StripFence(parsed.Choices[0].Message.Content)
+	if content == "" {
 		return Result{}, ErrEmptyResult
 	}
-	return Result{Content: content2, Model: model}, nil
+	return Result{Content: content, Model: model}, nil
+}
+
+// chat 是 Optimize 与 QuickNote 共用的请求管线：校验配置与模型、拼 payload、
+// 发请求、读响应、状态码与体积检查，返回原始响应体与最终采用的模型。
+// prompt 是已经渲染完成的用户消息（Optimize 用模板+正文+自定义要求，
+// QuickNote 用内建速记提示词+追加的正文）。
+func (c *Client) chat(ctx context.Context, modelName, prompt string) ([]byte, string, error) {
+	if !c.Configured() {
+		return nil, "", ErrNotConfigured
+	}
+	model := strings.TrimSpace(modelName)
+	if model == "" {
+		model = c.DefaultModel()
+	} else if !c.hasModel(model) {
+		return nil, "", ModelError{Model: model}
+	}
+
+	payload := chatRequest{Model: model, Temperature: 0.2}
+	payload.Messages = []chatMessage{{Role: "user", Content: prompt}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode request: %w", err)
+	}
+
+	// 末尾斜杠不参与拼接：base_url 写成 .../v1 或 .../v1/ 都一样。
+	endpoint := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/") + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, "", fmt.Errorf("build request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: defaultTimeout}
+	}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, "", wrapTransportError(err, model, effectiveTimeout(client))
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("read response: %w", err)
+	}
+	if len(raw) > maxResponseBytes {
+		return nil, "", ErrTooLarge
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, "", UpstreamError{
+			Status:  resp.StatusCode,
+			Message: truncateRunes(errorMessage(raw, resp.StatusCode)),
+		}
+	}
+	return raw, model, nil
 }
 
 // wrapTransportError 只给「等太久」这一种失败换文案：其它传输错误（DNS、连接被拒、
