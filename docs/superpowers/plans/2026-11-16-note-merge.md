@@ -33,15 +33,18 @@
 ### Task 1: 自动标题改用本地时间（store 层）
 
 **Files:**
+
 - Modify: `internal/store/quick.go`
 - Modify: `internal/store/quick_test.go`
 
 **Interfaces:**
+
 - Produces: 常量 `timeLayoutLocal = "2006-01-02 15:04:05"`；`createWithAutoTitleAt(ctx context.Context, prefix, content string, categoryID *int64, now time.Time) (Note, error)`——生成 `<prefix>-<now 自身时区的 timeLayoutLocal>` 标题、同秒撞名顺延下一秒重试 ≤5 次（`ErrNoteTitleExists` / `ErrNoteTitleInTrash` 都算撞名），落库走 `CreateNote`。`createQuickNoteAt` 的签名与行为不变（`title` 为空时内部改调 `createWithAutoTitleAt(ctx, "速记", content, &catID, now)`，`catID := int64(QuickCategoryID)`）。
 
 - [ ] **Step 1: 改写两个失败测试**
 
 `internal/store/quick_test.go`：
+
 - `TestCreateQuickNoteAutoTitle`：正则改 `^速记-\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`。
 - `TestCreateQuickNoteRetriesSameSecond`：占位标题与 `want` 的 `Format(timeLayoutUTC)` 全改 `Format(timeLayoutLocal)`。
 
@@ -53,6 +56,7 @@ Expected: FAIL（标题仍是 `T…Z` / 格式不匹配）
 - [ ] **Step 3: 实现**
 
 `internal/store/quick.go`：
+
 - 加 `const timeLayoutLocal = "2006-01-02 15:04:05"`。
 - 抽 `createWithAutoTitleAt`（把现有自动标题循环搬进去，`t := prefix + "-" + now.Add(time.Duration(i)*time.Second).Format(timeLayoutLocal)`——**不要 `.UTC()` 也不要 `.Local()`**：`time.Now()` 本身就是系统时区，测试注入的 `fixed` 用自身时区保证确定性）。
 - `createQuickNoteAt` 的 `title == ""` 分支改调 `createWithAutoTitleAt(ctx, "速记", content, &catID, now)`。
@@ -74,11 +78,13 @@ git commit -m "feat: 速记自动标题改用本地时间 YYYY-MM-DD HH:MM:SS"
 ### Task 2: `store.MergeNotes`
 
 **Files:**
+
 - Create: `internal/store/merge.go`
 - Modify: `internal/store/note.go`（error var 块加两条哨兵错误）
 - Create: `internal/store/merge_test.go`
 
 **Interfaces:**
+
 - Consumes: `createWithAutoTitleAt`（Task 1）、`CreateNote`、`maxTitleRunes`/`maxContentRunes`、`noteTestStore(t)`。
 - Produces: `MergeNotes(ctx context.Context, ids []string, title string) (Note, error)`；新哨兵 `ErrNoteInTrash = errors.New("note is in trash")`、`ErrNoteEncrypted = errors.New("note is encrypted")`；常量 `maxMergeNotes = 100`。
 - 语义：`ids` 按顺序把明文正文 `strings.Join(contents, "")` 成一条新笔记，落「未分类」（`NoteInput{CategoryID: nil}`）；`title` trim 后为空 → 自动 `合并-<本地时间>`；`title` 非空 → 单次创建、撞名原样返回；原文一行不写。
@@ -128,11 +134,13 @@ git commit -m "feat: store.MergeNotes 按序拼接明文正文为未分类新笔
 ### Task 3: Web 端点 `POST /api/notes/merge`
 
 **Files:**
+
 - Modify: `internal/web/handlers_notes.go`
 - Modify: `internal/web/server.go`
 - Create: `internal/web/merge_api_test.go`
 
 **Interfaces:**
+
 - Consumes: `app.store.MergeNotes`、`store.ErrNoteInTrash` / `store.ErrNoteEncrypted`、测试工具 `newTestHandler` / `csrfTokenFor` / `apiRequest` / `seedStore` / `decodeNote` / `errorBody` / `notesKDFParams` / `kdfParamsJSON`。
 - Produces: `handleMergeNotes(w, r)`；请求 `{"ids": [...], "title": "可选"}`；201 + 新建 Note；错误映射见下。
 
@@ -177,12 +185,14 @@ git commit -m "feat: POST /api/notes/merge 合并端点（CSRF、加密/回收�
 ### Task 4: 前端合并交互
 
 **Files:**
+
 - Modify: `web/src/lib/notes.ts`
 - Modify: `web/src/views/NoteListView.svelte`
 - Modify: `web/src/lib/notes.test.ts`
 - Modify: `web/src/views/NoteListView.test.ts`
 
 **Interfaces:**
+
 - Consumes: `POST /api/notes/merge`（Task 3）、`toast`、现有 `refresh`/`listCategories`/`shownAt`。
 - Produces: `mergeNotes(ids: string[], title?: string): Promise<NoteMeta>`（`postJSON("/api/notes/merge", {ids, ...(title ? {title} : {})})`）；`NoteListView` 勾选模式状态。
 
@@ -191,6 +201,7 @@ git commit -m "feat: POST /api/notes/merge 合并端点（CSRF、加密/回收�
 `web/src/lib/notes.test.ts`（沿用 mock fetch 记录 calls 的写法）：`mergeNotes(["a","b"], "合并-标题")` 发出 `POST /api/notes/merge`、body 含 `{"ids":["a","b"],"title":"合并-标题"}`、带 `X-CSRF-Token`；`mergeNotes(["a","b"])` 不带 `title`。
 
 `web/src/views/NoteListView.test.ts`：mocks 加 `mergeNotes: vi.fn()`，新增 3 条：
+
 1. 点「合并」→ 出现复选框与确认条，选 1 条时合并按钮 disabled；选 2 条后 enabled；点「合并」→ `mergeNotes` 被调，ids 顺序 = 列表顺序，title 匹配 `^合并-\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`；成功后退出勾选模式、`toast` 触发、`listNotes` 再次被调（列表刷新）。
 2. 加密行（`encrypted: true`）复选框 `disabled` 且带 title 提示。
 3. 标题输入框清空后提交 → `mergeNotes` 不带 `title`（服务端回退默认）。
@@ -229,12 +240,14 @@ git commit -m "feat: 全部笔记列表合并勾选模式与确认条"
 ### Task 5: 文档同步 + 全量验证
 
 **Files:**
+
 - Modify: `docs/PRD.md`
 - Modify: `docs/TECH_DESIGN.md`
 - Modify: `AGENTS.md`
 - Modify: `CHANGELOG.md`
 
 **Interfaces:**
+
 - Consumes: 全部前序任务的已验证事实。
 
 - [ ] **Step 1: 更新 PRD**
