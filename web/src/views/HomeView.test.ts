@@ -14,7 +14,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../lib/notes", async () => {
   const actual =
     await vi.importActual<typeof import("../lib/notes")>("../lib/notes");
-  return { ...actual, listNotes: mocks.listNotes, createQuickNote: mocks.createQuickNote };
+  return {
+    ...actual,
+    listNotes: mocks.listNotes,
+    createQuickNote: mocks.createQuickNote,
+  };
 });
 vi.mock("../lib/ai", async () => {
   const actual = await vi.importActual<typeof import("../lib/ai")>("../lib/ai");
@@ -85,7 +89,12 @@ function click(node: Element): void {
 }
 
 beforeEach(() => {
-  mocks.listNotes.mockResolvedValue({ items: [], total: 0, page: 1, per_page: 20 });
+  mocks.listNotes.mockResolvedValue({
+    items: [],
+    total: 0,
+    page: 1,
+    per_page: 20,
+  });
   mocks.loadStats.mockResolvedValue(EMPTY_STATS);
   mocks.createQuickNote.mockResolvedValue({
     id: "q1",
@@ -139,20 +148,23 @@ describe("HomeView 速记卡片", () => {
     );
     await vi.waitFor(() => {
       const titleInput = target.querySelector(
-        '#quick-ai-title',
+        "#quick-ai-title",
       ) as HTMLInputElement;
       expect(titleInput.value).toBe("待办");
     });
     expect(target.textContent).toContain("m1");
 
     const titleInput = target.querySelector(
-      '#quick-ai-title',
+      "#quick-ai-title",
     ) as HTMLInputElement;
     typeInto(titleInput, "今日待办");
     click(buttonWith(target, "保存"));
 
     await vi.waitFor(() =>
-      expect(mocks.createQuickNote).toHaveBeenCalledWith("- 买牛奶", "今日待办"),
+      expect(mocks.createQuickNote).toHaveBeenCalledWith(
+        "- 买牛奶",
+        "今日待办",
+      ),
     );
     expect(mocks.createQuickNote).toHaveBeenCalledTimes(1);
   });
@@ -163,7 +175,7 @@ describe("HomeView 速记卡片", () => {
 
     click(buttonWith(target, "AI 速记"));
     await vi.waitFor(() =>
-      expect(target.querySelector('#quick-ai-title')).not.toBeNull(),
+      expect(target.querySelector("#quick-ai-title")).not.toBeNull(),
     );
 
     click(buttonWith(target, "返回修改"));
@@ -173,15 +185,15 @@ describe("HomeView 速记卡片", () => {
 
   it("AI 未配置显示补齐提示", async () => {
     mocks.aiQuickNote.mockRejectedValue(
-      new Error("AI 还没配置好：缺 ai.base_url、ai.api_key。用 note config set 补上"),
+      new Error(
+        "AI 还没配置好：缺 ai.base_url、ai.api_key。用 note config set 补上",
+      ),
     );
     const target = renderHome();
     typeInto(quickBox(target), "买牛奶");
 
     click(buttonWith(target, "AI 速记"));
-    await vi.waitFor(() =>
-      expect(target.textContent).toContain("还没配置 AI"),
-    );
+    await vi.waitFor(() => expect(target.textContent).toContain("还没配置 AI"));
   });
 
   it("正文为空时按钮禁用", () => {

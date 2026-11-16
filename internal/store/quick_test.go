@@ -57,7 +57,7 @@ func TestCreateQuickNoteRetriesSameSecond(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "速记-" + fixed.Add(2 * time.Second).Format(timeLayoutUTC)
+	want := "速记-" + fixed.Add(2*time.Second).Format(timeLayoutUTC)
 	if n.Title != want {
 		t.Fatalf("title = %q, want %q", n.Title, want)
 	}
