@@ -8,6 +8,15 @@
 
 ### Added
 
+- 笔记合并：全部笔记列表把多条明文笔记拼成一条新笔记（实现过程与关键逻辑）：
+  - **需求**：几篇笔记经常要「拼到一起」，手工复制粘贴在长文里容易丢字。目标是列表里勾选 ≥2 条明文笔记 → 生成一条新笔记：正文按列表顺序直接拼接（不做去重/截断/格式化）、落「未分类」、不删除原笔记（原文不动）；默认标题 `合并-<本地时间>`，可手动指定。
+  - **`internal/store/merge.go`**（新建）：`MergeNotes(ctx, ids, title)`——只读原行、按 `ids` 顺序拼接明文正文，`CategoryID: nil` 落「未分类」，复用 `CreateNote` 单行插入（保 rev/timestamps/`note_create` 活动事件），原行永不写、不加事务；`maxMergeNotes = 100`；`note.go` 新增哨兵 `ErrNoteInTrash` / `ErrNoteEncrypted`。
+  - **`internal/store/quick.go`**：抽出 `createWithAutoTitleAt(ctx, prefix, content, categoryID, now)` 供速记/合并共用——`timeLayoutLocal = "2006-01-02 15:04:05"`（24 小时制、系统时区、无 T/Z 后缀；不调 `.UTC()`/`.Local()`，用注入时刻自身时区保证测试确定性），同秒撞名（`ErrNoteTitleExists` / `ErrNoteTitleInTrash`）顺延下一秒重试 ≤5 次，永不覆盖已有笔记。**速记自动标题同步从 `速记-<UTC 秒级>` 改为 `速记-<本地时间 YYYY-MM-DD HH:MM:SS>`**——自动标题是「时间戳统一 UTC」规则的唯一例外（除构建时间外），只作展示标题、不参与排序，`AGENTS.md` 已补约定。
+  - **`internal/web/handlers_notes.go`**：`POST /api/notes/merge`（`{ids, title?}` → 201 新建 `NoteMeta`，走 CSRF 双提交、`Cache-Control: no-store`）；handler 先预校验形状（ids ≥2 且 ≤100、重复/非法 id、title ≤200 码点 → 400 字段级），store 错误映射 `writeMergeStoreError`：404 `not_found` / 409 `note_in_trash` / 409 `encrypted_in_selection`（整体拒绝、不静默跳过）/ 409 `title_conflict`/`title_in_trash`（复用 `writeConflictFields`）/ 400 字段 `content`「合并后的正文超过 2000 字上限…」（超长不截断）。
+  - **前端**：`lib/notes.ts` 的 `mergeNotes(ids, title?)`（trim 后全空白等同不传 title）；`NoteListView.svelte` 头部「合并」按钮（列表空/加载中禁用）→ 勾选模式（行内复选框、加密行 `disabled` + title「加密笔记不能合并」、行点击只勾选不展开详情、隐藏删除按钮）→ 确认条（「已选 N 条」+ 标题输入框 `maxlength=200` 预填 `合并-<本机时间>` +「合并 N 条」按钮 N<2 或 busy 禁用 + 取消）；成功 toast「已合并为「<标题>」」、退出勾选模式并刷新列表与分类，失败错误文案落到列表顶部。
+  - **测试**：`internal/store` 9 项（顺序拼接、未分类、原文不动、默认/显式标题、同秒重试、校验 <2/重复/空、不存在、回收站、加密、超 2000 码点）、`internal/web` 9 项（201 / no-store / 内容拼接 / 未分类 / 自动标题格式 / 原笔记仍在、显式标题、CSRF 403、400 字段级、404、409 回收站、409 加密、409 撞名、400 超长）、前端 `notes.test.ts` 2 项 + `NoteListView.test.ts` 3 项（勾选合并全流程、加密行禁用、清空标题不带 title）。
+  - **验证**：`just test`（Go 全包 + 前端 197 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过。
+
 - 概览页「近一年使用频率」热力图宽屏自适应（实现过程与关键逻辑）：
   - **问题**：`.heat-field` 是 26px 周标列 + 53 个固定宽度周列、`width: max-content`，总宽恒为 768px（11px 格子）。页面 `--page-max` 加宽到 `clamp(880px, 84vw, 1280px)` 后卡片比热力图宽，右缘空出一大块，右侧对齐的图例与网格脱节。
   - **改动**：`web/src/app.css` 的 `.heat-field` 改 `width: 100%` + `justify-content: space-between`——多余宽度平均分到 53 个周列之间（格子尺寸不变，列间空隙变大），首个周标列贴左缘、最后一周贴右缘，图例/月份标签跟随；窄屏下列宽合计仍超容器，`.heatmap` 横向滚动与 640px 以下 `--cell: 10px` 的既有行为不变。
@@ -40,8 +49,8 @@
   - **验证**：`just test`（Go 410 项、前端 183 项）、`just check`（`go vet` + svelte-check 0 errors / 0 warnings）、`npm --prefix web run build` 均通过。
 
 - 速记快速入口：`note add <正文>` / 网页首页速记卡片 / `POST /api/quick` 与 `POST /api/ai/quick`（实现过程与关键逻辑）：
-  - **需求**：想随手记一条不需要标题的笔记，现在得走完整的向导/编辑页。目标是「正文 → 落库」两步走完：网页首页查询区下方一块速记卡片（只有一个正文框），点「速记」直接落库、标题自动 `速记-<UTC 秒级>`；点「AI 速记」由服务端代发整理并生成概括标题，先预览确认后才落库。CLI 同步：`note add <正文>` 非交互直接落速记（可 `echo … | xargs note add` 脚本化），`note add <正文> --ai` 进 bubbletea 单屏预览（Enter 保存 / Esc 放弃退出 130）；无参 `note add` 三步向导保持不变（向后兼容）。
-  - **`internal/store/quick.go`**（新建）：`CreateQuickNote(ctx, content, title)`——`title` 空 → 自动 `速记-<UTC 秒级>`（`nowUTC()`），同秒撞名（`ErrNoteTitleExists` / `ErrNoteTitleInTrash`）自动顺延下一秒重试 ≤5 次，永不覆盖已有笔记；`title` 非空 → 单次创建、撞名原样返回。固定落 `QuickCategoryID`（「速记」`id=2`），正文/标题长度复用 `maxContentRunes` / `maxTitleRunes`。
+  - **需求**：想随手记一条不需要标题的笔记，现在得走完整的向导/编辑页。目标是「正文 → 落库」两步走完：网页首页查询区下方一块速记卡片（只有一个正文框），点「速记」直接落库、标题自动 `速记-<本地时间 YYYY-MM-DD HH:MM:SS>`；点「AI 速记」由服务端代发整理并生成概括标题，先预览确认后才落库。CLI 同步：`note add <正文>` 非交互直接落速记（可 `echo … | xargs note add` 脚本化），`note add <正文> --ai` 进 bubbletea 单屏预览（Enter 保存 / Esc 放弃退出 130）；无参 `note add` 三步向导保持不变（向后兼容）。
+  - **`internal/store/quick.go`**（新建）：`CreateQuickNote(ctx, content, title)`——`title` 空 → 自动 `速记-<本地时间 YYYY-MM-DD HH:MM:SS>`（复用 `createWithAutoTitleAt`，同秒撞名顺延下一秒重试 ≤5 次，永不覆盖已有笔记）；`title` 非空 → 单次创建、撞名原样返回。固定落 `QuickCategoryID`（「速记」`id=2`），正文/标题长度复用 `maxContentRunes` / `maxTitleRunes`。
   - **`internal/ai/quick.go`**（新建）：`QuickNote(ctx, req)` 用内建 JSON 提示词常量 `defaultQuickPrompt` 让模型输出 `{"title","content"}`，复用抽出来的 `chat(ctx, model, prompt)` 共用管线（`client.go` 里 `Optimize` 与 `QuickNote` 共用）；`QuickNoteResult{Content, Title, Model}`；标题 ≤60 / 正文 ≤2000 码点，超限**不截断**、返回 `QuickResultError{Reason}` 明确报错（围栏内 JSON 解析失败、字段缺失、超限、空结果各有原因）；提示词不是 `ai.prompt` 模板变体，不新增 AI 配置项。
   - **`internal/web/handlers_quick.go`**（新建）：`POST /api/quick`（`{content, title?}` → 201，正文空/超 2000 码点 400，撞名 409 `title_conflict`/`title_in_trash`）与 `POST /api/ai/quick`（`{content}` → `{title, content, model}`，只回预览**不落库**；未配置 409 `ai_not_configured` 点名缺项、解析/上游失败 502 `ai_bad_response` 带 Reason、超时 504）。两条路由注册在 `server.go`，走既有中间件链（CSRF 双提交、`Cache-Control: no-store`），日志只记 host/model/错误摘要，不记正文、AI 标题与密钥。
   - **`internal/cli/quick_add.go`**（新建）+ `cmd/note/add.go`：`RunAddQuick(ctx, deps, content, ai)`——非 AI 直接 `CreateQuick(ctx, content, "")` 落库（stdout 干净、提示写 stderr、管道可用）；AI 路径先 `cli.IsTerminal(os.Stdin)` 判定（管道退出 1 不挂起），`tea.NewProgram` 单屏两阶段：工作步（「正在用 <模型> 整理…（正文会发送到 <主机>）」，状态由 `View()` 从字段推导——bubbletea `Init()` 是值接收者，改不到模型上）→ 预览步（标题只读、Markdown 正文、模型名，「Enter 保存 · Esc 放弃 · Ctrl+O 重新整理」），Enter 用预览锁定的 content/title 落库，Esc 放弃退出 130。`parse.go` 新增 `AddOptions{Content, AI}` 与 `parseAddArgs`（正文 ≤2000 码点、`--ai` 需正文否则退出 2、空/全空白正文报错、配置参数保留在 `opts.Args` 交给 `config.Load`）。
