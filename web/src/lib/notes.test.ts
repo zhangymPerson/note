@@ -14,6 +14,7 @@ import {
   listCategories,
   listEncryptedCiphers,
   listNotes,
+  mergeNotes,
   newClientNoteID,
   purgeNote,
   renameCategory,
@@ -166,6 +167,32 @@ describe("createQuickNote", () => {
     await createQuickNote("买牛奶", "   ");
     const post = calls.find((call) => call.method === "POST");
     expect(JSON.parse(post?.body ?? "{}")).toEqual({ content: "买牛奶" });
+  });
+});
+
+describe("mergeNotes", () => {
+  it("POST /api/notes/merge 携带 CSRF 令牌、ids 与标题", async () => {
+    mockFetch([
+      ok({ id: "m1", title: "合并-2026-11-16 09:00:00", encrypted: false }),
+    ]);
+    const note = await mergeNotes(["a", "b"], "合并-2026-11-16 09:00:00");
+    expect(note.id).toBe("m1");
+    const post = calls.find((call) => call.method === "POST");
+    expect(post?.url).toBe("/api/notes/merge");
+    expect(post?.headers["X-CSRF-Token"]).toBeTruthy();
+    expect(JSON.parse(post?.body ?? "{}")).toEqual({
+      ids: ["a", "b"],
+      title: "合并-2026-11-16 09:00:00",
+    });
+  });
+
+  it("不传标题时 payload 不带 title 字段", async () => {
+    mockFetch([
+      ok({ id: "m2", title: "合并-2026-11-16 09:00:01", encrypted: false }),
+    ]);
+    await mergeNotes(["a", "b"]);
+    const post = calls.find((call) => call.method === "POST");
+    expect(JSON.parse(post?.body ?? "{}")).toEqual({ ids: ["a", "b"] });
   });
 });
 

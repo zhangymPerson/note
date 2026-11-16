@@ -111,6 +111,19 @@ export function createQuickNote(
   );
 }
 
+// 合并：服务端按 ids 顺序把明文正文拼接成一条「未分类」新笔记，原文不动。
+// 空/全空白标题不传，让服务端自动生成 合并-<本地时间>。
+export function mergeNotes(
+  ids: string[],
+  title?: string,
+): Promise<NoteMeta> {
+  const trimmed = title?.trim() ?? "";
+  return postJSON<NoteMeta>(
+    "/api/notes/merge",
+    trimmed === "" ? { ids } : { ids, title: trimmed },
+  );
+}
+
 export function getNote(id: string): Promise<NoteMeta> {
   return getJSON<NoteMeta>(`/api/notes/${encodeURIComponent(id)}`);
 }

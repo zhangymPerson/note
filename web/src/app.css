@@ -994,6 +994,33 @@ input {
   gap: 16px;
 }
 
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 合并勾选确认条：列表顶部，勾选模式才出现 */
+.merge-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+
+.merge-count {
+  font-weight: 600;
+}
+
+.merge-title-input {
+  flex: 1;
+  min-width: 200px;
+}
+
 .list-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 240px;
@@ -1030,6 +1057,15 @@ input {
 /* 展开了详情的行：描边高亮，表明下面那块内容属于它 */
 .note-row-open {
   border-color: var(--accent);
+}
+
+/* 合并勾选模式下的行：轻描边提示可点选 */
+.note-row-selected {
+  border-color: var(--accent);
+}
+
+.note-select {
+  flex: none;
 }
 
 /* 内联展开的详情：就地撑开，不再跳页、不用回退 */

@@ -8,6 +8,7 @@
     deleteNote,
     listCategories,
     listNotes,
+    mergeNotes,
     renameCategory,
     type Category,
     type NoteListItem,
@@ -36,6 +37,11 @@
   let categoryBusy = $state(false)
   // 展开的笔记：就地撑开详情，不跳页（跳了要回退才能接着看列表）
   let openId = $state('')
+  // 合并勾选模式：勾选多条 → 确认条上定标题 → 拼成一条新笔记，原文不动。
+  let merging = $state(false)
+  let selectedIds = $state<string[]>([])
+  let mergeTitle = $state('')
+  let mergingBusy = $state(false)
 
   const pageCount = $derived(Math.max(1, Math.ceil(total / perPage)))
   const activeCategory = $derived(categories.find((cat) => cat.id === category) ?? null)
@@ -188,14 +194,58 @@
     const pad = (input: number): string => String(input).padStart(2, '0')
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
   }
+
+  // 合并默认标题：本机时区、24 小时制、精确到秒（与服务端 合并-<本地时间> 同口径）。
+  function defaultMergeTitle(): string {
+    const now = new Date()
+    const pad = (input: number): string => String(input).padStart(2, '0')
+    return `合并-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+  }
+
+  function startMerge(): void {
+    merging = true
+    selectedIds = []
+    mergeTitle = defaultMergeTitle()
+  }
+
+  function toggleSelect(id: string): void {
+    selectedIds = selectedIds.includes(id)
+      ? selectedIds.filter((item) => item !== id)
+      : [...selectedIds, id]
+  }
+
+  function cancelMerge(): void {
+    merging = false
+    selectedIds = []
+  }
+
+  async function doMerge(): Promise<void> {
+    mergingBusy = true
+    try {
+      const note = await mergeNotes(selectedIds, mergeTitle.trim() || undefined)
+      toast(`已合并为「${note.title}」`)
+      cancelMerge()
+      await refresh(committedQ, category, page)
+      categories = await listCategories()
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : '合并失败，请稍后重试'
+    } finally {
+      mergingBusy = false
+    }
+  }
 </script>
 
 <section class="page list">
   <header class="list-head">
     <h1>全部笔记</h1>
-    <a class="button" href="/notes/new" onclick={(event) => { event.preventDefault(); navigate('/notes/new') }}>
-      新建笔记
-    </a>
+    <div class="head-actions">
+      <a class="button" href="/notes/new" onclick={(event) => { event.preventDefault(); navigate('/notes/new') }}>
+        新建笔记
+      </a>
+      <button class="button" type="button" data-merge disabled={loading || rows.length === 0} onclick={startMerge}>
+        合并
+      </button>
+    </div>
   </header>
 
   <div class="list-layout">
@@ -217,6 +267,26 @@
         <p class="form-error" role="alert">{error}</p>
       {/if}
 
+      {#if merging}
+        <div class="merge-bar" role="group" aria-label="合并笔记">
+          <span class="merge-count" data-merge-count>已选 {selectedIds.length} 条</span>
+          <input
+            class="merge-title-input"
+            type="text"
+            maxlength="200"
+            placeholder="合并笔记标题（留空自动生成）"
+            bind:value={mergeTitle}
+            data-merge-title
+          />
+          <button class="button" type="button" data-merge-confirm disabled={selectedIds.length < 2 || mergingBusy} onclick={doMerge}>
+            {mergingBusy ? '合并中…' : `合并 ${selectedIds.length} 条`}
+          </button>
+          <button class="button button-quiet" type="button" data-merge-cancel disabled={mergingBusy} onclick={cancelMerge}>
+            取消
+          </button>
+        </div>
+      {/if}
+
       {#if loading}
         <p class="muted">笔记载入中…</p>
       {:else if rows.length === 0}
@@ -230,12 +300,22 @@
       {:else}
         <ul class="note-rows">
           {#each rows as note (note.id)}
-            <li class="note-row" class:note-row-open={openId === note.id}>
+            <li class="note-row" class:note-row-selected={merging && selectedIds.includes(note.id)}>
+              {#if merging}
+                <input
+                  class="note-select"
+                  type="checkbox"
+                  checked={selectedIds.includes(note.id)}
+                  disabled={note.encrypted}
+                  title={note.encrypted ? '加密笔记不能合并' : ''}
+                  onclick={(event) => { event.stopPropagation(); toggleSelect(note.id) }}
+                />
+              {/if}
               <button
                 class="note-main"
                 type="button"
-                aria-expanded={openId === note.id}
-                onclick={() => toggle(note)}
+                aria-expanded={!merging && openId === note.id}
+                onclick={() => (merging ? toggleSelect(note.id) : toggle(note))}
               >
                 <span class="note-title">
                   {note.title}
@@ -255,7 +335,7 @@
                   {/if}
                 </span>
               </button>
-              {#if openId !== note.id}
+              {#if !merging && openId !== note.id}
                 <button
                   class="button button-quiet"
                   type="button"
