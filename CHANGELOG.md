@@ -52,6 +52,15 @@
 
 ### Changed
 
+- `note web` / `note web start` 端口顺延增加身份探测，拒绝同库双实例（实现过程与关键逻辑）：
+  - **问题**：v1.17 顺延只认「端口被占」，不识别占用方——后台实例占 8081 时前台 `note web` 落到 8082，两个进程开同一个 `notes.db`（正是 `runWebStart` 想防的「抢同一个库」；SQLite WAL 能容忍到一定程度但不属于设计支持的运行形态）。
+  - **方案**：`listenWeb` / `listenWebRange` 每次撞上 EADDRINUSE 对占用端口做身份探测——新增 `daemon.ProbeShort`（与 `Probe` 同口径、500ms 短超时，避免「备用端口全部被占住」时每端口干等 2s）发 `GET /api/info`：占用方是同一数据库的 note 实例（`sameDB` 比对 `db_path`）→ 返回 `duplicateNoteError` 拒绝启动；无关进程 / 异库实例照常顺延。`listenWeb` 签名改为 `(addr, dbPath)`，探测函数可注入（`probeFunc`），测试不碰真 HTTP。
+  - **表现**：前台 `note web` 打印「`<addr>` 上已有 note 实例在运行，且使用同一个数据库，不重复启动。打开 http://… 继续使用；后台实例用 note web stop 停掉，前台实例回它的终端按 Ctrl+C」退出 1；后台子进程把同样的提示写进 `note.log` 尾部退出 1（`note web start` 回显日志尾，不再留下状态文件）。
+  - **测试**：`cmd/note/listen_test.go` 新增 3 项（配置端口同库拒绝、顺延扫描同库拒绝、异库实例继续顺延）+ 既有 3 项改写为注入探测；`internal/daemon/probe_test.go` 新增 `ProbeShort` 同口径校验。
+  - **验证**：`just test`（Go 全包 + 前端 192 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过；真实二进制冒烟——本机 dagu 占 8080（无关）+ 后台同库实例占 8081 时前台 `note web` 拒绝退出 1、8080/8081/8082 监听者无新增；异库实例占 8081 仍顺延到 8082 正常启动；8081 空闲照常顺延；`note web start` 遇同库前台实例在日志尾回显拒绝消息、退出 1；冒烟后已用新二进制恢复后台实例。
+
+### Changed
+
 - 热力图格子尺寸改为随容器自适应，不再固定（实现过程与关键逻辑）：
   - **问题**：上一版宽屏自适应只把富余宽度分到列间空隙（`justify-content: space-between`，格子恒 11px），宽屏下格子还是小方块、列间空隙反而越来越大，图例与网格整体显松散。
   - **改动**：`web/src/app.css` 的 `.heat-field` 列改为 `26px repeat(53, minmax(var(--cell), 1fr))`——`1fr` 平分容器富余宽度给每个周列，格子随容器变大；行从 `calc(var(--cell) + 3px)` 改成 `auto`，`gap: 3px` 显式化；主体格子新增 `.heat-field .heat-cell` 覆盖：`width: 100%; height: auto; aspect-ratio: 1`，宽屏变大时保持正方形、行高自动跟随，图例里的 `.heat-cell`（`width/height: var(--cell)`）不受影响仍是固定小方块。窄屏行为不变：列宽合计仍超容器，由 `.heatmap` 横向滚动，`≤640px` 的 `--cell: 10px` 照旧生效。
