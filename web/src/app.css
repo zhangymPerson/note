@@ -467,6 +467,60 @@ input {
   border-bottom: 1px solid var(--border);
 }
 
+/* 速记卡片：正文框 + 直接速记 / AI 速记（预览确认） */
+.quick-card {
+  margin-top: 16px;
+}
+
+.quick-head {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+}
+
+.quick-input {
+  width: 100%;
+  min-height: 88px;
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.quick-preview {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+
+.quick-preview-head {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.quick-title-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-sizing: border-box;
+}
+
+.quick-message {
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
 .heat-section,
 .ledger {
   display: flex;

@@ -1,6 +1,8 @@
 <script lang="ts">
   import ActivityHeatmap from '../components/ActivityHeatmap.svelte'
-  import { listNotes, type NoteListItem } from '../lib/notes'
+  import Markdown from '../components/Markdown.svelte'
+  import { aiQuickNote, type QuickNoteResult } from '../lib/ai'
+  import { createQuickNote, listNotes, MAX_CONTENT_CODEPOINTS, type NoteListItem } from '../lib/notes'
   import { settings } from '../lib/settings'
   import { HEATMAP_WEEKS, groupEvents, loadStats, type Stats } from '../lib/stats'
   import { navigate } from '../router/router'
@@ -11,6 +13,85 @@
   let results = $state<NoteListItem[] | null>(null)
   let searching = $state(false)
   let searchError = $state('')
+
+  // 速记卡片：正文框 + 直接速记 / AI 速记（先预览确认）。
+  let quickText = $state('')
+  let quickBusy = $state(false)
+  let quickMessage = $state('')
+  let quickError = $state('')
+  let aiBusy = $state(false)
+  let aiError = $state('')
+  let aiPreview = $state<QuickNoteResult | null>(null)
+  let aiTitle = $state('')
+
+  function fail(error: unknown): string {
+    return error instanceof Error ? error.message : '操作失败，请稍后重试'
+  }
+
+  function aiNotConfigured(error: unknown): string {
+    const message = fail(error)
+    if (message.includes('还没配置 AI') || message.includes('ai.base_url')) {
+      return '还没配置 AI，去信息页填写 ai.base_url / ai.api_key / ai.models 再试'
+    }
+    return message
+  }
+
+  // 直接速记：正文原样落库，标题交给服务端自动生成。
+  async function saveQuick(): Promise<void> {
+    const content = quickText.trim()
+    if (content === '' || quickBusy) return
+    quickBusy = true
+    quickError = ''
+    quickMessage = ''
+    try {
+      const note = await createQuickNote(content)
+      quickText = ''
+      quickMessage = `已记入速记「${note.title}」`
+      await refreshStats()
+    } catch (error) {
+      quickError = fail(error)
+    } finally {
+      quickBusy = false
+    }
+  }
+
+  // AI 速记：先预览确认，绝不绕过预览直接落库。
+  async function runAIQuick(): Promise<void> {
+    const content = quickText.trim()
+    if (content === '' || aiBusy) return
+    aiPreview = null
+    aiError = ''
+    aiBusy = true
+    try {
+      const result = await aiQuickNote(content)
+      aiPreview = result
+      aiTitle = result.title
+    } catch (error) {
+      aiError = aiNotConfigured(error)
+    } finally {
+      aiBusy = false
+    }
+  }
+
+  // 保存预览：内容用预览锁定的 aiPreview.content，不读输入框当前值；
+  // 标题可编辑（AI 生成的是建议）。
+  async function saveAI(): Promise<void> {
+    if (!aiPreview || quickBusy) return
+    quickBusy = true
+    quickError = ''
+    quickMessage = ''
+    try {
+      const note = await createQuickNote(aiPreview.content, aiTitle.trim())
+      quickText = ''
+      aiPreview = null
+      quickMessage = `已记入速记「${note.title}」`
+      await refreshStats()
+    } catch (error) {
+      quickError = fail(error)
+    } finally {
+      quickBusy = false
+    }
+  }
 
   const lookbackDays = HEATMAP_WEEKS * 7
 
@@ -73,6 +154,64 @@
       {searching ? '查询中…' : '查询'}
     </button>
   </form>
+
+  <section class="card quick-card" aria-label="速记">
+    <h2 class="quick-head">速记</h2>
+    <textarea
+      class="quick-input"
+      placeholder="记一条速记…（标题自动生成，或让 AI 帮你整理）"
+      maxlength={MAX_CONTENT_CODEPOINTS}
+      bind:value={quickText}
+      disabled={quickBusy || aiBusy}
+    ></textarea>
+    <div class="quick-actions">
+      <button class="button" type="button" disabled={quickBusy || aiBusy || quickText.trim() === ''} onclick={saveQuick}>
+        {quickBusy ? '保存中…' : '速记'}
+      </button>
+      <button
+        class="button button-quiet"
+        type="button"
+        disabled={aiBusy || quickBusy || quickText.trim() === ''}
+        onclick={runAIQuick}
+      >
+        {aiBusy ? '整理中…' : 'AI 速记'}
+      </button>
+    </div>
+
+    {#if aiPreview}
+      <div class="quick-preview">
+        <h3 class="quick-preview-head">AI 整理预览</h3>
+        <label class="sr-only" for="quick-ai-title">AI 生成的标题（可修改）</label>
+        <input
+          id="quick-ai-title"
+          class="quick-title-input"
+          placeholder="AI 生成的标题（可修改）"
+          maxlength="60"
+          bind:value={aiTitle}
+        />
+        <Markdown source={aiPreview.content} />
+        <p class="muted">模型：{aiPreview.model}</p>
+        <div class="quick-actions">
+          <button class="button" type="button" disabled={quickBusy || aiTitle.trim() === ''} onclick={saveAI}>
+            {quickBusy ? '保存中…' : '保存'}
+          </button>
+          <button class="button button-quiet" type="button" disabled={quickBusy} onclick={() => (aiPreview = null)}>
+            返回修改
+          </button>
+        </div>
+      </div>
+    {/if}
+
+    {#if quickMessage}
+      <p class="quick-message" role="status">{quickMessage}</p>
+    {/if}
+    {#if quickError}
+      <p class="search-error" role="alert">{quickError}</p>
+    {/if}
+    {#if aiError}
+      <p class="search-error" role="alert">{aiError}</p>
+    {/if}
+  </section>
 
   {#if searchError}
     <p class="search-error" role="alert">{searchError}</p>
