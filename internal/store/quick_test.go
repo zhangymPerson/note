@@ -23,7 +23,7 @@ func TestCreateQuickNoteAutoTitle(t *testing.T) {
 	if n.CategoryID == nil || *n.CategoryID != int64(QuickCategoryID) {
 		t.Fatalf("category = %+v", n.CategoryID)
 	}
-	if !regexp.MustCompile(`^速记-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`).MatchString(n.Title) {
+	if !regexp.MustCompile(`^速记-\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`).MatchString(n.Title) {
 		t.Fatalf("标题格式不符: %q", n.Title)
 	}
 	if n.Content == nil || *n.Content != "买牛奶和鸡蛋" {
@@ -38,14 +38,14 @@ func TestCreateQuickNoteRetriesSameSecond(t *testing.T) {
 
 	// 占住第 0 秒的标题（正常笔记）。
 	occupy, err := st.CreateNote(ctx, NoteInput{
-		Title: "速记-" + fixed.Format(timeLayoutUTC), Content: strPtr("占用"), CategoryID: int64Ptr(QuickCategoryID),
+		Title: "速记-" + fixed.Format(timeLayoutLocal), Content: strPtr("占用"), CategoryID: int64Ptr(QuickCategoryID),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 占住第 1 秒的标题（回收站里的笔记也要挡路）。
 	if _, err := st.CreateNote(ctx, NoteInput{
-		Title: "速记-" + fixed.Add(time.Second).Format(timeLayoutUTC), Content: strPtr("占用"), CategoryID: int64Ptr(QuickCategoryID),
+		Title: "速记-" + fixed.Add(time.Second).Format(timeLayoutLocal), Content: strPtr("占用"), CategoryID: int64Ptr(QuickCategoryID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestCreateQuickNoteRetriesSameSecond(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "速记-" + fixed.Add(2*time.Second).Format(timeLayoutUTC)
+	want := "速记-" + fixed.Add(2*time.Second).Format(timeLayoutLocal)
 	if n.Title != want {
 		t.Fatalf("title = %q, want %q", n.Title, want)
 	}
