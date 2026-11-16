@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -332,6 +333,45 @@ func TestNotesAPIListPagingAndFilter(t *testing.T) {
 	}
 	if stats.TotalSearches < 1 {
 		t.Fatalf("expected search activity recorded, got %d", stats.TotalSearches)
+	}
+}
+
+func TestListSearchReturnsMatchLines(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	token := csrfTokenFor(t, handler)
+	createPlainNoteViaAPI(t, handler, token, "会议纪要", "第一行没有\n第二行有 会议 关键词\n第三行又是 会议")
+	createPlainNoteViaAPI(t, handler, token, "普通笔记", "正文里藏着会议一词")
+	createPlainNoteViaAPI(t, handler, token, "会议记录", "正文无关")
+
+	rec := apiRequest(t, handler, http.MethodGet, "/api/notes?q="+url.QueryEscape("会议"), token, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search: %d %s", rec.Code, rec.Body.String())
+	}
+	var page struct {
+		Items []struct {
+			Title      string   `json:"title"`
+			MatchLines []string `json:"match_lines"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if len(page.Items) != 3 {
+		t.Fatalf("expected 3 hits, got %d: %+v", len(page.Items), page.Items)
+	}
+	byTitle := make(map[string][]string, len(page.Items))
+	for _, item := range page.Items {
+		byTitle[item.Title] = item.MatchLines
+	}
+	want := []string{"第二行有 会议 关键词", "第三行又是 会议"}
+	if !slices.Equal(byTitle["会议纪要"], want) {
+		t.Fatalf("match_lines 会议纪要 = %+v, want %v", byTitle["会议纪要"], want)
+	}
+	if !slices.Equal(byTitle["普通笔记"], []string{"正文里藏着会议一词"}) {
+		t.Fatalf("match_lines 普通笔记 = %+v", byTitle["普通笔记"])
+	}
+	if len(byTitle["会议记录"]) != 0 {
+		t.Fatalf("标题命中不应有 match_lines: %+v", byTitle["会议记录"])
 	}
 }
 

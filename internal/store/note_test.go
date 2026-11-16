@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -333,6 +334,141 @@ func TestListNotesSearchTreatsLikeWildcardsAsLiterals(t *testing.T) {
 			t.Fatalf("query %q: expected %d hit, got total %d items %+v", tc.q, tc.want, page.Total, page.Items)
 		}
 	}
+}
+
+func TestListNotesMatchLines(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	// 多行正文：只有包含查询词的行会出现在 match_lines。
+	multi := "第一行没有关键词\n第二行有 会议 关键词\n第三行又是 会议\n第四行"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "会议纪要", Content: &multi}); err != nil {
+		t.Fatal(err)
+	}
+	// 只命中正文的笔记。
+	contentOnly := "正文里藏着会议一词\n第二行没有"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "普通笔记", Content: &contentOnly}); err != nil {
+		t.Fatal(err)
+	}
+	// 只命中标题的笔记：正文无关，不该有 match_lines。
+	titleOnly := "正文无关"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "会议记录", Content: &titleOnly}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := st.ListNotes(ctx, NoteFilter{Q: "会议", Page: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 3 {
+		t.Fatalf("expected 3 hits, got %d: %+v", len(page.Items), page.Items)
+	}
+
+	byTitle := make(map[string][]string, len(page.Items))
+	for _, item := range page.Items {
+		byTitle[item.Title] = item.MatchLines
+	}
+	if !slices.Equal(byTitle["会议纪要"], []string{"第二行有 会议 关键词", "第三行又是 会议"}) {
+		t.Fatalf("match_lines 会议纪要 = %+v, want 命中的两行", byTitle["会议纪要"])
+	}
+	if !slices.Equal(byTitle["普通笔记"], []string{"正文里藏着会议一词"}) {
+		t.Fatalf("match_lines 普通笔记 = %+v, want 第一行", byTitle["普通笔记"])
+	}
+	if len(byTitle["会议记录"]) != 0 {
+		t.Fatalf("标题命中但正文无关不应有 match_lines: %+v", byTitle["会议记录"])
+	}
+}
+
+func TestListNotesMatchLinesIgnoreASCIICase(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	body := "Alpha beta\nGamma"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "大小写", Content: &body}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := st.ListNotes(ctx, NoteFilter{Q: "alpha", Page: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || !slices.Equal(page.Items[0].MatchLines, []string{"Alpha beta"}) {
+		t.Fatalf("大小写应命中: %+v", page.Items)
+	}
+}
+
+func TestListNotesMatchLinesLongLineAndCap(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	// 单行超长正文：只在命中处附近截断，不整行输出（避免单行笔记等于输出全文）。
+	long := strings.Repeat("字", 100) + "关键词" + strings.Repeat("字", 200)
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "长行", Content: &long}); err != nil {
+		t.Fatal(err)
+	}
+	// 命中行超过上限：只取前 matchLineLimit 行。
+	capped := strings.Repeat("有 关键词 的行\n", 5)
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "多行", Content: &capped}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := st.ListNotes(ctx, NoteFilter{Q: "关键词", Page: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string][]string, len(page.Items))
+	for _, item := range page.Items {
+		byTitle[item.Title] = item.MatchLines
+	}
+
+	lines := byTitle["长行"]
+	if len(lines) != 1 {
+		t.Fatalf("长行应只有 1 条命中行: %+v", lines)
+	}
+	if !strings.Contains(lines[0], "关键词") {
+		t.Fatalf("截断后仍应含关键词: %q", lines[0])
+	}
+	if n := utf8.RuneCountInString(lines[0]); n > matchLineRunes+2 {
+		t.Fatalf("截断行过长: %d runes (%q)", n, lines[0])
+	}
+	if !strings.HasPrefix(lines[0], "…") {
+		t.Fatalf("行首被截应补省略号: %q", lines[0])
+	}
+	if !strings.HasSuffix(lines[0], "…") {
+		t.Fatalf("行尾被截应补省略号: %q", lines[0])
+	}
+
+	if got := len(byTitle["多行"]); got != matchLineLimit {
+		t.Fatalf("命中行应封顶 %d 条, got %d: %+v", matchLineLimit, got, byTitle["多行"])
+	}
+}
+
+func TestListNotesMatchLinesSkipsEncrypted(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+	configureMaster(t, st)
+
+	_ = createEncryptedNote(t, st, ctx, "密文标题", nil)
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "明文笔记", Content: strPtr("正文里有 会议 这个词")}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := st.ListNotes(ctx, NoteFilter{Q: "密文", Page: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range page.Items {
+		if item.Title == "密文标题" {
+			if len(item.MatchLines) != 0 {
+				t.Fatalf("加密笔记不该有 match_lines: %+v", item.MatchLines)
+			}
+			if item.Content != nil {
+				t.Fatalf("加密笔记不该有 content: %+v", item.Content)
+			}
+			return
+		}
+	}
+	t.Fatalf("没找到加密笔记命中项: %+v", page.Items)
 }
 
 func TestListNotesCategoryFilterAndEmptyQuery(t *testing.T) {

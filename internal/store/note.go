@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -83,6 +84,10 @@ type NoteListItem struct {
 	// ListNotes（网页列表）只填 140 码点的 Content 摘要，不会填这个字段；
 	// 只有 ListNotesAll（note list / note show 选择器）才会把全文读回来。
 	FullContent *string `json:"-"`
+	// MatchLines 是带关键词搜索时命中的正文行（原文里包含查询词的那些行，
+	// 最多 matchLineLimit 行、每行超长时在命中处截断到 matchLineRunes 码点）；
+	// 不带关键词的普通列表恒为空，加密笔记恒为空（服务端读不到明文）。
+	MatchLines []string `json:"match_lines,omitempty"`
 }
 
 // NoteFilter 是列表与搜索的入参。Deleted=true 时只返回回收站里的笔记。
@@ -506,7 +511,7 @@ func (s *Store) ListNotes(ctx context.Context, filter NoteFilter) (NotePage, err
 	}
 	defer rows.Close()
 
-	items, err := scanNoteItems(rows, false)
+	items, err := scanNoteItems(rows, false, q.search)
 	if err != nil {
 		return result, err
 	}
@@ -567,7 +572,9 @@ func buildNoteQuery(filter NoteFilter) noteQuery {
 // scanNoteItems 把列表查询的行读成 NoteListItem；加密笔记没有明文可读，
 // Content 与 FullContent 都留空。明文只回前 140 码点用于列表预览；
 // withFull 为真时额外带回完整正文（只有 CLI 的本地过滤需要）。
-func scanNoteItems(rows *sql.Rows, withFull bool) ([]NoteListItem, error) {
+// search 非空时（带关键词的搜索），明文笔记额外计算 MatchLines：
+// 只返回包含查询词的正文行，避免把整篇正文带回网页。
+func scanNoteItems(rows *sql.Rows, withFull bool, search string) ([]NoteListItem, error) {
 	items := []NoteListItem{}
 	for rows.Next() {
 		var (
@@ -602,6 +609,9 @@ func scanNoteItems(rows *sql.Rows, withFull bool) ([]NoteListItem, error) {
 				full := *content
 				item.FullContent = &full
 			}
+			if search != "" {
+				item.MatchLines = matchLines(*content, search)
+			}
 		}
 		items = append(items, item)
 	}
@@ -627,11 +637,81 @@ func (s *Store) ListNotesAll(ctx context.Context, deleted bool) ([]NoteListItem,
 	}
 	defer rows.Close()
 
-	return scanNoteItems(rows, true)
+	return scanNoteItems(rows, true, "")
 }
 
 const listSelectSQL = `SELECT n.id, n.title, n.content, n.is_encrypted, n.category_id, c.name, n.deleted_at, n.updated_at
         FROM notes n LEFT JOIN categories c ON c.id = n.category_id`
+
+// matchLineLimit 是搜索命中时单个笔记最多返回的匹配行数。
+const matchLineLimit = 3
+
+// matchLineRunes 是单条匹配行展示的最大码点数；超长行在命中处附近截断，
+// 前后补省略号，避免「单行超长正文」等于把全文带回网页。
+const matchLineRunes = 160
+
+// matchLines 返回 content 里包含 term（忽略 ASCII 大小写）的正文行，最多
+// matchLineLimit 行；行内首次命中位置用于超长行截断。term 须为去首尾空白的词。
+func matchLines(content, term string) []string {
+	needle := []rune(strings.ToLower(term))
+	if len(needle) == 0 {
+		return nil
+	}
+
+	lines := strings.Split(content, "\n")
+	matched := make([]string, 0, matchLineLimit)
+	for _, line := range lines {
+		if len(matched) >= matchLineLimit {
+			break
+		}
+		runes := []rune(line)
+		hit := -1
+		for i := 0; i+len(needle) <= len(runes); i++ {
+			if matchFoldEq(runes[i:i+len(needle)], needle) {
+				hit = i
+				break
+			}
+		}
+		if hit < 0 {
+			continue
+		}
+		if len(runes) > matchLineRunes {
+			start := hit - 24
+			if start < 0 {
+				start = 0
+			}
+			end := start + matchLineRunes
+			if end > len(runes) {
+				end = len(runes)
+			}
+			var b strings.Builder
+			if start > 0 {
+				b.WriteString("…")
+			}
+			b.WriteString(string(runes[start:end]))
+			if end < len(runes) {
+				b.WriteString("…")
+			}
+			line = b.String()
+		}
+		matched = append(matched, line)
+	}
+	return matched
+}
+
+// matchFoldEq 判断 value 是否在忽略大小写后与 lowered 相等（逐 rune 比较，
+// 不切字节，少数语言的 ToLower 会改变字节数，不能拿字节下标对齐原文）。
+func matchFoldEq(value, lowered []rune) bool {
+	if len(value) != len(lowered) {
+		return false
+	}
+	for i, r := range value {
+		if unicode.ToLower(r) != lowered[i] {
+			return false
+		}
+	}
+	return true
+}
 
 func truncateRunes(s string, limit int) string {
 	runes := []rune(s)

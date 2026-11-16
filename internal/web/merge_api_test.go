@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
@@ -13,8 +14,12 @@ import (
 func createPlainNoteViaAPI(t *testing.T, handler http.Handler, token, title, content string) string {
 	t.Helper()
 
-	body := `{"title":"` + title + `","content":"` + content + `"}`
-	rec := apiRequest(t, handler, http.MethodPost, "/api/notes", token, body)
+	// json.Marshal 保证多行正文/特殊字符被正确转义，字符串拼接会产出非法 JSON。
+	payload, err := json.Marshal(map[string]string{"title": title, "content": content})
+	if err != nil {
+		t.Fatalf("marshal create body: %v", err)
+	}
+	rec := apiRequest(t, handler, http.MethodPost, "/api/notes", token, string(payload))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create %q: %d %s", title, rec.Code, rec.Body.String())
 	}

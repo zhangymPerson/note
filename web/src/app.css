@@ -467,6 +467,20 @@ input {
   border-bottom: 1px solid var(--border);
 }
 
+/* 查询结果里的命中行：只展示包含查询词的那几行正文，不输出全文 */
+.search-hit-lines {
+  margin-top: 4px;
+  display: grid;
+  gap: 2px;
+}
+
+.search-hit-line {
+  color: var(--muted);
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* 速记卡片：正文框 + 直接速记 / AI 速记（预览确认） */
 .quick-card {
   margin-top: 16px;

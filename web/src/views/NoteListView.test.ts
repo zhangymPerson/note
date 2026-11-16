@@ -72,6 +72,37 @@ afterEach(() => {
 });
 
 describe("NoteListView", () => {
+  it("搜索命中时列表行显示匹配行而不是摘要", async () => {
+    mocks.listNotes.mockResolvedValue({
+      items: [
+        {
+          ...NOTE,
+          match_lines: ["第二行有 会议 关键词", "第三行又是 会议"],
+        },
+      ],
+      total: 1,
+      page: 1,
+      per_page: 20,
+    });
+    history.replaceState(null, "", "/notes?q=%E4%BC%9A%E8%AE%AE");
+    const target = render();
+    await vi.waitFor(() =>
+      expect(mocks.listNotes).toHaveBeenCalledWith({
+        q: "会议",
+        category: 0,
+        page: 1,
+      }),
+    );
+    await vi.waitFor(() => {
+      const summary = target.querySelector(".note-summary");
+      expect(summary?.textContent).toContain("第二行有 会议 关键词");
+    });
+    const summary = target.querySelector(".note-summary");
+    expect(summary?.textContent).toContain("第三行又是 会议");
+    // 匹配行之外的内容不展示（.content 摘要字段被忽略）
+    expect(summary?.textContent).not.toContain("摘要");
+  });
+
   it("笔记列表与右侧分类树同时渲染，分类树里不再有 chips", async () => {
     const target = render();
     await vi.waitFor(() =>

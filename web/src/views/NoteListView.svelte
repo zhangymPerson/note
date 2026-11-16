@@ -323,7 +323,9 @@
                     <span class="badge">已加密</span>
                   {/if}
                 </span>
-                {#if note.content}
+                {#if note.match_lines && note.match_lines.length > 0}
+                  <span class="note-summary note-match-lines">{note.match_lines.join('\n')}</span>
+                {:else if note.content}
                   <span class="note-summary">{note.content}</span>
                 {:else if note.encrypted}
                   <span class="note-summary muted">密文内容不在列表展示。</span>

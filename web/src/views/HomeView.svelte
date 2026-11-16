@@ -228,6 +228,17 @@
             {#if hit.encrypted}
               <span class="badge">已加密</span>
             {/if}
+            {#if hit.match_lines && hit.match_lines.length > 0}
+              <div class="search-hit-lines">
+                {#each hit.match_lines as line}
+                  <div class="search-hit-line">{line}</div>
+                {/each}
+              </div>
+            {:else if hit.content}
+              <div class="search-hit-lines">
+                <div class="search-hit-line">{hit.content}</div>
+              </div>
+            {/if}
           </li>
         {/each}
       </ul>

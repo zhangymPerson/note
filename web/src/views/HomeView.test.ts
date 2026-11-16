@@ -202,3 +202,66 @@ describe("HomeView 速记卡片", () => {
     expect(buttonWith(target, "AI 速记").disabled).toBe(true);
   });
 });
+
+describe("HomeView 查询结果", () => {
+  it("查询命中显示标题 + 匹配行，不输出全文", async () => {
+    mocks.listNotes.mockResolvedValue({
+      items: [
+        {
+          id: "n1",
+          title: "会议纪要",
+          encrypted: false,
+          category_id: null,
+          updated_at: "2026-11-16T12:00:00Z",
+          match_lines: ["第二行有 会议 关键词", "第三行又是 会议"],
+        },
+        {
+          id: "n2",
+          title: "会议记录",
+          encrypted: false,
+          category_id: null,
+          content: "正文无关",
+          updated_at: "2026-11-16T12:00:00Z",
+        },
+        {
+          id: "n3",
+          title: "加密的",
+          encrypted: true,
+          category_id: null,
+          updated_at: "2026-11-16T12:00:00Z",
+        },
+      ],
+      total: 3,
+      page: 1,
+      per_page: 20,
+    });
+    const target = renderHome();
+    typeInto(target.querySelector("#home-search") as HTMLInputElement, "会议");
+    // 「查询」是 type=submit，合成 click 不会提交表单，直接派发 submit 事件
+    const form = target.querySelector(".search-form") as HTMLFormElement;
+    form.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+
+    await vi.waitFor(() =>
+      expect(mocks.listNotes).toHaveBeenCalledWith({ q: "会议" }),
+    );
+    await vi.waitFor(() =>
+      expect(target.querySelectorAll(".search-hit-lines")).toHaveLength(2),
+    );
+    expect(target.textContent).toContain("第二行有 会议 关键词");
+    expect(target.textContent).toContain("第三行又是 会议");
+    // 标题命中、正文无关：回落显示摘要而不是匹配行
+    expect(target.textContent).toContain("正文无关");
+    // 加密笔记不展示任何正文
+    expect(target.textContent).not.toContain("密文内容");
+  });
+
+  it("空查询不发请求", async () => {
+    const target = renderHome();
+    const input = target.querySelector("#home-search") as HTMLInputElement;
+    typeInto(input, "   ");
+    click(buttonWith(target, "查询"));
+    expect(mocks.listNotes).not.toHaveBeenCalled();
+  });
+});

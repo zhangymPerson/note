@@ -223,5 +223,5 @@ func (s *Store) ListNotesInCategory(ctx context.Context, categoryID int64) ([]No
 	}
 	defer rows.Close()
 
-	return scanNoteItems(rows, false)
+	return scanNoteItems(rows, false, "")
 }

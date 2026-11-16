@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 查询结果展示命中行：首页查询区与全部笔记列表的搜索结果，在标题之外展示正文里包含查询词的原始行（不输出全文）：
+  - **`internal/store/note.go`**：`NoteListItem` 新增 `MatchLines`（`json:"match_lines,omitempty"`，仅带 `q` 的搜索填充）；`scanNoteItems` 增加 search 参数，按 `\n` 切行、忽略 ASCII 大小写匹配（`matchLines`/`matchFoldEq`，与 SQLite `LIKE` 同口径），最多 `matchLineLimit = 3` 行、单行超 `matchLineRunes = 160` 码点从首次命中处往前 24 码点起截断并补省略号——「单行超长正文」不等于带回全文；标题命中但正文无关、加密笔记恒无 `match_lines`。普通浏览列表与 `ListNotesAll`（CLI 本地筛选）不受影响，列表接口依旧不返回全文。
+  - **前端**：`NoteListView.svelte` 行内摘要优先展示 `match_lines`（`join('\n')` 保持 pre-wrap），无匹配行回落 `content` 摘要；`HomeView.svelte` 搜索结果在标题下新增 `.search-hit-lines`（匹配行容器，标题命中回落 140 码点摘要、加密笔记不展示正文）；`lib/notes.ts` 补 `match_lines?: string[]`。
+  - **测试**：store 新增 4 项（命中行选取、忽略 ASCII 大小写、超长行截断 + 3 行封顶、加密笔记无命中行）；web 新增 1 项（搜索响应 JSON 带 `match_lines`）；前端 `HomeView.test.ts` 2 项 + `NoteListView.test.ts` 1 项（搜索命中显示匹配行而非摘要）。
+  - **验证**：`just test`（Go 全包 + 前端 200 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过。
+
 ### Added
 
 - 笔记合并：全部笔记列表把多条明文笔记拼成一条新笔记（实现过程与关键逻辑）：
