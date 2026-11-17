@@ -29,7 +29,7 @@ type Client struct {
 	APIKey  string
 	Models  []string
 	Prompt  string
-	HTTP    *http.Client // nil → 60s 超时的默认客户端
+	HTTP    *http.Client // nil → ai.DefaultTimeout 超时的默认客户端
 	// Timeline 可选：非 nil 时采集本次调用的网络阶段时间点（DNS/TCP/TLS/首字节），
 	// 只在排查失败时用，默认不采集。调用方负责在失败日志里输出它。
 	Timeline *Timeline
@@ -52,7 +52,10 @@ const (
 	maxCompletionTokens = 3000
 	// finishReasonLength 是上游「写到输出上限」的标记（OpenAI 口径）。
 	finishReasonLength = "length"
-	defaultTimeout     = 60 * time.Second
+	// DefaultTimeout 是单次 AI 调用的总上限（网页的 ctx、整段请求的 client 超时、
+	// 流式请求的响应头超时都用它）。5 分钟是实测出来的：慢模型 + 近 2000 字正文
+	// 常常要两三分钟才吐完，60 秒会误杀正常生成；再长用户也等不下去。
+	DefaultTimeout = 5 * time.Minute
 	// MaxCustomPromptRunes 是「自定义提示词」的码点上限：它是本次调用的补充约束，
 	// 不是第二份提示词模板（后者是 ai.prompt，上限 2000）。
 	MaxCustomPromptRunes = 500
@@ -96,11 +99,11 @@ var (
 		MaxIdleConnsPerHost:   4,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: defaultTimeout,
+		ResponseHeaderTimeout: DefaultTimeout,
 		ExpectContinueTimeout: time.Second,
 	}
-	// 整段响应：客户端自带 60 秒总时长。
-	sharedClient = &http.Client{Timeout: defaultTimeout, Transport: sharedTransport}
+	// 整段响应：客户端自带 ai.DefaultTimeout 的总时长。
+	sharedClient = &http.Client{Timeout: DefaultTimeout, Transport: sharedTransport}
 	// 流式响应：不设总时长（生成是持续输出），靠调用方 ctx 与首次响应头超时兜底。
 	sharedStreamClient = &http.Client{Transport: sharedTransport}
 )
@@ -136,12 +139,14 @@ func (e TimeoutError) Error() string {
 
 func (e TimeoutError) Unwrap() error { return e.Err }
 
-// formatTimeout 把超时时长写成人话：整秒用「60 秒」，毫秒级用「200 毫秒」，
-// 其余情况退回 Duration.String()（例如 1.5 秒不会变成「1 秒」）。
+// formatTimeout 把超时时长写成人话：整分钟用「5 分钟」，整秒用「45 秒」，
+// 毫秒级用「200 毫秒」，其余情况退回 Duration.String()（例如 1.5 秒不会变成「1 秒」）。
 func formatTimeout(d time.Duration) string {
 	switch {
 	case d <= 0:
 		return ""
+	case d%time.Minute == 0:
+		return fmt.Sprintf("%d 分钟", int64(d/time.Minute))
 	case d%time.Second == 0:
 		return fmt.Sprintf("%d 秒", int64(d/time.Second))
 	case d%time.Millisecond == 0:
@@ -379,13 +384,13 @@ func wrapTransportError(err error, model string, timeout time.Duration) error {
 	return TimeoutError{Model: model, Duration: timeout, Err: err}
 }
 
-// effectiveTimeout 是这次调用真正生效的上限：客户端自带 60 秒，
+// effectiveTimeout 是这次调用真正生效的上限：客户端自带 ai.DefaultTimeout，
 // 调用方也可以塞一个自己的 HTTP 客户端（测试就是这么把超时压到毫秒的）。
 func effectiveTimeout(c *http.Client) time.Duration {
 	if c != nil && c.Timeout > 0 {
 		return c.Timeout
 	}
-	return defaultTimeout
+	return DefaultTimeout
 }
 
 func (c *Client) hasModel(model string) bool {

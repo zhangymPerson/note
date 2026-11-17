@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- AI 调用超时上限 60 秒 → **5 分钟**（`ai.DefaultTimeout`）：慢模型 + 近 2000 字正文常要两三分钟才吐完，60 秒会误杀正常生成（实测日志：`first_byte_ms=1041` 说明上游已开始回包，60 秒上限仍被 `context deadline exceeded` 打断）。
+  - 单一来源：`internal/ai` 导出 `DefaultTimeout = 5 * time.Minute`，`sharedTransport.ResponseHeaderTimeout`、`sharedClient.Timeout`、网页 `optimizeTimeout`（进而 `ctx` 与 `note add` 的 `Ctrl+O`）全部取它；不再有独立写死的 60 秒。
+  - 文案跟着单位走：`ai.formatTimeout` 新增整分钟分支，`TimeoutError` 现在说「模型 X 在 5 分钟内没有响应，可以稍后重试、换一个模型，或检查接口地址是否可用」（整秒仍是「45 秒」、毫秒仍是「20 毫秒」）。
+  - **测试**：新增 `TestDefaultTimeoutIsFiveMinutes`（常量值 + 文案 + 三处超时同值）、`TestOptimizeErrorTimeoutUsesMinutes`（504 文案说 5 分钟）；既有断言里的 60 秒改为按新单位对齐。`just test`（前端 219 项）与 `just check` 通过。
+
 ### Fixed
 
 - AI 优化失败时的日志信息量不够，排查只能靠猜（「模型 X 在 60 秒内没有响应」看不出是 DNS 卡住、连不上、TLS 失败还是模型就是不出字，也看不出到底发了什么）：

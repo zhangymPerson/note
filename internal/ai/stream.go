@@ -141,7 +141,7 @@ func readSSE(ctx context.Context, body io.Reader, model string, onDelta StreamFu
 		return parsedCompletion{}, "", readFailed
 	}
 	if err := scanner.Err(); err != nil {
-		return parsedCompletion{}, "", wrapTransportError(err, model, defaultTimeout)
+		return parsedCompletion{}, "", wrapTransportError(err, model, DefaultTimeout)
 	}
 	return parsedCompletion{Content: content.String(), Truncated: truncated}, model, nil
 }

@@ -64,7 +64,7 @@ func TestOptimizeFailureLogsEveryRequestField(t *testing.T) {
 		"custom_prompt_sha256=",
 		"api_key=", // 只出现掩码（短密钥就是 8 个星号），绝不是明文
 		"http_client=shared",
-		"client_timeout_ms=60000",
+		"client_timeout_ms=300000",
 		"elapsed_ms=",
 		"deadline_in_ms=",
 		"client_gone=false",

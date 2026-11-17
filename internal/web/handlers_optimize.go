@@ -20,7 +20,9 @@ const (
 	// 留足 JSON 转义与 model 字段的余量。
 	optimizeMaxBytes = 64 << 10
 	// optimizeTimeout 是单次上游调用的上限，超时映射成 504。
-	optimizeTimeout = 60 * time.Second
+	// 取 internal/ai 的默认值（5 分钟），保证「ctx 上限」与「响应头超时」同一个数，
+	// 否则日志里的 60 秒与文案里的分钟数会对不上。
+	optimizeTimeout = ai.DefaultTimeout
 )
 
 type optimizeRequest struct {

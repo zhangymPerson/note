@@ -236,6 +236,21 @@ func TestOptimizeWrapsTimeoutWithActionableMessage(t *testing.T) {
 	}
 }
 
+func TestDefaultTimeoutIsFiveMinutes(t *testing.T) {
+	if DefaultTimeout != 5*time.Minute {
+		t.Fatalf("默认超时应当是 5 分钟，得到 %v", DefaultTimeout)
+	}
+	// 文案要把 5 分钟写成「5 分钟」而不是「300 秒」：用户读的是这句话。
+	if got := (TimeoutError{Model: "m1", Duration: DefaultTimeout}).Error(); !strings.Contains(got, "在 5 分钟内没有响应") {
+		t.Fatalf("超时文案应当是 5 分钟：%s", got)
+	}
+	// 共享客户端的三个上限必须同一个数，否则日志里会出现对不上的两个时间。
+	if sharedClient.Timeout != DefaultTimeout || sharedTransport.ResponseHeaderTimeout != DefaultTimeout {
+		t.Fatalf("共享客户端超时不一致：client=%v header=%v default=%v",
+			sharedClient.Timeout, sharedTransport.ResponseHeaderTimeout, DefaultTimeout)
+	}
+}
+
 func TestBuildPrompt(t *testing.T) {
 	if BuildPrompt("", "笔记") != strings.Replace(config.DefaultAIPrompt, config.PromptVariable, "笔记", 1) {
 		t.Fatal("空模板应当使用默认提示词")

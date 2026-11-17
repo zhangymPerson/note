@@ -92,8 +92,8 @@ func TestDescribeMarksBuiltinPrompt(t *testing.T) {
 	if got["http_client"] != "shared" {
 		t.Errorf("http_client = %v, want shared", got["http_client"])
 	}
-	if got["client_timeout_ms"] != int64(60000) {
-		t.Errorf("client_timeout_ms = %v, want 60000", got["client_timeout_ms"])
+	if got["client_timeout_ms"] != int64(300000) {
+		t.Errorf("client_timeout_ms = %v, want 300000", got["client_timeout_ms"])
 	}
 }
 
@@ -114,7 +114,7 @@ func TestDescribeInjectedClientAndStreamTimeoutOff(t *testing.T) {
 
 func TestErrorAttrsExpandsChain(t *testing.T) {
 	upstream := UpstreamError{Status: 502, Message: "bad gateway"}
-	timeout := TimeoutError{Model: "m1", Duration: 60 * time.Second, Err: fmt.Errorf("wrapped: %w", upstream)}
+	timeout := TimeoutError{Model: "m1", Duration: 5 * time.Minute, Err: fmt.Errorf("wrapped: %w", upstream)}
 
 	got := attrMap(ErrorAttrs(timeout))
 	if got["error_type"] != "ai.TimeoutError" {
@@ -127,7 +127,7 @@ func TestErrorAttrsExpandsChain(t *testing.T) {
 	if !strings.HasPrefix(chain[0], "ai.TimeoutError: ") || !strings.Contains(chain[2], "ai.UpstreamError") {
 		t.Errorf("链路顺序不对：%q", chain)
 	}
-	if !strings.Contains(fmt.Sprint(got["error"]), "60 秒内没有响应") {
+	if !strings.Contains(fmt.Sprint(got["error"]), "5 分钟内没有响应") {
 		t.Errorf("error 应当是给人看的那句话：%v", got["error"])
 	}
 }

@@ -216,7 +216,7 @@ func TestOptimizeErrorTimeoutIsActionable(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeOptimizeError(rec, ai.TimeoutError{
 		Model:    "glm-5.3-flash",
-		Duration: 60 * time.Second,
+		Duration: 45 * time.Second,
 		Err:      context.DeadlineExceeded,
 	})
 
@@ -224,10 +224,23 @@ func TestOptimizeErrorTimeoutIsActionable(t *testing.T) {
 		t.Fatalf("超时应当是 504，得到 %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"ai_timeout", "glm-5.3-flash", "60 秒", "重试"} {
+	for _, want := range []string{"ai_timeout", "glm-5.3-flash", "45 秒", "重试"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("文案缺 %q：%s", want, body)
 		}
+	}
+}
+
+// 真实默认值（ai.DefaultTimeout = 5 分钟）的文案：单位要跟着变，别写成「300 秒」。
+func TestOptimizeErrorTimeoutUsesMinutes(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeOptimizeError(rec, ai.TimeoutError{
+		Model:    "deepseek-v4-flash",
+		Duration: ai.DefaultTimeout,
+		Err:      context.DeadlineExceeded,
+	})
+	if body := rec.Body.String(); !strings.Contains(body, "在 5 分钟内没有响应") {
+		t.Fatalf("文案应当说 5 分钟：%s", body)
 	}
 }
 
