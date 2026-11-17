@@ -14,6 +14,11 @@
   - **测试**：store 新增 4 项（命中行选取、忽略 ASCII 大小写、超长行截断 + 3 行封顶、加密笔记无命中行）；web 新增 1 项（搜索响应 JSON 带 `match_lines`）；前端 `HomeView.test.ts` 2 项 + `NoteListView.test.ts` 1 项（搜索命中显示匹配行而非摘要）。
   - **验证**：`just test`（Go 全包 + 前端 200 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过。
 
+- 检索词高亮：搜索结果（首页查询区与全部笔记列表带 `q` 时）把标题、命中正文行（含标题命中回落的 140 码点摘要）里的检索词用 `<mark>` 标出：
+  - **`web/src/lib/highlight.ts`**（新建）：`highlightParts(text, query)` 把文本切成「命中/非命中」片段，忽略 ASCII 大小写（与服务端 `matchLines` 同口径），同一词多处出现每处都命中；`web/src/components/Highlight.svelte`（新建）渲染片段、命中段包 `<mark>`——只在模板里包元素，不拼 HTML（`{@html}` 约束不变）。
+  - **视图**：`HomeView.svelte` 新增 `searchedQ`（**提交时**的检索词，高亮不跟输入框实时值变），高亮标题、命中行与回落摘要；`NoteListView.svelte` 用 `committedQ` 高亮标题与摘要（匹配行逐行渲染、保留换行）；`app.css` 统一 mark 配色（`--accent` / `--accent-contrast`，深浅主题都可见）。
+  - **测试**：`highlight.test.ts` 6 项（空词/未命中/切段/大小写/多处命中/不 trim）；HomeView 与 NoteListView 各扩展 `<mark>` 数量与文本断言；`just test`（Go 全包 + 前端 206 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过。
+
 ### Added
 
 - 笔记合并：全部笔记列表把多条明文笔记拼成一条新笔记（实现过程与关键逻辑）：

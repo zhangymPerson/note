@@ -1,5 +1,6 @@
 <script lang="ts">
   import ActivityHeatmap from '../components/ActivityHeatmap.svelte'
+  import Highlight from '../components/Highlight.svelte'
   import Markdown from '../components/Markdown.svelte'
   import { aiQuickNote, type QuickNoteResult } from '../lib/ai'
   import { createQuickNote, listNotes, MAX_CONTENT_CODEPOINTS, type NoteListItem } from '../lib/notes'
@@ -10,6 +11,7 @@
   let stats = $state<Stats | null>(null)
   let statsError = $state('')
   let query = $state('')
+  let searchedQ = $state('') // 已提交执行的检索词，高亮用它而不是输入框实时值
   let results = $state<NoteListItem[] | null>(null)
   let searching = $state(false)
   let searchError = $state('')
@@ -114,6 +116,7 @@
     if (q === '' || searching) return
     searching = true
     searchError = ''
+    searchedQ = q
     try {
       const result = await listNotes({ q })
       results = result.items
@@ -223,7 +226,7 @@
         {#each results as hit}
           <li>
             <a href="/notes/{hit.id}" onclick={(e) => { e.preventDefault(); openNote(hit.id) }}>
-              {hit.title}
+              <Highlight text={hit.title} query={searchedQ} />
             </a>
             {#if hit.encrypted}
               <span class="badge">已加密</span>
@@ -231,12 +234,16 @@
             {#if hit.match_lines && hit.match_lines.length > 0}
               <div class="search-hit-lines">
                 {#each hit.match_lines as line}
-                  <div class="search-hit-line">{line}</div>
+                  <div class="search-hit-line">
+                    <Highlight text={line} query={searchedQ} />
+                  </div>
                 {/each}
               </div>
             {:else if hit.content}
               <div class="search-hit-lines">
-                <div class="search-hit-line">{hit.content}</div>
+                <div class="search-hit-line">
+                  <Highlight text={hit.content} query={searchedQ} />
+                </div>
               </div>
             {/if}
           </li>

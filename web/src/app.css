@@ -467,6 +467,16 @@ input {
   border-bottom: 1px solid var(--border);
 }
 
+/* 检索词高亮：mark 默认黄色底在深色主题下看不清，统一配色 */
+.search-results a mark,
+.search-hit-line mark,
+.note-title mark,
+.note-summary mark {
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  border-radius: 2px;
+  padding: 0 1px;
+}
 /* 查询结果里的命中行：只展示包含查询词的那几行正文，不输出全文 */
 .search-hit-lines {
   margin-top: 4px;

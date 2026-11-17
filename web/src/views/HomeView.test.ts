@@ -255,6 +255,14 @@ describe("HomeView 查询结果", () => {
     expect(target.textContent).toContain("正文无关");
     // 加密笔记不展示任何正文
     expect(target.textContent).not.toContain("密文内容");
+    // 检索词高亮：n1 标题 + 两行命中行各一次，n2 标题一次，共 4 个 <mark>
+    const marks = Array.from(target.querySelectorAll("mark"));
+    expect(marks).toHaveLength(4);
+    for (const mark of marks) expect(mark.textContent).toBe("会议");
+    // 高亮只出现在命中片段里，正文无关的内容不会被标
+    expect(
+      target.querySelector(".search-hit-lines")?.textContent,
+    ).not.toContain("<mark>");
   });
 
   it("空查询不发请求", async () => {

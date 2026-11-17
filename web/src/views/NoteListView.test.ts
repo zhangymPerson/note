@@ -72,11 +72,12 @@ afterEach(() => {
 });
 
 describe("NoteListView", () => {
-  it("搜索命中时列表行显示匹配行而不是摘要", async () => {
+  it("搜索命中时列表行显示匹配行而不是摘要，检索词高亮", async () => {
     mocks.listNotes.mockResolvedValue({
       items: [
         {
           ...NOTE,
+          title: "会议第一条",
           match_lines: ["第二行有 会议 关键词", "第三行又是 会议"],
         },
       ],
@@ -101,6 +102,13 @@ describe("NoteListView", () => {
     expect(summary?.textContent).toContain("第三行又是 会议");
     // 匹配行之外的内容不展示（.content 摘要字段被忽略）
     expect(summary?.textContent).not.toContain("摘要");
+    // 标题与匹配行里的检索词都用 <mark> 高亮
+    const title = target.querySelector(".note-title");
+    expect(title?.querySelectorAll("mark")).toHaveLength(1);
+    expect(title?.querySelector("mark")?.textContent).toBe("会议");
+    const summaryMarks = Array.from(summary?.querySelectorAll("mark") ?? []);
+    expect(summaryMarks).toHaveLength(2);
+    for (const mark of summaryMarks) expect(mark.textContent).toBe("会议");
   });
 
   it("笔记列表与右侧分类树同时渲染，分类树里不再有 chips", async () => {

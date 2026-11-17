@@ -1,5 +1,6 @@
 <script lang="ts">
   import CategoryTree from '../components/CategoryTree.svelte'
+  import Highlight from '../components/Highlight.svelte'
   import NoteDetailView from './NoteDetailView.svelte'
   import { ApiRequestError } from '../lib/api'
   import {
@@ -318,15 +319,33 @@
                 onclick={() => (merging ? toggleSelect(note.id) : toggle(note))}
               >
                 <span class="note-title">
-                  {note.title}
+                  {#if committedQ !== ''}
+                    <Highlight text={note.title} query={committedQ} />
+                  {:else}
+                    {note.title}
+                  {/if}
                   {#if note.encrypted}
                     <span class="badge">已加密</span>
                   {/if}
                 </span>
                 {#if note.match_lines && note.match_lines.length > 0}
-                  <span class="note-summary note-match-lines">{note.match_lines.join('\n')}</span>
+                  <span class="note-summary note-match-lines">
+                    {#if committedQ !== ''}
+                      {#each note.match_lines as line, i}
+                        <Highlight text={line} query={committedQ} />{i < note.match_lines.length - 1 ? '\n' : ''}
+                      {/each}
+                    {:else}
+                      {note.match_lines.join('\n')}
+                    {/if}
+                  </span>
                 {:else if note.content}
-                  <span class="note-summary">{note.content}</span>
+                  <span class="note-summary">
+                    {#if committedQ !== ''}
+                      <Highlight text={note.content} query={committedQ} />
+                    {:else}
+                      {note.content}
+                    {/if}
+                  </span>
                 {:else if note.encrypted}
                   <span class="note-summary muted">密文内容不在列表展示。</span>
                 {/if}
