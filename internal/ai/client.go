@@ -40,7 +40,14 @@ const (
 	maxResponseBytes = 1 << 20
 	// maxErrorMessageRunes 限制回显给用户与日志的上游错误摘要长度。
 	maxErrorMessageRunes = 200
-	defaultTimeout       = 60 * time.Second
+	// maxCompletionTokens 是输出上限。正文本身限 2000 码点，中文大致一字一 token，
+	// 留出 Markdown 结构与标点余量后 3000 够用；不设上限时上游会闷头写到它的默认值
+	// （动辄几千 token），耗时与费用都白涨。真撞上限了不静默截尾，而是报
+	// TruncatedError，让用户自己决定缩短原文还是换模型。
+	maxCompletionTokens = 3000
+	// finishReasonLength 是上游「写到输出上限」的标记（OpenAI 口径）。
+	finishReasonLength = "length"
+	defaultTimeout     = 60 * time.Second
 	// MaxCustomPromptRunes 是「自定义提示词」的码点上限：它是本次调用的补充约束，
 	// 不是第二份提示词模板（后者是 ai.prompt，上限 2000）。
 	MaxCustomPromptRunes = 500
@@ -70,7 +77,28 @@ type chatRequest struct {
 	Messages    []chatMessage `json:"messages"`
 	Temperature float64       `json:"temperature"`
 	Stream      bool          `json:"stream"`
+	MaxTokens   int           `json:"max_tokens"`
 }
+
+// 进程级共享的两个 HTTP 客户端。每次调用新建 http.Client 等于丢掉 keep-alive：
+// 每次都重新 DNS + TCP + TLS 握手（实测几百毫秒），而一次优化本身才几秒。
+var (
+	sharedTransport = &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          8,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: defaultTimeout,
+		ExpectContinueTimeout: time.Second,
+	}
+	// 整段响应：客户端自带 60 秒总时长。
+	sharedClient = &http.Client{Timeout: defaultTimeout, Transport: sharedTransport}
+	// 流式响应：不设总时长（生成是持续输出），靠调用方 ctx 与首次响应头超时兜底。
+	sharedStreamClient = &http.Client{Transport: sharedTransport}
+)
 
 // ModelError 表示请求的模型不在 ai.models 里：切换模型是显式选择，不猜。
 type ModelError struct{ Model string }
@@ -131,7 +159,20 @@ func (e UpstreamError) Error() string {
 	return fmt.Sprintf("AI 接口返回 %d：%s", e.Status, e.Message)
 }
 
-// NewClient 从配置构造客户端；HTTP 留空，由 Optimize 按需补默认值。
+// TruncatedError 表示上游写到了 max_tokens 上限：正文是半截的，不能当结果用。
+// 不静默截尾、也不自动重试（重试只会再撞一次同一个上限）。
+type TruncatedError struct{ Model string }
+
+func (e TruncatedError) Error() string {
+	where := "模型"
+	if e.Model != "" {
+		where = "模型 " + e.Model
+	}
+	return fmt.Sprintf("%s 的输出达到 %d token 上限被截断，结果不完整；请缩短正文或换一个模型后重试",
+		where, maxCompletionTokens)
+}
+
+// NewClient 从配置构造客户端；HTTP 留空，由发起调用时选共享客户端。
 func NewClient(cfg config.AI) *Client {
 	return &Client{
 		BaseURL: cfg.BaseURL,
@@ -194,26 +235,86 @@ func (c *Client) Optimize(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	parsed, parseErr := parseChatCompletion(raw)
+	return c.finish(parsed, model, parseErr)
+}
 
+// parsedCompletion 是非流式响应里我们用得上的两个字段。
+// Truncated 为 true 表示上游写到 max_tokens 上限就停了（finish_reason=length）。
+type parsedCompletion struct {
+	Content   string
+	Truncated bool
+}
+
+// parseChatCompletion 解析一次非流式 chat/completions 响应。
+func parseChatCompletion(raw []byte) (parsedCompletion, error) {
 	var parsed struct {
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return Result{}, ErrBadResponse
+		return parsedCompletion{}, ErrBadResponse
 	}
 	if len(parsed.Choices) == 0 {
-		return Result{}, ErrBadResponse
+		return parsedCompletion{}, ErrBadResponse
 	}
+	choice := parsed.Choices[0]
+	return parsedCompletion{Content: choice.Message.Content, Truncated: choice.FinishReason == finishReasonLength}, nil
+}
 
-	content := StripFence(parsed.Choices[0].Message.Content)
+// finish 把解析结果变成对外的 Result：先判定截断（半截正文比空正文更误导），
+// 再剥围栏、再判空。
+func (c *Client) finish(parsed parsedCompletion, model string, err error) (Result, error) {
+	if err != nil {
+		return Result{}, err
+	}
+	if parsed.Truncated {
+		return Result{}, TruncatedError{Model: model}
+	}
+	content := StripFence(parsed.Content)
 	if content == "" {
 		return Result{}, ErrEmptyResult
 	}
 	return Result{Content: content, Model: model}, nil
+}
+
+// prepare 校验配置与模型并拼出请求体与端点，整段与流式两条管线共用。
+func (c *Client) prepare(modelName, prompt string, stream bool) (body []byte, endpoint, model string, err error) {
+	if !c.Configured() {
+		return nil, "", "", ErrNotConfigured
+	}
+	model = strings.TrimSpace(modelName)
+	if model == "" {
+		model = c.DefaultModel()
+	} else if !c.hasModel(model) {
+		return nil, "", "", ModelError{Model: model}
+	}
+
+	payload := chatRequest{Model: model, Temperature: 0.2, Stream: stream, MaxTokens: maxCompletionTokens}
+	payload.Messages = []chatMessage{{Role: "user", Content: prompt}}
+	body, err = json.Marshal(payload)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("encode request: %w", err)
+	}
+
+	// 末尾斜杠不参与拼接：base_url 写成 .../v1 或 .../v1/ 都一样。
+	endpoint = strings.TrimRight(strings.TrimSpace(c.BaseURL), "/") + "/chat/completions"
+	return body, endpoint, model, nil
+}
+
+// httpClient 选这次调用用的客户端：注入的（测试）优先，否则用进程级共享实例。
+func (c *Client) httpClient(stream bool) *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	if stream {
+		return sharedStreamClient
+	}
+	return sharedClient
 }
 
 // chat 是 Optimize 与 QuickNote 共用的请求管线：校验配置与模型、拼 payload、
@@ -221,25 +322,12 @@ func (c *Client) Optimize(ctx context.Context, req Request) (Result, error) {
 // prompt 是已经渲染完成的用户消息（Optimize 用模板+正文+自定义要求，
 // QuickNote 用内建速记提示词+追加的正文）。
 func (c *Client) chat(ctx context.Context, modelName, prompt string) ([]byte, string, error) {
-	if !c.Configured() {
-		return nil, "", ErrNotConfigured
-	}
-	model := strings.TrimSpace(modelName)
-	if model == "" {
-		model = c.DefaultModel()
-	} else if !c.hasModel(model) {
-		return nil, "", ModelError{Model: model}
-	}
-
-	payload := chatRequest{Model: model, Temperature: 0.2}
-	payload.Messages = []chatMessage{{Role: "user", Content: prompt}}
-	body, err := json.Marshal(payload)
+	body, endpoint, model, err := c.prepare(modelName, prompt, false)
 	if err != nil {
-		return nil, "", fmt.Errorf("encode request: %w", err)
+		return nil, "", err
 	}
 
-	// 末尾斜杠不参与拼接：base_url 写成 .../v1 或 .../v1/ 都一样。
-	endpoint := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/") + "/chat/completions"
+	client := c.httpClient(false)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, "", fmt.Errorf("build request: %w", err)
@@ -248,10 +336,6 @@ func (c *Client) chat(ctx context.Context, modelName, prompt string) ([]byte, st
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: defaultTimeout}
-	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, "", wrapTransportError(err, model, effectiveTimeout(client))

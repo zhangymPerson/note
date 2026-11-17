@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- AI 优化提速（流式 + 输出上限 + 复用连接，实测同一条 545 码点正文：非流式 5.8s 才见到第一个字，流式 0.8s 就出字）：
+  - **服务端 SSE**：`POST /api/ai/optimize` 新增可选 `stream: true`。为真时 `handlers_optimize.go#streamOptimize` 先断言 `http.Flusher` 可用，**只在第一个 delta 到达时才写响应头**（`text/event-stream; charset=utf-8` + `Cache-Control: no-store` + `X-Accel-Buffering: no`），事件格式 `event: delta\ndata: {"text"}`、`event: done\ndata: {"content","model"}`、`event: error\ndata: {"code","message"}`；不传 `stream` 时行为与之前完全一致（CLI 的 `Ctrl+O` 仍走整段）。
+  - **错误映射收敛到一处**：`classifyOptimizeError(err) (status, code, message, fields)` 同时喂给普通 JSON 响应（`writeOptimizeError`，`fields` 非空时退回字段级 400）与 SSE 的 `error` 事件——同一个错误在两条路径上说的是同一句话。
+  - **`max_tokens`**：上游请求固定带 `max_tokens = ai.maxCompletionTokens`（3000，正文上限 2000 码点 + Markdown 结构余量；不设上限上游会写到自己的默认值，耗时与费用都白涨）。新增 `ai.TruncatedError`：上游回 `finish_reason=length` 一律当失败（网页 502 `ai_truncated`，CLI 状态行同一句），**绝不把半截正文当结果**，也不自动重试。
+  - **复用 `http.Client`**：`internal/ai` 改为进程级共享 `sharedTransport` / `sharedClient` / `sharedStreamClient`（keep-alive、`MaxIdleConnsPerHost=4`、`IdleConnTimeout=90s`、TLS 与响应头超时各 10s/60s），不再每次调用新建客户端丢掉 DNS/TCP/TLS；流式请求不设总超时，靠调用方 `ctx` 与响应头超时兜底。测试注入 `Client.HTTP` 仍优先。
+  - **流式管线（`internal/ai/stream.go`，新建）**：`OptimizeStream(ctx, req, onDelta)` 用 `bufio.Scanner` 逐行读 SSE（只认 `data:` 行、跳过 `:` 心跳与解析不了的行、`[DONE]` 停），每段 `delta.content` 累积并回调；回调报错即中止上游（浏览器断连/点停止不再空烧 token）；收尾与整段路径共用 `finish`（截断 → 剥围栏 → 判空）。响应不是 `text/event-stream` 时回落非流式解析并回调一次，兼容无视 `stream` 的网关。
+  - **前端**：`lib/api.ts#postEventStream`（同一套 CSRF 双提交 + 403 刷新重试一次、`TextDecoder` stream 模式分块解码、按 `\n\n` 切事件、`AbortSignal` 中止后 `reader.cancel()`、服务端退化成整段 JSON 时兜住）与 `lib/ai.ts#optimizeNoteStream`（delta 追加进预览、`done` 才定稿、`error` 事件抛 `ApiRequestError`、没等到 `done` 报 `ai_bad_response`）。编辑器预览面板改成边生成边渲染（标题显示「等待中…／生成中…」），等待期间「替换正文」禁用（半成品不能采用），旁边多一个「停止」按钮点了就丢弃这次结果；`canReplace` 因此多一个 `!aiBusy` 条件。
+  - **测试**：新增 `internal/ai/stream_test.go`（9 项：增量转发与剥围栏、载荷 `stream`/`max_tokens`、截断、噪声行、整段 JSON 回落、回调中止、429 映射、未知模型、空结果）、`internal/web/optimize_stream_test.go`（5 项：事件序列与响应头、开流前失败仍是 JSON、开流后截断发 error 事件、开流前校验 400）、`client_test.go` 补 `max_tokens` 与截断 2 项、前端 `ai.test.ts` 补 6 项流式用例（含把一块 SSE 从汉字中间切开的解码验证）、`NoteEditorView.test.ts` 补「增量即时显示 + done 前禁替换 + 停止生效」1 项。
+  - **验证**：`just test`（Go 全包 + 前端 219 项）与 `just check`（vet、gofmt、svelte-check 0 errors / 0 warnings）通过。
+
 ### Changed
 
 - 时间展示统一为「年月日 时分秒」并按系统时区换算（实现过程与关键逻辑）：

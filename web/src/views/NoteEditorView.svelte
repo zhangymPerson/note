@@ -1,6 +1,6 @@
 <script lang="ts">
   import Markdown from '../components/Markdown.svelte'
-  import { defaultModel, hostOf, MAX_CUSTOM_PROMPT, optimizeNote } from '../lib/ai'
+  import { defaultModel, hostOf, MAX_CUSTOM_PROMPT, optimizeNoteStream } from '../lib/ai'
   import { ApiRequestError } from '../lib/api'
   import { getAIConfig } from '../lib/ai-config'
   import { decryptNoteContent, encryptNoteContent, paramsFromNote, KDF_PARAMS } from '../lib/crypto'
@@ -72,6 +72,10 @@
   let aiHost = $state('')
   let aiModel = $state('')
   let aiBusy = $state(false)
+  // aiStreaming 表示「已经看到第一段增量」：同样的等待时长，看着字往外蹦和盯着
+  // 转圈是两种体验，所以面板提示要分开写。
+  let aiStreaming = $state(false)
+  let aiAbort: AbortController | null = null
   let aiResult = $state('')
   let aiResultModel = $state('')
   let aiError = $state('')
@@ -87,7 +91,10 @@
     aiResult !== '' && aiResultLength > MAX_CONTENT_CODEPOINTS,
   )
   const aiStale = $derived(aiResult !== '' && content !== aiRequestContent)
-  const canReplace = $derived(aiResult !== '' && !aiStale && !aiTooLong)
+  // 流式过程中 aiResult 是「长出来」的半成品：必须等 done（aiBusy 变 false）才允许替换。
+  const canReplace = $derived(
+    aiResult !== '' && !aiBusy && !aiStale && !aiTooLong,
+  )
   const canOptimize = $derived(
     aiConfigured && !aiBusy && !loading && content.trim() !== '',
   )
@@ -322,24 +329,48 @@
 
   async function optimize(): Promise<void> {
     aiBusy = true
+    aiStreaming = false
     aiError = ''
     aiErrorCode = ''
     aiResult = ''
     aiRequestContent = content
+    const controller = new AbortController()
+    aiAbort = controller
     try {
-      const result = await optimizeNote(
+      const result = await optimizeNoteStream(
         content,
+        {
+          // 边生成边往预览面板里贴：点「替换正文」之前不会碰编辑器内容。
+          onDelta: (text) => {
+            aiStreaming = true
+            aiResult += text
+          },
+          signal: controller.signal,
+        },
         aiModel === '' ? undefined : aiModel,
         customPrompt,
       )
       aiResult = result.content
       aiResultModel = result.model
     } catch (error) {
+      // 用户自己点的「停止」不是错误，丢弃半截结果就好。
+      if (controller.signal.aborted) {
+        aiResult = ''
+        return
+      }
+      aiResult = ''
       aiError = fail(error)
       aiErrorCode = error instanceof ApiRequestError ? error.code : ''
     } finally {
       aiBusy = false
+      aiStreaming = false
+      aiAbort = null
     }
+  }
+
+  // stopOptimize 断开连接：服务端会随之取消上游请求，不把 token 白白烧完。
+  function stopOptimize(): void {
+    aiAbort?.abort()
   }
 
   // 只有用户点「替换正文」才动编辑器内容：优化结果先看后采。
@@ -439,8 +470,12 @@
             disabled={!canOptimize}
             onclick={optimize}
           >
-            {aiBusy ? '优化中…' : '用 AI 优化格式'}
+            {aiBusy ? (aiStreaming ? '正在生成…' : '优化中…') : '用 AI 优化格式'}
           </button>
+          {#if aiBusy}
+            <!-- 等待中随时能停：有些模型要生成长文档，中途反悔不该只能干等 -->
+            <button class="linklike" type="button" onclick={stopOptimize}>停止</button>
+          {/if}
           {#if aiModels.length > 1}
             <!-- 不用 bind:：<select> 挂载时会把自己的空值写回去，把默认模型冲掉 -->
             <select
@@ -507,7 +542,7 @@
         {:else if aiResult !== ''}
           <div class="ai-result">
             <div class="field-label-row">
-              <h3>AI 优化结果 · {aiResultModel}</h3>
+              <h3>AI 优化结果 · {aiBusy ? (aiStreaming ? '生成中…' : '等待中…') : aiResultModel}</h3>
               <span class="counter {aiTooLong ? 'counter-over' : ''}">
                 {aiResultLength} / {MAX_CONTENT_CODEPOINTS}
               </span>
@@ -520,7 +555,7 @@
             <Markdown source={aiResult} />
             <div class="actions">
               <button class="button" type="button" disabled={!canReplace} onclick={applyOptimized}>
-                替换正文
+                {aiBusy ? '生成中…' : '替换正文'}
               </button>
               <button class="button button-quiet" type="button" disabled={!canOptimize} onclick={optimize}>
                 重新优化

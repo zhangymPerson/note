@@ -5,7 +5,7 @@ import { readable } from "svelte/store";
 
 const mocks = vi.hoisted(() => ({
   getAIConfig: vi.fn(),
-  optimizeNote: vi.fn(),
+  optimizeNoteStream: vi.fn(),
   listCategories: vi.fn(),
   getMasterPassword: vi.fn(),
   getNote: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock("../lib/ai-config", async () => {
 });
 vi.mock("../lib/ai", async () => {
   const actual = await vi.importActual<typeof import("../lib/ai")>("../lib/ai");
-  return { ...actual, optimizeNote: mocks.optimizeNote };
+  return { ...actual, optimizeNoteStream: mocks.optimizeNoteStream };
 });
 // 保留真实的码点计数与上限：优化结果的超限判断必须与保存时同一口径。
 vi.mock("../lib/notes", async () => {
@@ -134,7 +134,10 @@ beforeEach(() => {
     question: "",
   });
   mocks.getTemplate.mockResolvedValue({ content: "" });
-  mocks.optimizeNote.mockResolvedValue({ content: "# 优化后", model: "m1" });
+  mocks.optimizeNoteStream.mockResolvedValue({
+    content: "# 优化后",
+    model: "m1",
+  });
 });
 
 afterEach(() => {
@@ -171,15 +174,78 @@ describe("NoteEditorView 的 AI 优化", () => {
       ),
     );
     expect(element.textContent).toContain("AI 优化结果 · m1");
-    expect(mocks.optimizeNote).toHaveBeenCalledWith("原始正文", "m1", "");
+    // 第二个参数是流式回调容器（有 onDelta 与 abort signal），不必逐字断言
+    expect(mocks.optimizeNoteStream).toHaveBeenCalledWith(
+      "原始正文",
+      expect.objectContaining({ onDelta: expect.any(Function) }),
+      "m1",
+      "",
+    );
 
     click(buttonWith(element, "替换正文"));
     expect(contentBox(element).value).toBe("# 优化后");
   });
 
+  it("流式增量边到边显示，done 之前不能替换，可以中途停止", async () => {
+    // 手动控制流：先推一段，验证界面上「长出来了」但还不允许替换。
+    let emit!: (text: string) => void;
+    let finish!: (value: unknown) => void;
+    const signals: AbortSignal[] = [];
+    mocks.optimizeNoteStream.mockImplementation(
+      (
+        _content: string,
+        handlers: { onDelta: (text: string) => void; signal?: AbortSignal },
+      ) => {
+        emit = handlers.onDelta;
+        signals.push(handlers.signal!);
+        return new Promise((done) => {
+          finish = done;
+        });
+      },
+    );
+
+    const element = await renderEditor();
+    typeInto(contentBox(element), "原始正文");
+    await vi.waitFor(() =>
+      expect(element.textContent).toContain("正文会发送到"),
+    );
+    click(aiButton(element));
+
+    emit!("# 边写");
+    emit!("边看");
+    await vi.waitFor(() =>
+      expect(element.querySelector(".ai-result h1")?.textContent).toBe(
+        "边写边看",
+      ),
+    );
+    // 半成品不能替换，但得看得见进度
+    expect(buttonWith(element, "生成中…").disabled).toBe(true);
+    expect(element.textContent).toContain("生成中…");
+
+    finish!({ content: "# 边写边看", model: "m1" });
+    await vi.waitFor(() =>
+      expect(buttonWith(element, "替换正文").disabled).toBe(false),
+    );
+    expect(element.textContent).toContain("AI 优化结果 · m1");
+
+    // 「停止」按钮只在等待中出现，点它会 abort 掉这次请求
+    mocks.optimizeNoteStream.mockImplementation(
+      (_content: string, handlers: { signal?: AbortSignal }) => {
+        signals.push(handlers.signal!);
+        return new Promise(() => {});
+      },
+    );
+    click(aiButton(element));
+    await vi.waitFor(() =>
+      expect(buttonWith(element, "停止")).not.toBeUndefined(),
+    );
+    click(buttonWith(element, "停止"));
+    expect(signals.at(-1)?.aborted).toBe(true);
+  });
+
   it("优化期间正文被改动时禁止替换", async () => {
     let resolve!: (value: unknown) => void;
-    mocks.optimizeNote.mockImplementation(
+    mocks.optimizeNoteStream.mockImplementation(
       () =>
         new Promise((done) => {
           resolve = done;
@@ -198,7 +264,7 @@ describe("NoteEditorView 的 AI 优化", () => {
   it("上游超时：错误原文 + 指向信息页的可操作提示", async () => {
     const { ApiRequestError } =
       await vi.importActual<typeof import("../lib/api")>("../lib/api");
-    mocks.optimizeNote.mockRejectedValue(
+    mocks.optimizeNoteStream.mockRejectedValue(
       new ApiRequestError(
         "ai_timeout",
         "模型 m1 在 60 秒内没有响应，可以稍后重试、换一个模型，或检查接口地址是否可用",
@@ -225,7 +291,7 @@ describe("NoteEditorView 的 AI 优化", () => {
   });
 
   it("结果超 2000 码点时禁止替换", async () => {
-    mocks.optimizeNote.mockResolvedValue({
+    mocks.optimizeNoteStream.mockResolvedValue({
       content: "😀".repeat(2001),
       model: "m1",
     });
@@ -238,7 +304,9 @@ describe("NoteEditorView 的 AI 优化", () => {
   });
 
   it("优化失败时显示错误且正文不变", async () => {
-    mocks.optimizeNote.mockRejectedValue(new Error("AI 接口返回 500：boom"));
+    mocks.optimizeNoteStream.mockRejectedValue(
+      new Error("AI 接口返回 500：boom"),
+    );
     const element = await renderEditor();
     typeInto(contentBox(element), "原始正文");
     click(aiButton(element));
@@ -270,7 +338,12 @@ describe("NoteEditorView 的 AI 优化", () => {
 
     click(aiButton(element));
     await vi.waitFor(() =>
-      expect(mocks.optimizeNote).toHaveBeenCalledWith("原始正文", "m2", ""),
+      expect(mocks.optimizeNoteStream).toHaveBeenCalledWith(
+        "原始正文",
+        expect.objectContaining({ onDelta: expect.any(Function) }),
+        "m2",
+        "",
+      ),
     );
   });
 
@@ -296,8 +369,9 @@ describe("NoteEditorView 的 AI 优化", () => {
     typeInto(custom, "用 mermaid 图表展示，更形象");
     click(aiButton(element));
     await vi.waitFor(() =>
-      expect(mocks.optimizeNote).toHaveBeenCalledWith(
+      expect(mocks.optimizeNoteStream).toHaveBeenCalledWith(
         "原始正文",
+        expect.objectContaining({ onDelta: expect.any(Function) }),
         "m1",
         "用 mermaid 图表展示，更形象",
       ),

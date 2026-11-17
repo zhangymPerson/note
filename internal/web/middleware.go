@@ -114,6 +114,17 @@ func (w *statusWriter) Write(data []byte) (int, error) {
 	return written, err
 }
 
+// Flush 必须透给底层：否则包一层访问日志后，/api/ai/optimize 的流式响应
+// 会退化成「攒满再发」（handler 里的 http.Flusher 断言会直接失败）。
+func (w *statusWriter) Flush() {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 func accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

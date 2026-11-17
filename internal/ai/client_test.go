@@ -87,6 +87,7 @@ func TestOptimizeSendsLowercaseMessageKeys(t *testing.T) {
 		Model       string              `json:"model"`
 		Temperature float64             `json:"temperature"`
 		Stream      *bool               `json:"stream"`
+		MaxTokens   int                 `json:"max_tokens"`
 		Messages    []map[string]string `json:"messages"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -101,6 +102,10 @@ func TestOptimizeSendsLowercaseMessageKeys(t *testing.T) {
 	if payload.Stream == nil || *payload.Stream {
 		t.Errorf("stream 必须是显式 false")
 	}
+	// 不设上限时上游会写到它的默认值，耗时和费用都白涨。
+	if payload.MaxTokens != maxCompletionTokens {
+		t.Errorf("max_tokens = %d, want %d", payload.MaxTokens, maxCompletionTokens)
+	}
 	if len(payload.Messages) != 1 {
 		t.Fatalf("messages = %v", payload.Messages)
 	}
@@ -112,6 +117,22 @@ func TestOptimizeSendsLowercaseMessageKeys(t *testing.T) {
 	}
 	if len(payload.Messages[0]) != 2 {
 		t.Errorf("messages[0] 只该有 role 与 content，得到 %v", payload.Messages[0])
+	}
+}
+
+func TestOptimizeReportsTruncation(t *testing.T) {
+	// finish_reason=length 说明正文是半截的：不能当可用结果返回。
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"choices":[{"message":{"content":"写到一半"},"finish_reason":"length"}]}`)
+	})
+
+	_, err := c.Optimize(context.Background(), Request{Content: "正文"})
+	var truncated TruncatedError
+	if !errors.As(err, &truncated) {
+		t.Fatalf("want TruncatedError, got %v", err)
+	}
+	if truncated.Model != "m1" {
+		t.Errorf("Model = %q, want m1", truncated.Model)
 	}
 }
 

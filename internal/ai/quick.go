@@ -56,20 +56,15 @@ func (c *Client) QuickNote(ctx context.Context, req Request) (QuickNoteResult, e
 	}
 
 	// 先解 OpenAI 外壳拿 message.content，再解速记要求的内部 JSON 对象。
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
+	parsed, err := parseChatCompletion(raw)
+	if err != nil {
+		return QuickNoteResult{}, err
 	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return QuickNoteResult{}, ErrBadResponse
+	// 速记要求回一个完整 JSON 对象：写到上限被截断的肯定是半截 JSON。
+	if parsed.Truncated {
+		return QuickNoteResult{}, TruncatedError{Model: model}
 	}
-	if len(parsed.Choices) == 0 {
-		return QuickNoteResult{}, ErrBadResponse
-	}
-	text := StripFence(parsed.Choices[0].Message.Content)
+	text := StripFence(parsed.Content)
 
 	var out struct {
 		Title   string `json:"title"`
