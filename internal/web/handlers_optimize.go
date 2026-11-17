@@ -101,10 +101,11 @@ func (app *application) handleOptimizeNote(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	started := time.Now()
+	client.Timeline = ai.NewTimeline()
 	res, err := client.Optimize(ctx, call)
 	if err != nil {
-		// 日志只记 host / model / 状态 / 耗时与错误摘要：绝不记正文与密钥
-		slog.Error("optimize note", "host", client.Host(), "model", model, "error", err)
+		logOptimizeFailure(ctx, r, "optimize note failed", client, call, false, started, nil, err)
 		writeOptimizeError(w, err)
 		return
 	}
@@ -126,7 +127,13 @@ func (app *application) streamOptimize(w http.ResponseWriter, r *http.Request, c
 		return
 	}
 
-	started := false
+	began := time.Now()
+	var (
+		started bool
+		deltas  int
+		sent    int
+		firstAt time.Duration
+	)
 	writeHead := func() {
 		if started {
 			return
@@ -143,12 +150,24 @@ func (app *application) streamOptimize(w http.ResponseWriter, r *http.Request, c
 	ctx, cancel := context.WithTimeout(r.Context(), optimizeTimeout)
 	defer cancel()
 
+	client.Timeline = ai.NewTimeline()
 	res, err := client.OptimizeStream(ctx, call, func(delta string) error {
+		if firstAt == 0 {
+			firstAt = time.Since(began)
+		}
+		deltas++
+		sent += len(delta)
 		writeHead()
 		return writeSSE(w, flusher, "delta", map[string]string{"text": delta})
 	})
 	if err != nil {
-		slog.Error("optimize note stream", "host", client.Host(), "model", call.Model, "error", err)
+		extra := []any{
+			"response_started", started,
+			"deltas", deltas,
+			"delta_bytes", sent,
+			"first_delta_ms", millisOrOff(firstAt),
+		}
+		logOptimizeFailure(ctx, r, "optimize note stream failed", client, call, true, began, extra, err)
 		if !started {
 			writeOptimizeError(w, err)
 			return
@@ -159,6 +178,37 @@ func (app *application) streamOptimize(w http.ResponseWriter, r *http.Request, c
 	}
 	writeHead()
 	_ = writeSSE(w, flusher, "done", map[string]string{"content": res.Content, "model": res.Model})
+}
+
+// logOptimizeFailure 把一次失败调用能拿到的排查信息一次打全：
+// 每一项入参（模型、端点、temperature、max_tokens、提示词与正文的规模与指纹、
+// 密钥掩码、客户端超时配置）、网络各阶段耗时、SSE 进度、ctx 剩余时间与错误链。
+//
+// 硬约束：正文、渲染后的提示词、自定义提示词与 api_key 一律不落日志
+// （见 AGENTS.md「AI 调用的日志」），所以它们只以 rune/byte 数与 sha256 前 12 位出现——
+// 足够判断「两次是不是同一份输入」「提示词是不是被自定义要求改写过」。
+func logOptimizeFailure(ctx context.Context, r *http.Request, msg string, client *ai.Client,
+	call ai.Request, stream bool, started time.Time, extra []any, err error) {
+	attrs := client.Describe(call, stream).Attrs()
+	attrs = append(attrs, "elapsed_ms", time.Since(started).Milliseconds())
+	if deadline, ok := ctx.Deadline(); ok {
+		// 剩余预算为负说明已经超了：这条比「elapsed_ms」更能说明是超时还是瞬时失败。
+		attrs = append(attrs, "deadline_in_ms", time.Until(deadline).Milliseconds())
+	}
+	// 用户点了「停止」或关掉页面时请求会被取消，这类错误不该被误读成上游故障。
+	attrs = append(attrs, "client_gone", r.Context().Err() != nil)
+	attrs = append(attrs, client.Timeline.Attrs()...)
+	attrs = append(attrs, extra...)
+	attrs = append(attrs, ai.ErrorAttrs(err)...)
+	slog.Error(msg, attrs...)
+}
+
+// millisOrOff 让「一个 delta 都没收到」在日志里显示成 off 而不是 0 毫秒。
+func millisOrOff(d time.Duration) any {
+	if d == 0 {
+		return "off"
+	}
+	return d.Milliseconds()
 }
 
 // writeSSE 发一个事件并立即 flush；写失败（浏览器关页、用户停止）就返回错误，

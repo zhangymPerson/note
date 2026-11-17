@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- AI 优化失败时的日志信息量不够，排查只能靠猜（「模型 X 在 60 秒内没有响应」看不出是 DNS 卡住、连不上、TLS 失败还是模型就是不出字，也看不出到底发了什么）：
+  - **入参快照** `ai.Client.Describe(req, stream)`（`internal/ai/describe.go`）：`endpoint` / `host` / `base_url` / `model` / `models` / `stream` / `temperature` / `max_tokens` / `messages` / `message_role` / `prompt_kind`（`builtin` 内置默认 还是 `custom` 用 `note.yaml` 的 `ai.prompt`）/ `prompt_runes` / `prompt_bytes` / `prompt_sha256` / `content_runes` / `content_bytes` / `content_sha256` / `custom_prompt` 及其规模与指纹 / `api_key`（掩码）/ `http_client`（`shared` / `shared-stream` / `injected`）/ `client_timeout_ms`（流式为 `off`）/ 响应头 / 建连 / TLS 三个超时 / `proxy_from_env`（只说配没配代理，不输出可能带凭据的代理地址）。
+  - **网络阶段时间线** `ai.Timeline`（`internal/ai/timeline.go`，`httptrace` 钩子，仅当调用方显式设置时采集）：`dns_ms` / `connect_ms` / `tls_ms` / `got_conn_ms` / `conn_reused` / `wrote_request_ms` / `first_byte_ms`，未走到的阶段输出 `off` 而不是 `0`——「60 秒没响应」到底是连接问题还是模型不出字，一眼分开；`conn_reused=true` 也是共享 client 生效的证据。
+  - **调用上下文与错误链**：`elapsed_ms`、`deadline_in_ms`（ctx 剩余预算，负数即已超）、`client_gone`（区分「用户点停止/关页面」与上游故障）、`ai.ErrorAttrs(err)` 的 `error` / `error_type`（包装类错误向内看一层）/ `error_chain`（`Unwrap` 最多 5 层）；流式另带 `response_started` / `deltas` / `delta_bytes` / `first_delta_ms`。
+  - 硬约束不变：正文、渲染后的提示词、自定义提示词与 `api_key` 一个字都不进日志，前三者只以 rune/byte 数与 sha256 前 12 位出现（能确认「两次是不是同一份输入」「提示词有没有被自定义要求改写」，可用于复现同一次调用）。
+  - **测试**：新增 `internal/ai/describe_test.go`（7 项）、`internal/ai/timeline_test.go`（3 项）、`internal/web/optimize_log_test.go`（2 项，含「日志里不得出现正文/自定义提示词/密钥明文」的断言）。`just test`（前端 219 项）与 `just check` 通过。
+  - **实测**：把上游换成「只 accept 不回包」的黑洞服务，复现用户报的那句超时——日志给出 `first_byte_ms=off wrote_request_ms=0 connect_ms=0 elapsed_ms=60001 deadline_in_ms=-1 client_timeout_ms=off response_header_timeout_ms=60000 error_type=ai.TimeoutError`，直接判明是「连上了但模型不出字」且 60 秒来自响应头超时；真实网关对不存在的模型回 503 时，同一条日志也带全了入参与 `deltas=0 first_delta_ms=off`。
+
 ### Added
 
 - AI 优化提速（流式 + 输出上限 + 复用连接，实测同一条 545 码点正文：非流式 5.8s 才见到第一个字，流式 0.8s 就出字）：

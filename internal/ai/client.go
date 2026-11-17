@@ -30,6 +30,9 @@ type Client struct {
 	Models  []string
 	Prompt  string
 	HTTP    *http.Client // nil → 60s 超时的默认客户端
+	// Timeline 可选：非 nil 时采集本次调用的网络阶段时间点（DNS/TCP/TLS/首字节），
+	// 只在排查失败时用，默认不采集。调用方负责在失败日志里输出它。
+	Timeline *Timeline
 }
 
 // Result 是成功调用的结果：Content 已剥掉整段代码围栏，Model 是实际用的模型。
@@ -40,6 +43,8 @@ const (
 	maxResponseBytes = 1 << 20
 	// maxErrorMessageRunes 限制回显给用户与日志的上游错误摘要长度。
 	maxErrorMessageRunes = 200
+	// dialTimeout 是 TCP 建连上限：连不上和模型不出字是两种故障，日志要能分开。
+	dialTimeout = 10 * time.Second
 	// maxCompletionTokens 是输出上限。正文本身限 2000 码点，中文大致一字一 token，
 	// 留出 Markdown 结构与标点余量后 3000 够用；不设上限时上游会闷头写到它的默认值
 	// （动辄几千 token），耗时与费用都白涨。真撞上限了不静默截尾，而是报
@@ -85,7 +90,7 @@ type chatRequest struct {
 var (
 	sharedTransport = &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:           (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          8,
 		MaxIdleConnsPerHost:   4,
@@ -328,7 +333,8 @@ func (c *Client) chat(ctx context.Context, modelName, prompt string) ([]byte, st
 	}
 
 	client := c.httpClient(false)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	// 采集网络阶段时间点（Timeline 为 nil 时原样返回 ctx，零开销）。
+	httpReq, err := http.NewRequestWithContext(c.trace(ctx), http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, "", fmt.Errorf("build request: %w", err)
 	}

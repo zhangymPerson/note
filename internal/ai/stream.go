@@ -37,7 +37,7 @@ func (c *Client) chatStream(ctx context.Context, modelName, prompt string, onDel
 	}
 
 	client := c.httpClient(true)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
+	httpReq, err := http.NewRequestWithContext(c.trace(ctx), http.MethodPost, endpoint, strings.NewReader(string(body)))
 	if err != nil {
 		return parsedCompletion{}, "", fmt.Errorf("build request: %w", err)
 	}
