@@ -6,8 +6,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- AI 请求显式关掉「思考模式」并固定推理强度：`thinking = {"type": "disabled"}` + `reasoning_effort = "medium"`，两条管线（`Optimize` / `OptimizeStream`）共用 `prepare`，只有一处。
+  - 实测（真实网关，同一条笔记、`deepseek-v4-flash`）：默认首字 **4.33s**、`thinking disabled` 后 **1.03s**、只加 `reasoning_effort=medium` 仍 4.68s、两个都加 1.23s；`glm-5.3-flash` 默认 0 字（201 个事件里全是空 delta），关掉思考后 6.21s 正常出字。不关的时候模型先默默推理再吐第一个字，这正是「响应头 1 秒就回、正文 87 秒沉默」的形态。
+- 流式调用的**空闲看门狗**：`chatStream` 里 `idleWatch` 每收到一段 delta 就 `Reset`，超过 `ai.DefaultIdleTimeout`（60 秒）没有新内容就取消一个**子** ctx、主动掐掉上游（省 token），并报新增的 `ai.IdleError` → 网页 504 `ai_idle`（开流前失败走普通 JSON，中途停住走 `event: error`），文案「模型 X 在 1 分钟内没有输出新内容，可能卡住了；可以稍后重试、换一个模型…」。取消落在子 ctx 上，用户点「停止」仍是父 ctx 取消、仍判 `client_gone`。
+  - 网页 `ai_idle` 与 `ai_timeout` 共用同一个出口提示（重新优化 / 去信息页换更快的模型）。
+  - **测试**：`TestOptimizeStreamSendsThinkingAndEffort`（两条管线都发这两个参数）、`TestOptimizeStreamIdleAborts`（40ms 空闲即返回 `IdleError`，不再等 5 分钟）、`TestOptimizeStreamCancelIsNotIdle`（ctx 取消不误判空闲）、`TestOptimizeStreamToleratesSlowButSteadyDeltas`（稳定慢流不误杀）、`TestOptimizeIdleErrorMapsTo504Idle`、`TestOptimizeClientAbortLogsAtInfo`、前端「`ai_idle` 给重试与换模型出口」。
+
+### Fixed
+
+- **AI 调用超过 30 秒时客户端收不到任何响应**：`http.Server` 的 `WriteTimeout=30s` 是从读完请求头起算的绝对截止时间，长响应的写入会落在一个已被服务器关掉的连接上——访问日志照样记 `status=504 bytes=196`，客户端却只拿到空响应（`curl code=000`）。现在 `/api/ai/optimize` 与 `/api/ai/quick-note` 进入 handler 立即 `liftWriteDeadline(w)`（`http.NewResponseController(w).SetWriteDeadline(time.Time{})`）解除写超时，`statusWriter` 补 `Unwrap()` 让 `ResponseController` 能穿过访问日志中间件。时间上限仍由 `ctx`（5 分钟）与空闲看门狗（60 秒）负责。
+  - 实测：黑洞上游（回 SSE 头后不出字）第 60 秒客户端拿到 `504 {"code":"ai_idle","message":"模型 deepseek-v4-flash 在 1 分钟内没有输出新内容…"}`；修复前同一场景客户端空响应。
+
 ### Changed
 
+- 用户主动中止的 AI 调用不再记 `ERROR`：`logOptimizeFailure` 按 `client_gone`（`r.Context().Err() != nil`）分流成 `INFO` + `outcome=client_abort`，字段一个不少。「用户等急了点停止」和真故障混在一起会淹没告警（本轮日志里那条 `error_type=errors.errorString error="context canceled"` 就属于这种）。
 - AI 调用超时上限 60 秒 → **5 分钟**（`ai.DefaultTimeout`）：慢模型 + 近 2000 字正文常要两三分钟才吐完，60 秒会误杀正常生成（实测日志：`first_byte_ms=1041` 说明上游已开始回包，60 秒上限仍被 `context deadline exceeded` 打断）。
   - 单一来源：`internal/ai` 导出 `DefaultTimeout = 5 * time.Minute`，`sharedTransport.ResponseHeaderTimeout`、`sharedClient.Timeout`、网页 `optimizeTimeout`（进而 `ctx` 与 `note add` 的 `Ctrl+O`）全部取它；不再有独立写死的 60 秒。
   - 文案跟着单位走：`ai.formatTimeout` 新增整分钟分支，`TimeoutError` 现在说「模型 X 在 5 分钟内没有响应，可以稍后重试、换一个模型，或检查接口地址是否可用」（整秒仍是「45 秒」、毫秒仍是「20 毫秒」）。

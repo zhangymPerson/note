@@ -2,11 +2,14 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"note/internal/ai"
 )
 
 // captureLogs 把默认 logger 临时换成写进 buffer 的文本 handler，
@@ -124,5 +127,56 @@ func TestOptimizeStreamFailureLogsProgress(t *testing.T) {
 	}
 	if strings.Contains(line, "机密正文") {
 		t.Fatalf("日志泄露了正文\n%s", line)
+	}
+}
+
+// 用户点「停止」/关页面时 r.Context() 已取消：这不是服务端故障，必须是 INFO
+// （带 outcome=client_abort），不能和真故障一起淹没在 ERROR 里。
+func TestOptimizeClientAbortLogsAtInfo(t *testing.T) {
+	logs := captureLogs(t)
+
+	// 上游一直不出字，把「用户中途停止」这件事留给 ctx 取消来模拟。
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	t.Cleanup(upstream.Close)
+
+	handler, cfg := newTestHandler(t)
+	configureAI(t, cfg, upstream.URL, "    - m1\n")
+	token := csrfTokenFor(t, handler)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 一进 handler 就是「浏览器已经走了」
+
+	req := httptest.NewRequest(http.MethodPost, "/api/ai/optimize", strings.NewReader(`{"content":"正文","stream":true}`))
+	req = req.WithContext(ctx)
+	req.Host = "127.0.0.1:8080"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", token)
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: token})
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	line := logs.String()
+	if strings.Contains(line, "level=ERROR") {
+		t.Fatalf("用户中止不该记 ERROR\n%s", line)
+	}
+	for _, want := range []string{"level=INFO", "client_gone=true", "outcome=client_abort"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("日志缺少 %q\n%s", want, line)
+		}
+	}
+}
+
+// 空闲超时要映射成 504 ai_idle，并与总超时（ai_timeout）分开：
+// 前者「总时长没超，只是没新内容」，用户该做的是重试或换模型。
+func TestOptimizeIdleErrorMapsTo504Idle(t *testing.T) {
+	status, code, message, fields := classifyOptimizeError(ai.IdleError{Model: "m1", Idle: ai.DefaultIdleTimeout})
+	if status != http.StatusGatewayTimeout || code != "ai_idle" || fields != nil {
+		t.Fatalf("status=%d code=%s fields=%v", status, code, fields)
+	}
+	for _, want := range []string{"模型 m1", "1 分钟内没有输出新内容", "换一个模型"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("文案缺少 %q: %s", want, message)
+		}
 	}
 }

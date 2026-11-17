@@ -522,10 +522,12 @@
         {#if aiError !== ''}
           <div class="ai-result" role="alert">
             <p class="form-error">{aiError}</p>
-            {#if aiErrorCode === 'ai_timeout'}
-              <!-- 超时只说「失败了」等于没说：给两条可执行的出路 -->
+            {#if aiErrorCode === 'ai_timeout' || aiErrorCode === 'ai_idle'}
+              <!-- 超时/长时间没有输出只说「失败了」等于没说：给两条可执行的出路 -->
               <p class="muted">
-                上游一直没返回：可以点「重新优化」再试一次，或去<a href="/info">信息页</a
+                {aiErrorCode === 'ai_idle'
+                  ? '上游长时间没有输出新内容，可能卡住了'
+                  : '上游一直没返回'}：可以点「重新优化」再试一次，或去<a href="/info">信息页</a
                 >换一个更快的模型。
               </p>
             {:else if aiErrorCode === 'ai_not_configured'}

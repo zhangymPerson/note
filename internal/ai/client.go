@@ -33,6 +33,9 @@ type Client struct {
 	// Timeline 可选：非 nil 时采集本次调用的网络阶段时间点（DNS/TCP/TLS/首字节），
 	// 只在排查失败时用，默认不采集。调用方负责在失败日志里输出它。
 	Timeline *Timeline
+	// IdleTimeout 可选：流式调用等待下一段输出的上限，0 用 DefaultIdleTimeout。
+	// 只用于测试与「用户想等更久」的场景，默认 60 秒。
+	IdleTimeout time.Duration
 }
 
 // Result 是成功调用的结果：Content 已剥掉整段代码围栏，Model 是实际用的模型。
@@ -56,6 +59,16 @@ const (
 	// 流式请求的响应头超时都用它）。5 分钟是实测出来的：慢模型 + 近 2000 字正文
 	// 常常要两三分钟才吐完，60 秒会误杀正常生成；再长用户也等不下去。
 	DefaultTimeout = 5 * time.Minute
+	// DefaultIdleTimeout 是流式调用「等下一段输出」的上限。开了流却长时间一个字
+	// 都不来，通常不是还在生成，而是上游卡住了（思考模式、通道拥堵）：与其让用户
+	// 盯着转圈等到 5 分钟总超时，不如早点报错并让上游停下（省 token）。
+	DefaultIdleTimeout = 60 * time.Second
+	// reasoningEffort 是固定的推理强度：medium——不比默认更慢，也不牺牲格式质量。
+	reasoningEffort = "medium"
+	// thinkingTypeDisabled 显式关掉「思考模式」。实测同一条笔记（真实网关）：
+	// 默认首字 4.3s，关掉思考后 1.0s；不关的时候模型会先默默想完再吐第一个字，
+	// 表现就是「响应头秒回、正文长时间沉默」。
+	thinkingTypeDisabled = "disabled"
 	// MaxCustomPromptRunes 是「自定义提示词」的码点上限：它是本次调用的补充约束，
 	// 不是第二份提示词模板（后者是 ai.prompt，上限 2000）。
 	MaxCustomPromptRunes = 500
@@ -86,6 +99,15 @@ type chatRequest struct {
 	Temperature float64       `json:"temperature"`
 	Stream      bool          `json:"stream"`
 	MaxTokens   int           `json:"max_tokens"`
+	// ReasoningEffort 让上游别把推理开到满档；Thinking 显式关闭思考模式。
+	// 两者都是空的网关也兼容（老网关忽略未知字段），但都带上才能既快又不变慢。
+	ReasoningEffort string          `json:"reasoning_effort"`
+	Thinking        thinkingRequest `json:"thinking"`
+}
+
+// thinkingRequest 是 OpenAI 兼容网关里「思考/推理模式」的开关形状。
+type thinkingRequest struct {
+	Type string `json:"type"`
 }
 
 // 进程级共享的两个 HTTP 客户端。每次调用新建 http.Client 等于丢掉 keep-alive：
@@ -180,6 +202,30 @@ func (e TruncatedError) Error() string {
 	}
 	return fmt.Sprintf("%s 的输出达到 %d token 上限被截断，结果不完整；请缩短正文或换一个模型后重试",
 		where, maxCompletionTokens)
+}
+
+// IdleError 表示上游在流式过程中长时间没有输出新内容（开了流却沉默）。
+// 它与 TimeoutError 是两件事：总时长还没用完，只是「一直没有下一段」。
+type IdleError struct {
+	Model string
+	Idle  time.Duration
+}
+
+func (e IdleError) Error() string {
+	where := "模型"
+	if e.Model != "" {
+		where = "模型 " + e.Model
+	}
+	return fmt.Sprintf("%s 在 %s内没有输出新内容，可能卡住了；可以稍后重试、换一个模型，或检查接口地址是否可用",
+		where, formatTimeout(e.Idle))
+}
+
+// idleTimeout 是这次流式调用真正生效的空闲上限。
+func (c *Client) idleTimeout() time.Duration {
+	if c.IdleTimeout > 0 {
+		return c.IdleTimeout
+	}
+	return DefaultIdleTimeout
 }
 
 // NewClient 从配置构造客户端；HTTP 留空，由发起调用时选共享客户端。
@@ -304,7 +350,14 @@ func (c *Client) prepare(modelName, prompt string, stream bool) (body []byte, en
 		return nil, "", "", ModelError{Model: model}
 	}
 
-	payload := chatRequest{Model: model, Temperature: 0.2, Stream: stream, MaxTokens: maxCompletionTokens}
+	payload := chatRequest{
+		Model:           model,
+		Temperature:     0.2,
+		Stream:          stream,
+		MaxTokens:       maxCompletionTokens,
+		ReasoningEffort: reasoningEffort,
+		Thinking:        thinkingRequest{Type: thinkingTypeDisabled},
+	}
 	payload.Messages = []chatMessage{{Role: "user", Content: prompt}}
 	body, err = json.Marshal(payload)
 	if err != nil {

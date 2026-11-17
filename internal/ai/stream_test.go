@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sseServer 是流式上游的替身：按给定片段依次写 SSE data 行并立即 flush，
@@ -212,6 +213,128 @@ func TestOptimizeStreamEmptyWhenNoContent(t *testing.T) {
 	_, err := c.OptimizeStream(context.Background(), Request{Content: "正文"}, nil)
 	if !errors.Is(err, ErrEmptyResult) {
 		t.Fatalf("want ErrEmptyResult, got %v", err)
+	}
+}
+
+// 上游请求必须显式关掉思考模式并压住推理强度：这是「首字从 4.3s 降到 1.0s」
+// 的唯一来源，两个参数少一个都会退回默认行为。
+func TestOptimizeStreamSendsThinkingAndEffort(t *testing.T) {
+	c, _, got := sseServer(t, delta("正文"))
+	if _, err := c.OptimizeStream(context.Background(), Request{Content: "正文"}, nil); err != nil {
+		t.Fatalf("OptimizeStream: %v", err)
+	}
+	if (*got)["reasoning_effort"] != "medium" {
+		t.Errorf("reasoning_effort = %v, want medium", (*got)["reasoning_effort"])
+	}
+	thinking, ok := (*got)["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Errorf("thinking = %v, want {type: disabled}", (*got)["thinking"])
+	}
+	// 整段路径也是同一份 payload：别只有流式带了这两个参数。
+	var whole map[string]any
+	c2, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		json.Unmarshal(raw, &whole)
+		io.WriteString(w, `{"choices":[{"message":{"content":"正文"}}]}`)
+	})
+	if _, err := c2.Optimize(context.Background(), Request{Content: "正文"}); err != nil {
+		t.Fatalf("Optimize: %v", err)
+	}
+	if whole["reasoning_effort"] != "medium" {
+		t.Errorf("整段路径 reasoning_effort = %v, want medium", whole["reasoning_effort"])
+	}
+	if thinking, ok := whole["thinking"].(map[string]any); !ok || thinking["type"] != "disabled" {
+		t.Errorf("整段路径 thinking = %v, want {type: disabled}", whole["thinking"])
+	}
+}
+
+// 开了流却一直不出字：60 秒总超时没到（也应先报出来），把上游掐掉并给能说人话的错误。
+func TestOptimizeStreamIdleAborts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// 头发出去了，正文一个字都不给。
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	c := &Client{BaseURL: srv.URL + "/v1", APIKey: "sk-test", Models: []string{"m1"}, HTTP: srv.Client()}
+	c.IdleTimeout = 40 * time.Millisecond
+
+	start := time.Now()
+	_, err := c.OptimizeStream(context.Background(), Request{Content: "正文"}, nil)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("看门狗应当尽快返回，实际等了 %v", elapsed)
+	}
+	var idleErr IdleError
+	if !errors.As(err, &idleErr) {
+		t.Fatalf("应当报 IdleError，得到 %T: %v", err, err)
+	}
+	if idleErr.Model != "m1" || idleErr.Idle != 40*time.Millisecond {
+		t.Fatalf("IdleError 要带模型与空闲时长: %+v", idleErr)
+	}
+	for _, want := range []string{"模型 m1", "40 毫秒", "重试", "换一个模型"} {
+		if !strings.Contains(idleErr.Error(), want) {
+			t.Fatalf("空闲文案缺 %q: %s", want, idleErr.Error())
+		}
+	}
+}
+
+// 用户点「停止」时父 ctx 被取消，不该被误判成上游卡住。
+func TestOptimizeStreamCancelIsNotIdle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	c := &Client{BaseURL: srv.URL + "/v1", APIKey: "sk-test", Models: []string{"m1"}, HTTP: srv.Client()}
+	c.IdleTimeout = 5 * time.Second // 远大于下面的取消时间
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := c.OptimizeStream(ctx, Request{Content: "正文"}, nil)
+	var idleErr IdleError
+	if errors.As(err, &idleErr) {
+		t.Fatalf("ctx 取消不该报 IdleError: %v", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("应当保留 ctx 错误，得到 %v", err)
+	}
+}
+
+// 只要还在出字，慢不算卡：间隔小于空闲上限的流必须跑完。
+func TestOptimizeStreamToleratesSlowButSteadyDeltas(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		for i := 0; i < 4; i++ {
+			time.Sleep(15 * time.Millisecond)
+			io.WriteString(w, delta("段"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := &Client{BaseURL: srv.URL + "/v1", APIKey: "sk-test", Models: []string{"m1"}, HTTP: srv.Client()}
+	c.IdleTimeout = 60 * time.Millisecond
+
+	res, err := c.OptimizeStream(context.Background(), Request{Content: "正文"}, nil)
+	if err != nil {
+		t.Fatalf("稳定的慢流不该被判空闲: %v", err)
+	}
+	if res.Content != "段段段段" {
+		t.Fatalf("content = %q", res.Content)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 // StreamFunc 是流式增量回调：每拿到一段新的正文片段调用一次。
@@ -36,8 +38,15 @@ func (c *Client) chatStream(ctx context.Context, modelName, prompt string, onDel
 		return parsedCompletion{}, "", err
 	}
 
+	// 空闲看门狗：长时间没有下一段就主动掐掉上游，别让用户干等到总超时。
+	// 取消的是子 ctx，所以浏览器断开（父 ctx 取消）仍会被认成 client_gone。
+	idleCtx, stopIdle := context.WithCancel(ctx)
+	defer stopIdle()
+	watch := newIdleWatch(stopIdle, c.idleTimeout())
+	defer watch.stop()
+
 	client := c.httpClient(true)
-	httpReq, err := http.NewRequestWithContext(c.trace(ctx), http.MethodPost, endpoint, strings.NewReader(string(body)))
+	httpReq, err := http.NewRequestWithContext(c.trace(idleCtx), http.MethodPost, endpoint, strings.NewReader(string(body)))
 	if err != nil {
 		return parsedCompletion{}, "", fmt.Errorf("build request: %w", err)
 	}
@@ -47,6 +56,9 @@ func (c *Client) chatStream(ctx context.Context, modelName, prompt string, onDel
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		if watch.fired() {
+			return parsedCompletion{}, "", IdleError{Model: model, Idle: watch.idle}
+		}
 		return parsedCompletion{}, "", wrapTransportError(err, model, effectiveTimeout(client))
 	}
 	defer resp.Body.Close()
@@ -59,11 +71,52 @@ func (c *Client) chatStream(ctx context.Context, modelName, prompt string, onDel
 		}
 	}
 
-	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		return readWholeCompletion(resp.Body, model, onDelta)
+	// 每收到一段正文就重置看门狗：只要还在出字，慢就不是问题。
+	watched := func(delta string) error {
+		watch.touch()
+		if onDelta == nil {
+			return nil
+		}
+		return onDelta(delta)
 	}
-	return readSSE(ctx, resp.Body, model, onDelta)
+
+	var (
+		parsed  parsedCompletion
+		readErr error
+	)
+	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		parsed, _, readErr = readWholeCompletion(resp.Body, model, watched)
+	} else {
+		parsed, _, readErr = readSSE(idleCtx, resp.Body, model, watched)
+	}
+	if readErr != nil && watch.fired() {
+		// 是看门狗掐的，不是上游自己断的：给它一个能说人话的错误。
+		return parsedCompletion{}, "", IdleError{Model: model, Idle: watch.idle}
+	}
+	return parsed, model, readErr
 }
+
+// idleWatch 是「多久没有下一段输出就不能忍了」的计时器。
+// 到点只做一件事：把传入的 cancel 调掉，让挂在这个 ctx 上的请求立刻返回。
+// touch 在每段正文到达时重置，所以它衡量的是「沉默时长」而不是「总时长」。
+type idleWatch struct {
+	timer *time.Timer
+	idle  time.Duration
+	once  atomic.Bool
+}
+
+func newIdleWatch(cancel context.CancelFunc, idle time.Duration) *idleWatch {
+	w := &idleWatch{idle: idle}
+	w.timer = time.AfterFunc(idle, func() {
+		w.once.Store(true)
+		cancel()
+	})
+	return w
+}
+
+func (w *idleWatch) touch()      { w.timer.Reset(w.idle) }
+func (w *idleWatch) stop()       { w.timer.Stop() }
+func (w *idleWatch) fired() bool { return w.once.Load() }
 
 // readWholeCompletion 处理「上游没按流式回」的情况：整段 JSON 解析后一次性回调。
 func readWholeCompletion(body io.Reader, model string, onDelta StreamFunc) (parsedCompletion, string, error) {

@@ -61,6 +61,7 @@ type aiQuickRequest struct {
 // handleAIQuickNote 把速记原文交给 AI 整理，返回 {title, content, model}。
 // 与 /api/ai/optimize 同构：服务端代发、每次读盘、结果不落库，由前端预览确认。
 func (app *application) handleAIQuickNote(w http.ResponseWriter, r *http.Request) {
+	liftWriteDeadline(w)
 	var req aiQuickRequest
 	if err := decodeJSON(w, r, &req, quickMaxBytes); err != nil {
 		return

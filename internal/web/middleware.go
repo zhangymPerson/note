@@ -114,6 +114,10 @@ func (w *statusWriter) Write(data []byte) (int, error) {
 	return written, err
 }
 
+// Unwrap 让 http.NewResponseController 能穿过这层包装拿到真正的连接，
+// handler 里用它解除 AI 长请求的写超时（见 liftWriteDeadline）。
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // Flush 必须透给底层：否则包一层访问日志后，/api/ai/optimize 的流式响应
 // 会退化成「攒满再发」（handler 里的 http.Flusher 断言会直接失败）。
 func (w *statusWriter) Flush() {

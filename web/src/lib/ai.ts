@@ -27,7 +27,8 @@ export function optimizeNote(
 //
 // 三条路都必须处理，不能只看 happy path：
 // - 服务端还没开流就失败 -> 普通 JSON 错误，抛 ApiRequestError；
-// - 开始流之后失败   -> error 事件，抛 ApiRequestError（code 例如 ai_truncated）；
+// - 开始流之后失败   -> error 事件，抛 ApiRequestError（code 例如 ai_truncated、
+//   ai_idle：开了流但长时间没有新内容，服务端会主动掐掉上游）；
 // - 用户中途停止     -> signal 中止，抛出原样的 AbortError，调用方自行忽略。
 export function optimizeNoteStream(
   content: string,

@@ -47,6 +47,7 @@ type optimizeResponse struct {
 // 每次请求都重新读配置（手改 note.yaml 立即生效），调用本身不落库、不改笔记：
 // 结果回给前端预览，用户确认后才会走正常的 PUT /api/notes/{id}。
 func (app *application) handleOptimizeNote(w http.ResponseWriter, r *http.Request) {
+	liftWriteDeadline(w)
 	var req optimizeRequest
 	if err := decodeJSON(w, r, &req, optimizeMaxBytes); err != nil {
 		return
@@ -197,11 +198,17 @@ func logOptimizeFailure(ctx context.Context, r *http.Request, msg string, client
 		// 剩余预算为负说明已经超了：这条比「elapsed_ms」更能说明是超时还是瞬时失败。
 		attrs = append(attrs, "deadline_in_ms", time.Until(deadline).Milliseconds())
 	}
-	// 用户点了「停止」或关掉页面时请求会被取消，这类错误不该被误读成上游故障。
-	attrs = append(attrs, "client_gone", r.Context().Err() != nil)
+	// 用户点了「停止」或关掉页面时请求会被取消：这不是服务端故障，级别要降下来，
+	// 否则「用户等急了按停止」会和真故障一起淹没在 ERROR 里。
+	clientGone := r.Context().Err() != nil
+	attrs = append(attrs, "client_gone", clientGone)
 	attrs = append(attrs, client.Timeline.Attrs()...)
 	attrs = append(attrs, extra...)
 	attrs = append(attrs, ai.ErrorAttrs(err)...)
+	if clientGone {
+		slog.Info(msg, append(attrs, "outcome", "client_abort")...)
+		return
+	}
 	slog.Error(msg, attrs...)
 }
 
@@ -240,12 +247,26 @@ func writeOptimizeError(w http.ResponseWriter, err error) {
 
 // classifyOptimizeError 是错误映射的唯一出处：JSON 响应与 SSE 的 error 事件
 // 都从这里取状态码与文案，免得两条路径对同一个错误说不一样的话。
+// liftWriteDeadline 把这次请求的写超时拿掉。
+//
+// Server 的 WriteTimeout（30 秒）是给普通请求的，而 AI 调用允许跑到 5 分钟：
+// 不解除的话，超过 30 秒的响应会被写进一个已经被关掉的连接——服务端日志里是
+// 「status=504 bytes=196」，客户端却什么都收不到（curl 只给出 code=000）。
+// 真正的时间上限仍由 ctx（ai.DefaultTimeout）与空闲看门狗兜住，所以这里可以直接放开。
+func liftWriteDeadline(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+}
+
 func classifyOptimizeError(err error) (status int, code, message string, fields map[string]string) {
 	var modelErr ai.ModelError
 	var upstream ai.UpstreamError
 	var timeoutErr ai.TimeoutError
 	var truncated ai.TruncatedError
+	var idleErr ai.IdleError
 	switch {
+	case errors.As(err, &idleErr):
+		// 开流后长时间没有新内容：总时长没超，换一个码也换一句话说。
+		return http.StatusGatewayTimeout, "ai_idle", idleErr.Error(), nil
 	case errors.As(err, &timeoutErr):
 		// 文案由 internal/ai 统一给（含模型名与时长），网页与 CLI 说的是同一句话。
 		return http.StatusGatewayTimeout, "ai_timeout", timeoutErr.Error(), nil
