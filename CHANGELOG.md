@@ -19,6 +19,8 @@
   - **视图**：`HomeView.svelte` 新增 `searchedQ`（**提交时**的检索词，高亮不跟输入框实时值变），高亮标题、命中行与回落摘要；`NoteListView.svelte` 用 `committedQ` 高亮标题与摘要（匹配行逐行渲染、保留换行）；`app.css` 统一 mark 配色（`--accent` / `--accent-contrast`，深浅主题都可见）。
   - **测试**：`highlight.test.ts` 6 项（空词/未命中/切段/大小写/多处命中/不 trim）；HomeView 与 NoteListView 各扩展 `<mark>` 数量与文本断言；`just test`（Go 全包 + 前端 206 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过。
 
+- 浏览器标签栏图标（favicon）：把默认占位图标换成**笔记本图标**——`web/public/assets/favicon.svg`（蓝色封面 + 白色内页横线 + 左侧装订环，配色沿用 `--accent` 的 `#0969da`），`index.html` 加 `<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />`。favicon 必须走 `/assets/` 静态服务（`spaHandler` 对带扩展名的路径一律 404，放 SPA 根路径打不开）；Vite 把 `public/` 拷到 dist 根后由 `serveAssets` 以 immutable 缓存提供。验证：`just build` 后新二进制实测 `GET /assets/favicon.svg` → 200 `image/svg+xml`、`index.html` 含正确 `<link>`；`just test`（Go 全包 + 前端 206 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过。
+
 ### Added
 
 - 笔记合并：全部笔记列表把多条明文笔记拼成一条新笔记（实现过程与关键逻辑）：
