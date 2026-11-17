@@ -12,6 +12,7 @@
   } from '../lib/notes'
   import { hasKey, lockSession, sessionKey, unlockWithPassword } from '../lib/session-key'
   import { toast } from '../lib/toast'
+  import { formatLocalStamp } from '../lib/time'
   import { navigate } from '../router/router'
 
   // inline：嵌在列表页就地展开，不跳页；onclose(removed) 让列表收起后自行决定要不要刷新。
@@ -179,12 +180,8 @@
     }
   }
 
-  function shownAt(value: string): string {
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return value
-    const pad = (input: number): string => String(input).padStart(2, '0')
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-  }
+  // 时间展示走 shared lib/time（本机时区、年月日 时分秒，与 CLI 同口径）。
+  const shownAt = formatLocalStamp
 </script>
 
 {#snippet copyButton()}

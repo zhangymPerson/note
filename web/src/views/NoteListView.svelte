@@ -15,6 +15,7 @@
     type NoteListItem,
   } from '../lib/notes'
   import { toast } from '../lib/toast'
+  import { formatLocalStamp } from '../lib/time'
   import { navigate } from '../router/router'
 
   function paramsFromUrl(): URLSearchParams {
@@ -188,13 +189,8 @@
     }
   }
 
-  // 后端存的是 UTC 秒级文本，这里按本机时区显示到分钟。
-  function shownAt(value: string): string {
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return value
-    const pad = (input: number): string => String(input).padStart(2, '0')
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-  }
+  // 时间展示走 shared lib/time（本机时区、年月日 时分秒，与 CLI 同口径）。
+  const shownAt = formatLocalStamp
 
   // 合并默认标题：本机时区、24 小时制、精确到秒（与服务端 合并-<本地时间> 同口径）。
   function defaultMergeTitle(): string {

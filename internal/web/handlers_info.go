@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"note/internal/build"
+	"note/internal/timefmt"
 )
 
 // handleGetInfo 汇报构建与运行态；信息页只读这些公开展示值，
@@ -41,7 +42,7 @@ func (app *application) handleGetInfo(w http.ResponseWriter, r *http.Request) {
 		"cpu_count":       runtime.NumCPU(),
 		"mem_alloc_bytes": mem.Alloc,
 		"mem_sys_bytes":   mem.Sys,
-		"started_at":      app.startedAt.Format(time.RFC3339),
+		"started_at":      timefmt.DisplayTime(app.startedAt),
 		"uptime_seconds":  int64(time.Since(app.startedAt).Seconds()),
 		"db_path":         app.cfg.DBPath,
 		"schema_version":  schemaVersion,

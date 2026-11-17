@@ -7,12 +7,13 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
-	"time"
 	"unicode"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rivo/uniseg"
+
+	"note/internal/timefmt"
 )
 
 // ListItem 是 note list 的一行：只带展示需要的字段与过滤用的正文。
@@ -390,14 +391,11 @@ func (i ListItem) meta() string {
 	return strings.Join(parts, " · ")
 }
 
-// localStamp 把 UTC 秒级文本按本机时区显示到分钟（与 Web 端列表同口径）；
-// 解析失败时原样返回，绝不吞掉一个看起来不对的时间。
+// localStamp 把库里的 UTC 秒级文本按系统时区显示成「年月日 时分秒」
+// （与 Web 端同口径，内部timefmt 同一个格式化实现）；解析失败时原样返回，
+// 绝不吞掉一个看起来不对的时间。
 func localStamp(value string) string {
-	parsed, err := time.Parse("2006-01-02T15:04:05Z", value)
-	if err != nil {
-		return value
-	}
-	return parsed.Local().Format("2006-01-02 15:04")
+	return timefmt.Display(value)
 }
 
 // listRowSummary 把库里的原始正文摘要压成单行并按显示宽度截断。

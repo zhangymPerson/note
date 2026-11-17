@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-var utcSecondText = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$`)
+var displaySecondText = regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`)
 
 func decodeInfo(t *testing.T, body []byte) map[string]any {
 	t.Helper()
@@ -44,8 +44,8 @@ func TestInfoEndpointReportsBuildAndRuntime(t *testing.T) {
 		}
 	}
 
-	if got, _ := info["started_at"].(string); !utcSecondText.MatchString(got) {
-		t.Errorf("started_at = %q, want UTC 秒级文本 2006-01-02T15:04:05Z", got)
+	if got, _ := info["started_at"].(string); !displaySecondText.MatchString(got) {
+		t.Errorf("started_at = %q, want 本机时区的 2006-01-02 15:04:05（无 T/Z 后缀）", got)
 	}
 	if got, _ := info["db_path"].(string); got != cfg.DBPath {
 		t.Errorf("db_path = %q, want %q", got, cfg.DBPath)

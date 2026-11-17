@@ -72,6 +72,25 @@ afterEach(() => {
 });
 
 describe("NoteListView", () => {
+  it("行内更新时间按系统时区显示到秒，不带 T/Z", async () => {
+    const target = render();
+    await vi.waitFor(() =>
+      expect(target.querySelector(".note-title")?.textContent).toContain(
+        "第一条",
+      ),
+    );
+    const meta = target.querySelector(".note-meta")?.textContent ?? "";
+    expect(meta).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
+    expect(meta).not.toMatch(/[TZ]/);
+    // 与 Date 的本机换算一致，绝对时刻不变
+    const date = new Date(NOTE.updated_at);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    expect(meta).toContain(
+      `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+        `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+    );
+  });
+
   it("搜索命中时列表行显示匹配行而不是摘要，检索词高亮", async () => {
     mocks.listNotes.mockResolvedValue({
       items: [

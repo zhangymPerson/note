@@ -8,6 +8,17 @@
 
 ### Changed
 
+- 时间展示统一为「年月日 时分秒」并按系统时区换算（实现过程与关键逻辑）：
+  - **问题**：同一份时间在不同地方长得不一样——`note info` 的构建时间是 `2026-11-17T10:21:34+08:00`、`/api/info` 与状态文件的 `started_at` 是 `2026-11-17T02:21:43Z`（UTC 原始值，比本地少 8 小时）、列表/详情/回收站的更新时间只显示到分钟。用户看到的是「0 时区的时间」，既不好读也不对。
+  - **决策**：**存储照旧、只改展示**。库里与接口内部传递仍是 UTC 秒级文本 `2006-01-02T15:04:05Z`（`internal/store` 的 `timeLayoutUTC`，可按键排序、迁移稳定）；一切面向用户的展示统一渲染成 `2006-01-02 15:04:05`（24 小时制、系统时区、无 `T`/`Z`/`+08:00` 后缀）。
+  - **`internal/timefmt`**（新建）：`Layout = "2006-01-02 15:04:05"`、`DisplayTime(time.Time)`、`Display(string)`（识别 UTC 秒级文本与带偏移的 RFC3339，换算成本机时区；已是展示格式则原样返回，可重复调用；解析不了原样返回，绝不吞掉时间）。
+  - **`internal/build`**：`Describe()` 的 `BuildDate` 统一经 `displayBuildDate`（= `timefmt.Display`）输出展示格式，注入值与回落路径 `vcs.time` 同一支处理（原 `localBuildTime` 删除）；`Label()` 随之变成 `1.4.0 (39cf897, 2026-11-17 10:21:34, dirty)`。justfile 的 ldflags **不变**——注入值仍是带偏移的 RFC3339（保留绝对时刻，也避开 ldflags 里带空格参数的引号风险）。
+  - **CLI**：`note info` 的构建时间、`note web status` 的启动时间（`cli/status.go` 经 `timefmt.Display`，旧状态文件里的 RFC3339 也一并归一）、`note list` / `note show` 的更新时间（`cli/list.go#localStamp` 从「只到分钟」改成经 `timefmt.Display` 到秒）同一口径。
+  - **服务端**：`cmd/note/main.go` 写状态文件的 `StartedAt` 改为 `timefmt.DisplayTime(time.Now())`；`GET /api/info` 的 `started_at` 同样输出展示格式（`build_date` 随 `build.Describe()` 变化），`Cache-Control: no-store` 等约束不变。
+  - **前端**：`web/src/lib/time.ts`（新建）提供 `formatLocalStamp(value)`（与后端 `timefmt.Display` 同口径：UTC 秒级文本 / RFC3339 → 本机时区年月日 时分秒；已是展示格式原样返回；解析失败原样返回），`NoteListView` / `NoteDetailView` / `TrashView` 的 `shownAt` 与 `info.ts` 的构建时间、启动时间全部改走它（三处重复的 `new Date()` 拼串删除），信息页标签「构建日期」改为「构建时间」。
+  - **测试**：新增 `internal/timefmt/timefmt_test.go` 6 项、`web/src/lib/time.test.ts` 5 项；`internal/build` 2 项重写（`displayBuildDate` 换算 + 原样返回）、`cli` 的 `localStamp`/`FormatStatus` 断言改为到秒且断言不含 `T`/`Z`；`handlers_info_test` 的 `started_at` 改为断言 `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`；`info.test.ts` 的构建/启动时间期望值改为按同一换算计算（不写死小时，避免依赖跑测试机器的时区），`NoteListView.test.ts` 新增 1 项行内时间到秒且无 T/Z 的断言。
+  - **验证**：`just test`（Go 全包 + 前端 212 项）与 `just check`（vet + svelte-check 0 errors / 0 warnings）通过；`just build` 后实测 `./note info` 输出「构建时间 2026-11-17 10:21:34」、`GET /api/info` 返回 `build_date: 2026-11-17 10:21:34` / `started_at: 2026-11-17 10:21:43`（均无 T/Z 后缀）。
+
 - 查询结果展示命中行：首页查询区与全部笔记列表的搜索结果，在标题之外展示正文里包含查询词的原始行（不输出全文）：
   - **`internal/store/note.go`**：`NoteListItem` 新增 `MatchLines`（`json:"match_lines,omitempty"`，仅带 `q` 的搜索填充）；`scanNoteItems` 增加 search 参数，按 `\n` 切行、忽略 ASCII 大小写匹配（`matchLines`/`matchFoldEq`，与 SQLite `LIKE` 同口径），最多 `matchLineLimit = 3` 行、单行超 `matchLineRunes = 160` 码点从首次命中处往前 24 码点起截断并补省略号——「单行超长正文」不等于带回全文；标题命中但正文无关、加密笔记恒无 `match_lines`。普通浏览列表与 `ListNotesAll`（CLI 本地筛选）不受影响，列表接口依旧不返回全文。
   - **前端**：`NoteListView.svelte` 行内摘要优先展示 `match_lines`（`join('\n')` 保持 pre-wrap），无匹配行回落 `content` 摘要；`HomeView.svelte` 搜索结果在标题下新增 `.search-hit-lines`（匹配行容器，标题命中回落 140 码点摘要、加密笔记不展示正文）；`lib/notes.ts` 补 `match_lines?: string[]`。

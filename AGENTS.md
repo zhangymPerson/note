@@ -19,6 +19,7 @@ cmd/note/          入口与优雅退出
 internal/build/    版本与构建信息（ldflags 注入，未注入时回落 debug.ReadBuildInfo）
 internal/config/   三级配置加载（内置默认值 → YAML → 命令行），严格解析
 internal/store/    SQLite 打开、迁移与应用数据访问
+internal/timefmt/  时间展示口径（本机时区 + `2006-01-02 15:04:05`，无 T/Z）
 internal/daemon/   后台运行支持（状态文件、探测/关停请求、分离进程启动、pid 存活判定）
 internal/clipboard/剪贴板写入（原生实现 + OSC52 兜底；失败只返回错误，绝不影响主流程）
 internal/web/      HTTP 处理器（含后台模式的 /api/shutdown）、中间件、内嵌前端
@@ -38,7 +39,8 @@ docs/              PRD、技术方案、构建指南
 
 ## 硬性约定
 
-- 时间戳统一为 UTC 秒级文本 `2006-01-02T15:04:05Z`，可直接按字符串排序。唯一例外是构建时间（`internal/build.BuildDate`）：它只在信息页与 `note info` 里展示、不参与任何排序，所以取构建机本地时区（RFC3339 带偏移，如 `2026-11-03T17:29:33+08:00`），别「顺手」改回 UTC；回落路径的 `vcs.time` 也经 `localBuildTime` 换成本地时区，保持两条路径同口径。另一个例外是自动标题（速记 `速记-…`、合并 `合并-…`）：用本地时间 `YYYY-MM-DD HH:MM:SS`（24 小时制、系统时区、无 T/Z 后缀），只是展示标题、不参与排序（存库时间戳列仍为 UTC 秒级文本），格式常量是 `internal/store` 的 `timeLayoutLocal`，两端（`createWithAutoTitleAt` 与前端预填）都不调 `.UTC()`/`.Local()`、各用自己时钟的本地时区，保证口径一致。
+- **存储与展示分开**：库里与接口内部传递的时间戳统一为 UTC 秒级文本 `2006-01-02T15:04:05Z`，可直接按字符串排序（`internal/store` 的 `timeLayoutUTC`）。**一切面向用户的展示**（`note info` 的构建时间、`note web status` 的启动时间、`note list` / `note show` 的更新时间、信息页的构建时间与启动时间、网页列表/详情/回收站的更新时间与移入回收站时间、`GET /api/info` 的 `build_date` / `started_at`、状态文件 `note.json` 的 `started_at`）一律按**系统时区**渲染成 `2006-01-02 15:04:05`（24 小时制、无 T/Z 后缀），统一走 Go 的 `internal/timefmt`（`Layout` / `DisplayTime` / `Display`）与前端 `web/src/lib/time.ts#formatLocalStamp`，不要在各处另写一套格式化；解析不了就原样返回，绝不吞掉时间。别把展示格式写回存储层（会破坏排序与迁移）。
+- 上述规则的例外只有自动标题（速记 `速记-…`、合并 `合并-…`）：用本地时间 `YYYY-MM-DD HH:MM:SS`（24 小时制、系统时区、无 T/Z 后缀），只是展示标题、不参与排序（存库时间戳列仍为 UTC 秒级文本），格式常量是 `internal/store` 的 `timeLayoutLocal`，两端（`createWithAutoTitleAt` 与前端预填）都不调 `.UTC()`/`.Local()`、各用自己时钟的本地时区，保证口径一致。构建时间的**注入值**仍是构建机本地带偏移的 RFC3339（`2026-11-03T17:29:33+08:00`，保留绝对时刻、避开 ldflags 带空格的引号风险），由 `build.Describe()` 经 `timefmt.Display` 渲染成展示格式，别在 justfile 里改成带空格的串。
 - 数据库结构变更只能新增 `sql/NNNN_*.sql` 迁移，禁止手改既有迁移。
 - 状态变更类 API（PUT/POST/DELETE）必须通过 CSRF 双提交校验；前端经 `web/src/lib/api.ts` 统一携带 `X-CSRF-Token`。唯一例外是 `/api/shutdown`（凭证即关停令牌），该豁免不得扩大。
 - `/api/shutdown` 只在后台模式存在（`web.Control.Token` 为空时注册的 handler 一律 403 `shutdown_disabled`），凭状态文件里的 32 字节令牌；令牌不得进日志、响应、命令行或环境变量，仍受 `hostGuard` 约束。

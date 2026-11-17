@@ -162,10 +162,10 @@ func TestLocalStampFallsBackToRawValue(t *testing.T) {
 	raw := "2026-10-29T14:03:05Z"
 	got := localStamp(raw)
 	if got == raw {
-		t.Fatalf("解析成功时应当按本机时区显示到分钟，得到原串 %q", got)
+		t.Fatalf("解析成功时应当按本机时区显示到秒，得到原串 %q", got)
 	}
-	if _, err := time.Parse("2006-01-02 15:04", got); err != nil {
-		t.Fatalf("格式应当是 YYYY-MM-DD HH:MM，得到 %q", got)
+	if _, err := time.Parse("2006-01-02 15:04:05", got); err != nil {
+		t.Fatalf("格式应当是 YYYY-MM-DD HH:MM:SS，得到 %q", got)
 	}
 
 	if got := localStamp("not a time"); got != "not a time" {

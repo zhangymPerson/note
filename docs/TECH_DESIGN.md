@@ -683,7 +683,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_title_uncategorized
 - `categories.id = 2`「速记」：0007 引入的第二个内置固定分类，与「未分类」同受 `store.IsReservedCategory` 守卫（不可改名、不可删除）；`Category.Reserved` 是 API 响应里的 `reserved` 字段，也是前端判断「给不给操作按钮」的唯一依据。
 - `notes.title` 的唯一性：0007 起同一分类内标题唯一（`COLLATE NOCASE`，回收站里的行也参与），因此按 `(分类, 标题)` 可以定位到唯一一条；查询必须显式写 `title = ? COLLATE NOCASE`（列本身没声明 COLLATE，只有索引是 NOCASE）。
 - `notes.deleted_at`：0006 引入的软删除标记；`NULL` = 正常，非空 = 在回收站里（值就是移入时刻，UTC 秒级）。列表、搜索、分类计数、统计都只看 `deleted_at IS NULL`。
-- 时间：UTC，固定格式 `2006-01-02T15:04:05Z`（秒级），便于字符串排序；相同时间以 `id DESC` 兜底。**唯一例外**：自动标题（速记 `速记-…`、合并 `合并-…`）用本地时间 `YYYY-MM-DD HH:MM:SS`（24 小时制、系统时区、无 T/Z 后缀），它只是展示标题、不参与任何排序，与构建时间一样不受本条约束。
+- 时间：存储与接口内部传递用 UTC 固定格式 `2006-01-02T15:04:05Z`（秒级），便于字符串排序；相同时间以 `id DESC` 兜底。而**一切面向用户的展示**（CLI 的 `note info` / `note web status` / `note list` / `note show`、网页列表/详情/回收站、`GET /api/info` 的 `build_date` 与 `started_at`、状态文件的 `started_at`）统一按**系统时区**渲染成 `2006-01-02 15:04:05`（24 小时制、无 T/Z 后缀），实现集中在 `internal/timefmt`（`Layout` / `DisplayTime` / `Display`）与前端 `web/src/lib/time.ts#formatLocalStamp`；解析失败原样返回。**唯一例外**：自动标题（速记 `速记-…`、合并 `合并-…`）用本地时间 `YYYY-MM-DD HH:MM:SS` 直接作为标题文本（`internal/store` 的 `timeLayoutLocal`），不参与排序。
 - `master_password` 是单行表（`CHECK (id = 1)`），只存派生参数，永不存口令本身；`question` 为助记问题原文，只用于展示提示。
 - `kdf_params` 非法时解密失败，属预期行为；不存在需要解析失败的 JSON 列。
 
@@ -953,7 +953,7 @@ web/src/lib/session-key.ts
 - 所有 API 响应 `Cache-Control: no-store`（204 除外无响应体）。
 - 不启用 CORS，不返回 `Access-Control-Allow-*`。
 - 错误结构见 4.5。
-- 时间字段为 UTC RFC3339 字符串，前端按本地时区展示。
+- 时间字段为 UTC 秒级文本（`2006-01-02T15:04:05Z`），前端一律经 `formatLocalStamp` 按系统时区展示成 `2006-01-02 15:04:05`（无 T/Z 后缀）。
 - 列表页大小固定 20。
 
 ### 8.2 数据结构
@@ -1149,7 +1149,7 @@ GET /api/csrf
   "cpu_count": 8,
   "mem_alloc_bytes": 808392,
   "mem_sys_bytes": 11321400,
-  "started_at": "2026-10-27T12:50:00Z",
+  "started_at": "2026-10-27 20:50:00",
   "uptime_seconds": 20,
   "db_path": ".run/e2e-info.db",
   "schema_version": 4,
@@ -1158,8 +1158,8 @@ GET /api/csrf
 }
 ```
 
-- `version / git_hash / git_dirty / build_date` 来自 `internal/build`：`just build` 用 `-ldflags -X` 注入，未注入时 `Describe()` 回落到 `debug.ReadBuildInfo()` 的 `vcs.revision / vcs.time / vcs.modified`，此时 `build_label` 是「1.4.0（开发构建）」。`build_date` 取**构建机本地时区**（RFC3339 带偏移，如 `2026-11-03T17:29:33+08:00`）——它只在信息页与 `note info` 里展示、不参与排序，所以不受「时间戳统一 UTC」约束；回落路径的 `vcs.time`（UTC）也经 `localBuildTime` 换成本地时区，两条路径口径一致（解析失败就原样返回，绝不因此让 `Describe` 出错）。
-- `started_at` 在 `newApplication` 里记 `time.Now().UTC()`，以 RFC3339 输出，UTC 时形如 `2006-01-02T15:04:05Z`，遵守时间戳约定。
+- `version / git_hash / git_dirty / build_date` 来自 `internal/build`：`just build` 用 `-ldflags -X` 注入，未注入时 `Describe()` 回落到 `debug.ReadBuildInfo()` 的 `vcs.revision / vcs.time / vcs.modified`，此时 `build_label` 是「1.4.0（开发构建）」。`build_date` 取**构建机本地时区**（`timefmt.Layout`：`2026-11-03 17:29:33`，无 T/Z 后缀）——它只在信息页与 `note info` 里展示、不参与排序，所以不受「时间戳统一 UTC」约束；注入值本身仍是带偏移的 RFC3339（`2026-11-03T17:29:33+08:00`，保留绝对时刻并避开 ldflags 带空格的引号风险），由 `Describe()` 经 `timefmt.Display` 渲染成展示格式；回落路径的 `vcs.time`（UTC）走同一支 `displayBuildDate`，两条路径口径一致（解析失败就原样返回，绝不因此让 `Describe` 出错）。
+- `started_at` 在 `newApplication` 里记 `time.Now()`，响应与状态文件都用 `timefmt.DisplayTime` 按系统时区输出 `2006-01-02 15:04:05`（无 T/Z 后缀），与 `note web status` 同口径；`uptime_seconds` 照旧是纯秒数。
 - `schema_version` 由 `Store.SchemaVersion` 读 `PRAGMA user_version`。
 - 响应里没有密文、盐、助记问题、口令或令牌；`hostname`、`db_path`、`addr` 是本机自用信息的展示，不构成对外泄露面（应用只监听回环，除非显式 `--allow-remote`）。
 - `note info`（`internal/cli/info.go` + `cmd/note` 采集）与本响应同源同口径：构建信息来自 `internal/build`，运行时来自本进程，配置来自同一套 `config.Load`；额外展示数据库只读快照（大小、schema 版本、笔记/加密/分类计数，`ListNotes(ctx, "", 0, 1).Total`、`ListEncryptedCiphers`、`ListCategories`），数据库文件不存在时不开库不建文件。输出同样不含密文、盐、口令或令牌。
@@ -1419,7 +1419,7 @@ check:
 ```
 
 - 发布统一使用 `just build`：`npm ci` → 前端构建 → Go 编译；Windows 产出 `note.exe`，其它平台 `note`。
-- `ldflags` 是 just 表达式，按 `os()` 分两支（Windows 走 PowerShell、其余走 bash 命令替换），拼出四个 `-X note/internal/build.*` 注入变量：`GitHash`、`BuildDate`、`GitDirty`（`git status --porcelain` 非空才加）、以及源码里已有的 `Version`。`BuildDate` 是构建机本地时区的 RFC3339 秒级时刻（带偏移，如 `2026-11-03T17:29:33+08:00`）：PowerShell 用 `[DateTimeOffset]::Now.ToString('yyyy-MM-ddTHH:mm:sszzz')`，bash 用 `date +%Y-%m-%dT%H:%M:%S` 与 `date +%z` 拼出 `+08:00`（手插冒号，因为 BSD/macOS 的 `date` 不认 GNU 的 `%:z`）。两个要点：不在 git 仓库内或 `git` 不存在时命令失败**必须退化成空值**，不能让构建挂掉（`internal/build.Describe()` 会回落到 `debug.ReadBuildInfo()`）；just 在 Windows 上把命令包成 `cmd /C "powershell -Command …"` 且只保留最后一行输出，因此 PowerShell 分支必须以裸 `$a` 结尾。
+- `ldflags` 是 just 表达式，按 `os()` 分两支（Windows 走 PowerShell、其余走 bash 命令替换），拼出四个 `-X note/internal/build.*` 注入变量：`GitHash`、`BuildDate`、`GitDirty`（`git status --porcelain` 非空才加）、以及源码里已有的 `Version`。`BuildDate` 是构建机本地时区的 RFC3339 秒级时刻（带偏移，如 `2026-11-03T17:29:33+08:00`）：PowerShell 用 `[DateTimeOffset]::Now.ToString('yyyy-MM-ddTHH:mm:sszzz')`，bash 用 `date +%Y-%m-%dT%H:%M:%S` 与 `date +%z` 拼出 `+08:00`（手插冒号，因为 BSD/macOS 的 `date` 不认 GNU 的 `%:z`）。注入值保留带偏移的绝对时刻，展示时由 `internal/build.Describe()` 经 `timefmt.Display` 统一渲染成本机时区的 `2026-11-03 17:29:33`（无 T/Z 后缀）——不在 ldflags 里直接放「带空格的串」，避免不同 shell 的引号问题。两个要点：不在 git 仓库内或 `git` 不存在时命令失败**必须退化成空值**，不能让构建挂掉（`internal/build.Describe()` 会回落到 `debug.ReadBuildInfo()`）；just 在 Windows 上把命令包成 `cmd /C "powershell -Command …"` 且只保留最后一行输出，因此 PowerShell 分支必须以裸 `$a` 结尾。
 - `just test` 依赖 `frontend`，因此跑 Go 测试前会重建 `internal/web/dist`——embed 的产物永远与被测代码一致。
 - `internal/web/dist` 为生成物，不提交；缺失时 `go build` 因 embed 失败而中止。
 - 另有 `just start` / `just stop` / `just restart`（后台开发服务，日志与 pid 写入 `.run/`）与 `just pull` / `just push`（多远程同步）。
@@ -1551,7 +1551,7 @@ Referrer-Policy: no-referrer
 | `internal/store/note_test.go`              | id 形态、明文/密文建改删、明文转加密、`rev`/`updated_at`、分页、标题命中排前、分类筛选与空查询、按码点计数的 2000 边界、结构非法拒绝、软删除不碰 `rev`/`updated_at` 且删除后不可更新、彻底删除后 404、`ListEncryptedCiphers` 只含加密行且不带 `content`、`UpdateNoteCipher` 只换密文（`title/content/category_id/rev/updated_at` 逐字不变）                                                                                                                                                            |
 | `internal/store/note_trash_test.go`        | 软删除后列表/搜索/分类计数全部看不到它而 `deleted=1` 能列出、恢复到原分类且 `updated_at`/`rev` 不变、`restore`/`purge` 对未删除笔记返回 `ErrNoteNotInTrash` 而对不存在返回 `ErrNoteNotFound`、重复删除 404、软删除/恢复/彻底删除各落一条事件、只剩回收站笔记的分类可删且恢复后落到「未分类」                                                                                                                                                                                                           |
 | `internal/build/info_test.go`              | `Describe()` 的「已注入」与「回落到 vcs 信息」两分支、`Label()` 的开发构建标注                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `internal/web/handlers_info_test.go`       | `/api/info` 字段齐全、`no-store`、时间戳形如 `2006-01-02T15:04:05Z`、`schema_version` 为 7                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `internal/web/handlers_info_test.go`       | `/api/info` 字段齐全、`no-store`、`started_at` 形如 `2006-01-02 15:04:05`（无 T/Z 后缀）、`schema_version` 为 7                                                                                                                                                                                                                                                                                                                                                                                        |
 | `internal/web/note_cipher_api_test.go`     | 清单不含 title/content、缺 `kdf_params` 与非法 base64 各返回对应字段错误、对明文笔记 409 `not_encrypted`、不存在的 id 404、不带 `X-CSRF-Token` 的 PUT 403 且库里密文未变、`/api/notes/encrypted` 不被 `{id}` 通配吃掉                                                                                                                                                                                                                                                                                  |
 | `internal/web/master_question_api_test.go` | `PUT /api/master-password/question` 的成功、字段校验与 CSRF 拒绝                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `internal/web/server_test.go`              | SPA 回退与安全头、`/assets` 长缓存与缺失 404、未知 API 返回 JSON 404、CSRF 签发与复用、Host 白名单、带扩展名非 HTML 路径 404、设置门禁与改名、统计与搜索端点                                                                                                                                                                                                                                                                                                                                           |

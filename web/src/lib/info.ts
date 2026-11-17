@@ -2,6 +2,7 @@
 // 这里只负责把数值摊成人能读的句子，不做任何加解密。
 
 import { getJSON } from "./api";
+import { formatLocalStamp } from "./time";
 
 export interface ServerInfo {
   version: string;
@@ -40,6 +41,12 @@ function text(value: string | undefined | null): string {
   return trimmed === "" ? UNKNOWN : trimmed;
 }
 
+// stamp 与 text 同口径，但把已知时间换算成本机时区、年月日 时分秒；
+// 后端已给出展示格式时原样返回（见 lib/time）。
+function stamp(value: string | undefined | null): string {
+  return text(formatLocalStamp((value ?? "").trim()));
+}
+
 export function formatBytes(value: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let size = value;
@@ -72,7 +79,7 @@ export function buildRows(info: ServerInfo): InfoRow[] {
       value:
         info.git_dirty && hash !== UNKNOWN ? `${hash}（含未提交改动）` : hash,
     },
-    { label: "构建日期", value: text(info.build_date) },
+    { label: "构建时间", value: stamp(info.build_date) },
     { label: "运行平台", value: `${text(info.goos)} / ${text(info.goarch)}` },
     { label: "Go 版本", value: text(info.go_version) },
     { label: "主机名", value: text(info.hostname) },
@@ -82,7 +89,7 @@ export function buildRows(info: ServerInfo): InfoRow[] {
       value: `${formatBytes(info.mem_alloc_bytes)} 已用 / ${formatBytes(info.mem_sys_bytes)} 保留`,
     },
     { label: "本次运行时长", value: formatUptime(info.uptime_seconds) },
-    { label: "启动时间", value: text(info.started_at) },
+    { label: "启动时间", value: stamp(info.started_at) },
     { label: "数据文件", value: text(info.db_path) },
     { label: "数据库结构版本", value: String(info.schema_version) },
     { label: "监听地址", value: text(info.addr) },

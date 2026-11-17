@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"note/internal/timefmt"
 )
 
 // StatusData 是 FormatStatus 的全部输入，由 cmd/note 采集：
@@ -47,7 +49,8 @@ func FormatStatus(d StatusData) string {
 		rows = append(rows, [2]string{"地址", strings.Join(d.URLs, "\n")})
 	}
 	if d.Running && d.StartedAt != "" {
-		rows = append(rows, [2]string{"启动时间", d.StartedAt + "（已运行 " + formatUptime(d.UptimeSeconds) + "）"})
+		// 状态文件与 /api/info 都给展示格式；旧版写入的 RFC3339 也在这里归一。
+		rows = append(rows, [2]string{"启动时间", timefmt.Display(d.StartedAt) + "（已运行 " + formatUptime(d.UptimeSeconds) + "）"})
 	}
 	rows = append(rows, [2]string{"日志", fileSummary(d.LogPath, d.LogExists, d.LogSizeBytes)})
 	rows = append(rows, [2]string{"数据库", d.DBPath})

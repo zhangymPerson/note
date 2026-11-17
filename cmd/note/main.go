@@ -21,6 +21,7 @@ import (
 	"note/internal/daemon"
 	"note/internal/store"
 	"note/internal/template"
+	"note/internal/timefmt"
 	"note/internal/web"
 )
 
@@ -171,9 +172,11 @@ func serve(cfg config.Config) error {
 			return err
 		}
 		state = daemon.State{
-			Pid:       os.Getpid(),
-			Addr:      cfg.Addr,
-			StartedAt: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			Pid:  os.Getpid(),
+			Addr: cfg.Addr,
+			// 状态文件里的启动时间按系统时区的「年月日 时分秒」写，
+			// 与 note web status / 信息页展示同口径。
+			StartedAt: timefmt.DisplayTime(time.Now()),
 			DB:        cfg.DBPath,
 			Log:       daemon.LogPath(cfg.DBPath),
 			Token:     token,

@@ -28,16 +28,24 @@ function valueOf(label: string): string {
   return row?.value ?? "";
 }
 
+// 展示格式是本机时区的年月日 时分秒，测试按同一种换算算出期望值，
+// 不写死具体小时——否则用例结果会跟着跑测试机器的时区变。
+function localStamp(raw: string): string {
+  const date = new Date(raw);
+  const pad = (input: number): string => String(input).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 function rowLabels(): string[] {
   return buildRows(full).map((row) => row.label);
 }
 
 describe("buildRows", () => {
-  it("把用户关心的构建信息摊成行：版本、hash、构建日期", () => {
+  it("把用户关心的构建信息摊成行：版本、hash、构建时间", () => {
     expect(rowLabels()).toEqual([
       "服务版本",
       "Git 构建",
-      "构建日期",
+      "构建时间",
       "运行平台",
       "Go 版本",
       "主机名",
@@ -52,7 +60,9 @@ describe("buildRows", () => {
     ]);
     expect(valueOf("服务版本")).toBe(full.build_label);
     expect(valueOf("Git 构建")).toBe("a7f74fb");
-    expect(valueOf("构建日期")).toBe("2026-10-27T12:00:00Z");
+    expect(valueOf("构建时间")).toBe(localStamp("2026-10-27T12:00:00Z"));
+    expect(valueOf("构建时间")).not.toMatch(/[TZ]/);
+    expect(valueOf("启动时间")).toBe(localStamp("2026-10-27T12:00:00Z"));
     expect(valueOf("运行平台")).toBe("windows / amd64");
   });
 
@@ -61,7 +71,7 @@ describe("buildRows", () => {
     const rows = buildRows(partial);
     expect(rows.find((row) => row.label === "服务版本")?.value).toBe("未知");
     expect(rows.find((row) => row.label === "Git 构建")?.value).toBe("未知");
-    expect(rows.find((row) => row.label === "构建日期")?.value).toBe("未知");
+    expect(rows.find((row) => row.label === "构建时间")?.value).toBe("未知");
     expect(JSON.stringify(rows)).not.toContain("undefined");
   });
 

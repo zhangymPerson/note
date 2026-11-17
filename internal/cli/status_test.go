@@ -3,24 +3,39 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
+// withFixedZone 把 time.Local 临时换成固定时区，避免用例结果依赖跑测试机器的时区。
+func withFixedZone(t *testing.T, offsetSeconds int) {
+	t.Helper()
+	saved := time.Local
+	time.Local = time.FixedZone("TEST", offsetSeconds)
+	t.Cleanup(func() { time.Local = saved })
+}
+
 func TestFormatStatusRunning(t *testing.T) {
+	// timefmt 包内部换固定时区，验证启动时间按本机时区展示到秒。
+	withFixedZone(t, 8*3600)
+
 	out := FormatStatus(StatusData{
 		Running: true, Pid: 12345, URLs: []string{"http://127.0.0.1:8080"},
-		StartedAt: "2026-10-28T09:12:33Z", UptimeSeconds: 11520,
+		StartedAt: "2026-10-28T01:12:33Z", UptimeSeconds: 11520,
 		LogPath: "/data/note.log", LogExists: true, LogSizeBytes: 1 << 20,
 		DBPath: "/data/notes.db", Version: "1.5.0 (418917b)",
 		StatePath: "/data/note.json", StateExists: true,
 	})
 	for _, want := range []string{
 		"note web · 运行中", "12345", "http://127.0.0.1:8080",
-		"2026-10-28T09:12:33Z（已运行 3 小时 12 分）", "/data/note.log（1.0 MB）",
+		"2026-10-28 09:12:33（已运行 3 小时 12 分）", "/data/note.log（1.0 MB）",
 		"/data/notes.db", "1.5.0 (418917b)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status 缺少 %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "T09:12:33") || strings.Contains(out, "Z（") {
+		t.Fatalf("启动时间必须是本机时区的年月日 时分秒，不带 T/Z：\n%s", out)
 	}
 }
 
