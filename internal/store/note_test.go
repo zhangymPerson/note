@@ -426,20 +426,124 @@ func TestListNotesMatchLinesLongLineAndCap(t *testing.T) {
 		t.Fatalf("长行应只有 1 条命中行: %+v", lines)
 	}
 	if !strings.Contains(lines[0], "关键词") {
-		t.Fatalf("截断后仍应含关键词: %q", lines[0])
+		t.Fatalf("窗口后仍应含关键词: %q", lines[0])
 	}
-	if n := utf8.RuneCountInString(lines[0]); n > matchLineRunes+2 {
-		t.Fatalf("截断行过长: %d runes (%q)", n, lines[0])
+	// 窗口 = 命中前 30 + 命中词 + 命中后 30 码点，加两侧省略号。
+	if n := utf8.RuneCountInString(lines[0]); n > matchBeforeRunes+len([]rune("关键词"))+matchAfterRunes+2 {
+		t.Fatalf("窗口过长: %d runes (%q)", n, lines[0])
+	}
+	if n := utf8.RuneCountInString(lines[0]); n >= len([]rune(long)) {
+		t.Fatalf("窗口不应等于整行: %d runes (%q)", n, lines[0])
 	}
 	if !strings.HasPrefix(lines[0], "…") {
-		t.Fatalf("行首被截应补省略号: %q", lines[0])
+		t.Fatalf("行首被裁应补省略号: %q", lines[0])
 	}
 	if !strings.HasSuffix(lines[0], "…") {
-		t.Fatalf("行尾被截应补省略号: %q", lines[0])
+		t.Fatalf("行尾被裁应补省略号: %q", lines[0])
 	}
 
 	if got := len(byTitle["多行"]); got != matchLineLimit {
 		t.Fatalf("命中行应封顶 %d 条, got %d: %+v", matchLineLimit, got, byTitle["多行"])
+	}
+}
+
+func TestListNotesMatchLinesWindowsMediumLine(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	// 中等长度单行：整行不足旧截断上限，但现在也只展示命中处附近的小窗口，
+	// 被裁掉的行首行尾都要补省略号（「只展示匹配中位置，其他位置隐藏」）。
+	medium := "开头" + strings.Repeat("字", 60) + "关键词" + strings.Repeat("字", 60) + "结尾"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "中行", Content: &medium}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := st.ListNotes(ctx, NoteFilter{Q: "关键词", Page: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || len(page.Items[0].MatchLines) != 1 {
+		t.Fatalf("应命中 1 条且带 1 条命中行: %+v", page.Items)
+	}
+	line := page.Items[0].MatchLines[0]
+	if !strings.Contains(line, "关键词") {
+		t.Fatalf("窗口应含关键词: %q", line)
+	}
+	if !strings.HasPrefix(line, "…") || !strings.HasSuffix(line, "…") {
+		t.Fatalf("整行已超出窗口，两侧都应补省略号: %q", line)
+	}
+	if n := utf8.RuneCountInString(line); n >= len([]rune(medium)) {
+		t.Fatalf("窗口不应等于整行: %d runes (%q)", n, line)
+	}
+}
+
+func TestListNotesMatchLinesCodeBlockWholeBlock(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	// 命中落在 fenced code 块内：整块一起返回（保留围栏与换行），
+	// 而不是只回命中的那一行——单行窗口会把代码行砍成残片。
+	body := "说明文字\n```go\nfunc main() {\n    println(\"会议\")\n}\n```\n结束"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "代码块", Content: &body}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := st.ListNotes(ctx, NoteFilter{Q: "会议", Page: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("应命中 1 条: %+v", page.Items)
+	}
+	want := "```go\nfunc main() {\n    println(\"会议\")\n}\n```"
+	if !slices.Equal(page.Items[0].MatchLines, []string{want}) {
+		t.Fatalf("代码块应整块返回: %+v", page.Items[0].MatchLines)
+	}
+}
+
+func TestListNotesMatchLinesTableWholeTable(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	// 命中落在表格行里：整张表（表头+分隔行+全部数据行）一起返回，
+	// 表格行被裁成单行窗口就渲染不出表格。
+	body := "说明\n| 选项 | 说明 |\n| ---- | ---- |\n| 会议 | 开会 |\n| 其他 | 不开 |\n结束"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "表格", Content: &body}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := st.ListNotes(ctx, NoteFilter{Q: "会议", Page: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("应命中 1 条: %+v", page.Items)
+	}
+	want := "| 选项 | 说明 |\n| ---- | ---- |\n| 会议 | 开会 |\n| 其他 | 不开 |"
+	if !slices.Equal(page.Items[0].MatchLines, []string{want}) {
+		t.Fatalf("表格应整块返回: %+v", page.Items[0].MatchLines)
+	}
+}
+
+func TestListNotesMatchLinesBlockHitsCountOnce(t *testing.T) {
+	st := noteTestStore(t)
+	ctx := context.Background()
+
+	// 同一块内多处命中只算一条整块，不占满 matchLineLimit。
+	body := "```\n会议一\n会议二\n会议三\n```"
+	if _, err := st.CreateNote(ctx, NoteInput{Title: "块内多处", Content: &body}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := st.ListNotes(ctx, NoteFilter{Q: "会议", Page: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || len(page.Items[0].MatchLines) != 1 {
+		t.Fatalf("同一块应合并为一条: %+v", page.Items)
+	}
+	if page.Items[0].MatchLines[0] != body {
+		t.Fatalf("整块应等于原文: %q", page.Items[0].MatchLines[0])
 	}
 }
 

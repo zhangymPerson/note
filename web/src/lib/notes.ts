@@ -30,7 +30,8 @@ export interface NoteMeta {
 }
 
 // 列表项：后端只给截断后的摘要，加密笔记连摘要都没有。
-// 带关键词搜索时后端额外给 match_lines（正文里包含查询词的行，超长行已截断）。
+// 带关键词搜索时后端额外给 match_lines（正文命中片段：普通行为命中处附近的小
+// 窗口，命中处落在 fenced code / 表格块里时是整块原文）。
 export interface NoteListItem {
   id: string;
   title: string;

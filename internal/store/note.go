@@ -11,6 +11,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"note/internal/snippet"
 )
 
 // 笔记层的结构与容量守卫（与 web 层校验同值，服务端永不信任单一入口）。
@@ -84,9 +86,12 @@ type NoteListItem struct {
 	// ListNotes（网页列表）只填 140 码点的 Content 摘要，不会填这个字段；
 	// 只有 ListNotesAll（note list / note show 选择器）才会把全文读回来。
 	FullContent *string `json:"-"`
-	// MatchLines 是带关键词搜索时命中的正文行（原文里包含查询词的那些行，
-	// 最多 matchLineLimit 行、每行超长时在命中处截断到 matchLineRunes 码点）；
-	// 不带关键词的普通列表恒为空，加密笔记恒为空（服务端读不到明文）。
+	// MatchLines 是带关键词搜索时命中的正文片段，最多 matchLineLimit 条：
+	// 普通行以首次命中处为中心裁出小窗口（窗口外内容隐藏并补省略号）；命中处
+	// 落在 fenced code 或表格块内时返回整块原文（多行、保留围栏/表头），否则
+	// 单行窗口会把表格行或代码行砍成残片。前端把每条片段当 Markdown 渲染并在
+	// 渲染结果里高亮命中词。不带关键词的普通列表恒为空，加密笔记恒为空（服务端
+	// 读不到明文）。
 	MatchLines []string `json:"match_lines,omitempty"`
 }
 
@@ -646,12 +651,21 @@ const listSelectSQL = `SELECT n.id, n.title, n.content, n.is_encrypted, n.catego
 // matchLineLimit 是搜索命中时单个笔记最多返回的匹配行数。
 const matchLineLimit = 3
 
-// matchLineRunes 是单条匹配行展示的最大码点数；超长行在命中处附近截断，
-// 前后补省略号，避免「单行超长正文」等于把全文带回网页。
-const matchLineRunes = 160
+// 命中行的展示窗口：只保留命中处附近的一小段（命中词前 matchBeforeRunes、
+// 后 matchAfterRunes 码点），窗口外内容隐藏并补省略号——前端把普通命中行当
+// Markdown 渲染，窗口足够小才不会把整篇正文带回网页。
+// 例外：命中处落在 fenced code / 表格块里时整块返回（见 matchLines 注释），
+// 那是单行窗口无法展示的结构化内容。
+const (
+	matchBeforeRunes = 30
+	matchAfterRunes  = 30
+)
 
-// matchLines 返回 content 里包含 term（忽略 ASCII 大小写）的正文行，最多
-// matchLineLimit 行；行内首次命中位置用于超长行截断。term 须为去首尾空白的词。
+// matchLines 返回 content 里包含 term（忽略 ASCII 大小写）的正文片段，最多
+// matchLineLimit 条。普通行以首次命中位置为中心裁出展示窗口（被裁掉的一侧补
+// 省略号）；若命中处落在 fenced code 块（```/~~~）或表格块里，则返回整块原文
+// （多行、保留围栏与表头，每块只算一条）——把表格行或代码行裁成单行窗口会让
+// 前端渲染不出完整的块。term 须为去首尾空白的词。
 func matchLines(content, term string) []string {
 	needle := []rune(strings.ToLower(term))
 	if len(needle) == 0 {
@@ -659,44 +673,107 @@ func matchLines(content, term string) []string {
 	}
 
 	lines := strings.Split(content, "\n")
+	fences := snippet.FenceBlocks(lines)
+	tables := snippet.TableBlocks(lines)
+	covered := make([]snippet.Block, 0, matchLineLimit)
 	matched := make([]string, 0, matchLineLimit)
-	for _, line := range lines {
+
+	for i, line := range lines {
 		if len(matched) >= matchLineLimit {
 			break
 		}
+		if !lineContainsFold(line, needle) {
+			continue
+		}
+		// 命中处已在收进结果集的块里：整块已返回过，别再落进单行窗口
+		if coveredContaining(i, covered) {
+			continue
+		}
+		// 命中落在块里：整块一起返回（同一块的多处命中只算一条）
+		if block := takeBlock(i, fences, covered); block != nil {
+			matched = append(matched, strings.Join(lines[block.Start:block.End+1], "\n"))
+			covered = append(covered, *block)
+			continue
+		}
+		if block := takeBlock(i, tables, covered); block != nil {
+			matched = append(matched, strings.Join(lines[block.Start:block.End+1], "\n"))
+			covered = append(covered, *block)
+			continue
+		}
+
+		// 普通行：命中处附近的小窗口
 		runes := []rune(line)
 		hit := -1
-		for i := 0; i+len(needle) <= len(runes); i++ {
-			if matchFoldEq(runes[i:i+len(needle)], needle) {
-				hit = i
+		for j := 0; j+len(needle) <= len(runes); j++ {
+			if matchFoldEq(runes[j:j+len(needle)], needle) {
+				hit = j
 				break
 			}
 		}
 		if hit < 0 {
 			continue
 		}
-		if len(runes) > matchLineRunes {
-			start := hit - 24
-			if start < 0 {
-				start = 0
-			}
-			end := start + matchLineRunes
-			if end > len(runes) {
-				end = len(runes)
-			}
-			var b strings.Builder
-			if start > 0 {
-				b.WriteString("…")
-			}
-			b.WriteString(string(runes[start:end]))
-			if end < len(runes) {
-				b.WriteString("…")
-			}
-			line = b.String()
+		start := hit - matchBeforeRunes
+		if start < 0 {
+			start = 0
 		}
-		matched = append(matched, line)
+		end := hit + len(needle) + matchAfterRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		var b strings.Builder
+		if start > 0 {
+			b.WriteString("…")
+		}
+		b.WriteString(string(runes[start:end]))
+		if end < len(runes) {
+			b.WriteString("…")
+		}
+		matched = append(matched, b.String())
 	}
 	return matched
+}
+
+// takeBlock 返回包含第 i 行、且尚未收进 covered 的块；没有则返回 nil。
+// covered 里已有的块不再重复返回（同一块内多处命中合并成一条整块）。
+func takeBlock(i int, blocks, covered []snippet.Block) *snippet.Block {
+	for _, b := range blocks {
+		if i < b.Start || i > b.End {
+			continue
+		}
+		already := false
+		for _, c := range covered {
+			if c == b {
+				already = true
+				break
+			}
+		}
+		if !already {
+			return &b
+		}
+	}
+	return nil
+}
+
+// coveredContaining 判断第 i 行是否落在已经收进 covered 的块里。
+func coveredContaining(i int, covered []snippet.Block) bool {
+	for _, c := range covered {
+		if i >= c.Start && i <= c.End {
+			return true
+		}
+	}
+	return false
+}
+
+// lineContainsFold 判断行是否包含 lowered（忽略大小写）。
+func lineContainsFold(line string, lowered []rune) bool {
+	runes := []rune(line)
+	for i := 0; i+len(lowered) <= len(runes); i++ {
+		if matchFoldEq(runes[i:i+len(lowered)], lowered) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchFoldEq 判断 value 是否在忽略大小写后与 lowered 相等（逐 rune 比较，

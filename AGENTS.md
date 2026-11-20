@@ -22,6 +22,7 @@ internal/store/    SQLite 打开、迁移与应用数据访问
 internal/timefmt/  时间展示口径（本机时区 + `2006-01-02 15:04:05`，无 T/Z）
 internal/daemon/   后台运行支持（状态文件、探测/关停请求、分离进程启动、pid 存活判定）
 internal/clipboard/剪贴板写入（原生实现 + OSC52 兜底；失败只返回错误，绝不影响主流程）
+internal/snippet/  搜索命中片段的行级块判定（fenced code / 表格块的区间识别，store 与 cli 共用）
 internal/web/      HTTP 处理器（含后台模式的 /api/shutdown）、中间件、内嵌前端
 sql/               编号迁移脚本（NNNN_name.sql，按 user_version 增量执行）
 web/src/           Svelte 5 SPA（router、views、components、lib）
@@ -46,7 +47,7 @@ docs/              PRD、技术方案、构建指南
 - `/api/shutdown` 只在后台模式存在（`web.Control.Token` 为空时注册的 handler 一律 403 `shutdown_disabled`），凭状态文件里的 32 字节令牌；令牌不得进日志、响应、命令行或环境变量，仍受 `hostGuard` 约束。
 - 后台实例的日志与状态文件固定在 `filepath.Dir(DBPath)`（`note.log` / `note.json`），路径只能由 `internal/daemon` 的纯函数推导；`note info` 必须输出日志路径。状态文件 `0600` 且原子写（临时文件 + rename），日志追加写不轮转。
 - 存活判定不得用 `os.FindProcess` 判 Windows（对已退出进程仍返回成功），必须用 `internal/daemon` 的等待句柄实现。
-- 安全不变量（见 TECH_DESIGN 1.2）：密码与派生密钥不落盘、不进任何浏览器存储；日志不含正文/密码/Cipher；`{@html}` 只允许出现在 `web/src/components/Markdown.svelte`，且输入必须先过 `DOMPurify.sanitize`；解密与含正文响应 `Cache-Control: no-store`。
+- 安全不变量（见 TECH_DESIGN 1.2）：密码与派生密钥不落盘、不进任何浏览器存储；日志不含正文/密码/Cipher；`{@html}` 只允许出现在 `web/src/components/Markdown.svelte`，且输入必须先过 `DOMPurify.sanitize`（`query` 非空时是 `renderMarkdown` 净化后、再由 `highlightRendered` 在净化结果上追加 `<mark>`，别绕过这层净化）；解密与含正文响应 `Cache-Control: no-store`。
 - 加解密全在浏览器端 WebCrypto（PBKDF2 + AES-256-GCM），服务端零密码学代码；数据库只存密文 BLOB 与公盐，因此 CLI 直读库解密是允许的扩展路径。
 - 主密码**可修改但不可找回**：改密时旧口令是否正确只由浏览器试解已有密文的 GCM 认证标签判定，服务端不得新增任何口令校验/解密端点。迁移只走 `PUT /api/notes/{id}/cipher`，它有意不动 `title/content/category_id/rev/updated_at`（改一次口令不该让全部笔记在按更新时间倒序的列表里排到最前），也不换全局盐——不要「顺手」把它对齐成 `PUT /api/notes/{id}`。
 - `GET /api/info` 与其它 API 一样 `Cache-Control: no-store`，响应只能是标准库运行时与配置值，不得含正文、密文、盐、密码或令牌；`just build` 用 `-ldflags -X` 注入 `internal/build` 的四个变量，git 不可用时必须退化为空值而不是让构建失败。
@@ -64,7 +65,7 @@ docs/              PRD、技术方案、构建指南
 - `ai.prompt` 空串 = 内置默认提示词（`config.DefaultAIPrompt`），非空必须含 `config.PromptVariable`（`{{content}}`）：启动加载、`note config set`、`PUT /api/ai-config` 三处同一口径硬失败，不要为了「好写」放宽成可选；`ai.models` 的拆分/校验/展示同样共用 `config.SplitModels` / `ValidateModels` / `ModelsDisplay`。
 - `note config` 与 `PUT /api/ai-config` 必须共用 `config.ValidateBaseURL` / `ValidateAPIKey` / `ValidatePrompt`（以及 `config.Normalize`），禁止在 web 层另写一套规则；`config.ValueError` 表示用法错误（命令行退出 2 / 网页 400），`config.ErrUnknownKey` 表示配置文件里已有未知键（网页 409，让用户先手改）。
 - CLI「打开笔记」只有一个含义：`note show <id>`、`note show`（无 id 进选择器）与 `note list` 的 `Enter` 预览共走 `cmd/note` 的 `openNote`——渲染到 stdout + 把 `ShowResult.Source`（库里的原始 Markdown，不是渲染结果）复制到剪贴板。复制只在 stdout 是终端时发生（管道/脚本不该被偷改剪贴板），提示写 stderr，失败不改变退出码；加密笔记没有可复制的原文，仍是退出码 4。网页详情页的「复制原文」按钮是同一语义（加密未解锁时不渲染）。
-- `note list` 的筛选：标题 + 分类用 fuzzy（bubbles `DefaultFilter`），正文用子串（`internal/cli/list.go#noteFilter`）——fuzzy 套在长正文上等于不筛。正文来自 `store.ListNotesAll` 的 `NoteListItem.FullContent`（`json:"-"`），网页列表走的 `ListNotes` 不得带回全文：不带关键词只回 140 码点 `content` 摘要，带关键词额外回 `match_lines`（命中正文行，`matchLineLimit=3` 行、单行 `matchLineRunes=160` 码点在命中处截断、前后补省略号；仅明文笔记、仅带 `q` 的搜索），两条路径都不携带整篇正文。前端对标题/命中行/回落摘要里的检索词用 `<mark>` 高亮（模板级切段渲染，不引入 HTML 注入）。
+- `note list` 的筛选：标题 + 分类用 fuzzy（bubbles `DefaultFilter`），正文用子串（`internal/cli/list.go#noteFilter`）——fuzzy 套在长正文上等于不筛。正文来自 `store.ListNotesAll` 的 `NoteListItem.FullContent`（`json:"-"`），网页列表走的 `ListNotes` 不得带回全文：不带关键词只回 140 码点 `content` 摘要，带关键词额外回 `match_lines`（命中正文片段，`matchLineLimit=3` 条：普通行以首次命中处为中心裁出小窗口——命中前 `matchBeforeRunes`、后 `matchAfterRunes` 各 30 码点，窗口外隐藏并补省略号；命中处落在 fenced code/表格块里时**整块返回**，块判定共用 `internal/snippet` 的 `FenceBlocks`/`TableBlocks`；仅明文笔记、仅带 `q` 的搜索），普通行不携带整篇正文（整块是例外，那是单行窗口渲染不出来的结构化内容）。前端标题仍是纯文本切段高亮（`<Highlight>`/`highlightParts`）；正文片段（命中窗口与整块、以及搜索回落摘要）经 `Markdown.svelte` 的 `query` 渲染成 Markdown 后，在渲染结果里对检索词包 `<mark>`（`renderMarkdown` → DOMPurify → `highlightRendered` 只追加 `<mark>`，`{@html}` 约束不变）。CLI 的 `note list` 过滤态下行高按「过滤结果里命中块的最大渲染行数」撑开（全局行高，未过滤回到 2 行），命中块经 `markdown.Render`（glamour，glow 的渲染内核）整块渲染、保留换行与着色（见 `internal/cli/list.go` 的 `listDelegate`/`blockSnippet`）。
 - 「速记」是第二个内置固定分类（`id=2`，与「未分类」同受 `store.IsReservedCategory` 守卫，迁移 `sql/0007`）；同一分类内标题唯一（两条 partial unique index，`title COLLATE NOCASE`，**含回收站行**，因此恢复不会撞名死锁），网页撞名返回 409 `title_conflict` / `title_in_trash` 并带 `fields.title`。前端判断「能不能改名/删除」只认后端 `Category.reserved`，不得再硬编码分类 id。CLI 的 `note set/get/del` 只按 `(分类, 标题)` 寻址，`set`/`del` 提示写 stderr、`get` 正文写 stdout（`get @分类` 默认只列标题，`--detail` 才出「标题/更新时间/正文」表格），退出码 0/1/2/4；`del @分类` 必须显式 `--yes`，`set` 撞上回收站同名拒绝覆盖并报出 id。
 
 ## 开发流程规则

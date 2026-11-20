@@ -11,8 +11,11 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/rivo/uniseg"
 
+	"note/internal/markdown"
+	"note/internal/snippet"
 	"note/internal/timefmt"
 )
 
@@ -140,14 +143,17 @@ func runListTUI(items []ListItem) (ListItem, bool, error) {
 // listModel 是 note list 的交互模型：picker 负责筛选与选择，选中就退出程序。
 type listModel struct {
 	picker   picker
+	delegate *listDelegate
 	count    int
 	selected *listEntry
 }
 
 func newListModel(items []list.Item) listModel {
+	delegate := &listDelegate{height: 2}
 	return listModel{
-		picker: newPicker(items, 80, 24, listDelegate{}, noteFilter(contentsOf(items))),
-		count:  len(items),
+		picker:   newPicker(items, 80, 24, delegate, noteFilter(contentsOf(items))),
+		delegate: delegate,
+		count:    len(items),
 	}
 }
 
@@ -267,6 +273,7 @@ func (m listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			height = 3
 		}
 		m.picker.list.SetSize(value.Width, height)
+		m.syncDelegateHeight()
 		return m, nil
 	case tea.KeyMsg:
 		switch value.String() {
@@ -288,7 +295,62 @@ func (m listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	m.picker = next
+	m.syncDelegateHeight()
 	return m, cmd
+}
+
+// syncDelegateHeight 在每次 Update 后校准行高：过滤态下按「过滤结果里命中块的
+// 最大渲染行数」撑高（代码块/表格需要多行才能完整展示），未过滤时回到恒定的
+// 2 行。行高变了就重算分页（SetSize 会触发 updatePagination），否则每项占的
+// 行数与 delegate 声明的高度错位，分页与视口会跟着错。
+func (m *listModel) syncDelegateHeight() {
+	d := m.delegate
+	term := strings.TrimSpace(m.picker.list.FilterInput.Value())
+	d.tall = term != ""
+	height := 2
+	if d.tall {
+		height = d.heightFor(m.picker.list, term)
+	}
+	if height == d.height {
+		return
+	}
+	d.height = height
+	m.picker.list.SetSize(m.picker.list.Width(), m.picker.list.Height())
+}
+
+// heightFor 返回过滤态下当前行高：标题一行 + 过滤结果里命中块的最大渲染行数；
+// 没有命中块（普通行窗口只有一行摘要）就还是 2 行。行高取「全部过滤结果」而非
+// 当前页：分页随行高重算后可见项会变，按可见项算会出现一帧滞后甚至截断。渲染
+// 行数封顶到列表可视高度，避免超长代码块把整屏占满、分页退化成一项；delegate
+// 的行高是全局的（bubbles 用同一个高度画所有行），没有块的项用空行补齐。
+func (d *listDelegate) heightFor(m list.Model, term string) int {
+	width := m.Width() - 4
+	if width <= 0 {
+		return 2
+	}
+	maxLines := 0
+	for _, item := range m.Items() {
+		entry, ok := item.(listEntry)
+		if !ok {
+			continue
+		}
+		if block := d.renderBlockFor(entry.item, term, width); block != "" {
+			if lines := lipgloss.Height(block); lines > maxLines {
+				maxLines = lines
+			}
+		}
+	}
+	if maxLines == 0 {
+		return 2
+	}
+	max := m.Height() - 3 // 给底部键位提示留出空间
+	if max < 2 {
+		max = 2
+	}
+	if 1+maxLines < max {
+		return 1 + maxLines
+	}
+	return max
 }
 
 func (m listModel) View() string {
@@ -322,16 +384,29 @@ func noteEntries(items []ListItem) []list.Item {
 	return entries
 }
 
-// listDelegate 画 note list 的两行行：第一行标题 + 右对齐的「分类 · 时间」，
-// 第二行摘要。恒为两行高，分页与视口才不会因为内容长度抖动。
-type listDelegate struct{}
+// listDelegate 画 note list 的一行：第一行标题 + 右对齐的「分类 · 时间」。
+// 未过滤时行高恒为 2（标题 + 单行摘要），分页与视口才不会因为内容长度抖动；
+// 过滤态下由 syncDelegateHeight 按「过滤结果里命中块的最大渲染行数」撑高，让
+// 每个代码块/表格都在终端里完整渲染出来（glow/glamour 渲染，保留换行与着色）。
+type listDelegate struct {
+	// tall 为真表示当前在过滤态（过滤词非空）。
+	tall bool
+	// height 是当前行高：未过滤恒为 2，过滤态由过滤结果里命中块的最大渲染行数决定。
+	height int
+	// blocks 缓存过滤结果里各命中块的 glamour 渲染结果，key = item.ID；
+	// 量行高（syncDelegateHeight）与画行（Render）共用同一份，避免每帧渲两遍。
+	// cacheTerm / cacheWidth 变化时整份作废（过滤词或宽度变了，块会变）。
+	cacheTerm  string
+	cacheWidth int
+	blocks     map[string]string
+}
 
-func (d listDelegate) Height() int  { return 2 }
-func (d listDelegate) Spacing() int { return 0 }
+func (d *listDelegate) Height() int  { return d.height }
+func (d *listDelegate) Spacing() int { return 0 }
 
-func (d listDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
+func (d *listDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
 
-func (d listDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+func (d *listDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	entry, ok := item.(listEntry)
 	if !ok {
 		return
@@ -364,18 +439,108 @@ func (d listDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	// 而 delegate 声明的 Height 仍是 2，分页与视口随之错位。
 	line := pickRow(mark, title, styleMuted.Render(entry.item.meta()), width)
 
-	// 第二行默认是摘要；如果过滤词只命中正文（标题没命中），就把摘要换成
-	// 正文里命中处的那一小段并染色——否则用户看不出这条为什么被筛出来。
+	// 第二区默认是单行摘要；过滤词只命中正文（标题没命中）时换成命中处片段并
+	// 染色——否则用户看不出这条为什么被筛出来。过滤态下命中 fenced code/表格
+	// 块的项，整块用 glamour 渲染出来（保留换行与着色），行高由 syncDelegateHeight
+	// 撑到恰好放下当前页最高的那块。
 	summary := listRowSummary(entry.item.Summary, width-4)
 	if len(matches) == 0 {
 		if snippet := snippetAround(entry.item.Content, term, width-4); snippet != "" {
 			summary = highlightTerm(snippet, term)
 		}
 	}
-	// 注意：这里不能补结尾换行——bubbles 自己在两项之间插 `Spacing()+1` 个换行
+	block := ""
+	if term != "" {
+		block = d.renderBlockFor(entry.item, term, width-4)
+	}
+
+	rows := []string{line}
+	if block != "" {
+		rows = append(rows, d.indentLines(block)...)
+	} else {
+		rows = append(rows, "   "+styleMuted.Render(summary))
+	}
+	// 补齐/截断到 Height() 行，防止量高度与画行两处口径漂移时每项占的行数错位；
+	// 注意这里不能补结尾换行——bubbles 自己在两项之间插 `Spacing()+1` 个换行
 	//（见 list.go 的 populatedView），多发一个会让每项占 Height()+1 行，
 	// 分页与视口按 Height() 算，`note list` 会因此溢出终端。
-	fmt.Fprintf(w, "%s\n   %s", line, styleMuted.Render(summary))
+	for len(rows) < d.height {
+		rows = append(rows, "")
+	}
+	if len(rows) > d.height {
+		rows = rows[:d.height]
+	}
+	fmt.Fprint(w, strings.Join(rows, "\n"))
+}
+
+// renderBlockFor 若 term 命中处落在 fenced code 或表格块内，返回整块的 glamour
+// 渲染结果（按列表宽度折行、保留块内换行与语法着色）；否则返回空串。结果按
+// (item.ID) 缓存，过滤词或宽度变了就整份作废，量行高与画行共用避免每帧渲两遍。
+func (d *listDelegate) renderBlockFor(item ListItem, term string, width int) string {
+	if term != d.cacheTerm || width != d.cacheWidth {
+		d.cacheTerm, d.cacheWidth = term, width
+		d.blocks = make(map[string]string)
+	}
+	if out, ok := d.blocks[item.ID]; ok {
+		return out
+	}
+	block, ok := blockSnippet(item.Content, term)
+	if !ok || width <= 0 {
+		d.blocks[item.ID] = ""
+		return ""
+	}
+	out, err := markdown.Render(block, markdown.Options{Width: width})
+	if err != nil {
+		// 渲染失败就退化成单行片段，别让列表卡死
+		d.blocks[item.ID] = ""
+		return ""
+	}
+	d.blocks[item.ID] = out
+	return out
+}
+
+// indentLines 把 glamour 渲染结果按行拆开并加上列表缩进（与单行摘要同一缩进）。
+func (d *listDelegate) indentLines(text string) []string {
+	text = strings.TrimRight(text, "\n")
+	if text == "" {
+		return []string{"   "}
+	}
+	raw := strings.Split(text, "\n")
+	out := make([]string, 0, len(raw))
+	for _, l := range raw {
+		out = append(out, "   "+l)
+	}
+	return out
+}
+
+// blockSnippet 若 term（忽略大小写）在 content 里的命中行落在 fenced code 或
+// 表格块内，返回整块原文（多行、保留围栏与表头），交给 markdown.Render 完整
+// 渲染；否则返回 ok=false，由调用方回退到单行窗口片段。块判定复用
+// internal/snippet 的规则，与 store.matchLines 同口径。
+func blockSnippet(content, term string) (string, bool) {
+	needle := strings.ToLower(strings.TrimSpace(term))
+	if content == "" || needle == "" {
+		return "", false
+	}
+	lines := strings.Split(content, "\n")
+	hit := -1
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(line), needle) {
+			hit = i
+			break
+		}
+	}
+	if hit < 0 {
+		return "", false
+	}
+	// fence 优先：表格行判定会误判代码里的 `| 行`，而 fence 内的行先被块盖住
+	if block := snippet.Containing(hit, snippet.FenceBlocks(lines)); block != nil {
+		return strings.Join(lines[block.Start:block.End+1], "\n"), true
+	}
+	if block := snippet.Containing(hit, snippet.TableBlocks(lines)); block != nil {
+		return strings.Join(lines[block.Start:block.End+1], "\n"), true
+	}
+	return "", false
 }
 
 // meta 是行右侧的辅助信息：分类 · 本地时间，加密笔记再追一个标记。

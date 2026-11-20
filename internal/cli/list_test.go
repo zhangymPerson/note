@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/rivo/uniseg"
 )
 
@@ -144,7 +145,7 @@ func TestListDelegateRendersTwoLinesWithinWidth(t *testing.T) {
 	model.picker.list.SetSize(40, 10)
 
 	var b strings.Builder
-	listDelegate{}.Render(&b, model.picker.list, 0, model.picker.list.Items()[0])
+	model.delegate.Render(&b, model.picker.list, 0, model.picker.list.Items()[0])
 	out := b.String()
 
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
@@ -291,6 +292,83 @@ func TestListModelViewShowsCountAndHelp(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("列表视图缺少 %q：\n%s", want, view)
 		}
+	}
+}
+
+func TestBlockSnippetDetectsFenceAndTable(t *testing.T) {
+	// 命中在 fenced code 块内：整块（含围栏与相邻行）返回
+	code := "前\n```\ncode 会议\n```\n后"
+	if got, ok := blockSnippet(code, "会议"); !ok || got != "```\ncode 会议\n```" {
+		t.Fatalf("代码块应整块返回: ok=%v got=%q", ok, got)
+	}
+	// 命中在表格行内：整张表返回
+	table := "| 选项 | 说明 |\n| --- | --- |\n| 会议 | 开会 |"
+	if got, ok := blockSnippet(table, "会议"); !ok || got != table {
+		t.Fatalf("表格应整块返回: ok=%v got=%q", ok, got)
+	}
+	// 普通行不是块
+	if got, ok := blockSnippet("普通行里有 会议", "会议"); ok || got != "" {
+		t.Fatalf("普通行不该当块处理: ok=%v got=%q", ok, got)
+	}
+	// 正文没有命中词不是块
+	if got, ok := blockSnippet("```\ncode\n```", "没有这个词"); ok || got != "" {
+		t.Fatalf("无命中不该返回块: ok=%v got=%q", ok, got)
+	}
+}
+
+func TestListModelFilterShowsWholeCodeBlock(t *testing.T) {
+	// 命中落在 fenced code 块里：过滤态下行高撑开，整块经 glamour 渲染出来，
+	// 包含非命中的相邻行（不把所有行变成一行）。
+	item := noteItem("a", "安装说明", "正文\n```sh\nnpm install\n会议\n```\n结束")
+	model := newTestListModel(item)
+	model.picker.list.SetSize(80, 24)
+
+	model = feedList(t, model, keyMsg("会议"))
+	if model.delegate.height <= 2 {
+		t.Fatalf("过滤态下行高应超过 2，得到 %d", model.delegate.height)
+	}
+	view := ansi.Strip(model.picker.view())
+	if !strings.Contains(view, "npm install") {
+		t.Fatalf("代码块应整块展示（含非命中的相邻行），得到：\n%s", view)
+	}
+	// 每项占的行数与 delegate 声明的行高一致，视图才不溢出终端
+	if got := lipgloss.Height(model.picker.view()); got > 24 {
+		t.Fatalf("视图占 %d 行，超过终端 24 行：\n%s", got, model.picker.view())
+	}
+}
+
+func TestListModelFilterShowsWholeTable(t *testing.T) {
+	item := noteItem("a", "排期表", "说明\n| 选项 | 说明 |\n| --- | --- |\n| 会议 | 周五 |\n结束")
+	model := newTestListModel(item)
+	model.picker.list.SetSize(80, 24)
+
+	model = feedList(t, model, keyMsg("会议"))
+	if model.delegate.height <= 2 {
+		t.Fatalf("过滤态下行高应超过 2，得到 %d", model.delegate.height)
+	}
+	view := ansi.Strip(model.picker.view())
+	// glamour 会重排表格（去前导管道、按列宽对齐），这里只断言表头/数据行的
+	// 文字都在、且列分隔管道保留——整张表渲染出来而不是只回命中那一行。
+	for _, want := range []string{"选项", "说明", "周五", "|"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("表格应整块展示（含表头与数据行），缺少 %q：\n%s", want, view)
+		}
+	}
+}
+
+func TestListModelFilterEscRestoresTwoLineRows(t *testing.T) {
+	item := noteItem("a", "安装说明", "```\n会议\n```")
+	model := newTestListModel(item)
+	model.picker.list.SetSize(80, 24)
+
+	model = feedList(t, model, keyMsg("会议"))
+	if model.delegate.height <= 2 {
+		t.Fatalf("过滤态下行高应超过 2，得到 %d", model.delegate.height)
+	}
+	// Esc 清空过滤回到浏览态：行高回到恒定的 2 行
+	model = feedList(t, model, keyMsg("esc"))
+	if model.delegate.height != 2 {
+		t.Fatalf("退出过滤态后行高应回到 2，得到 %d", model.delegate.height)
 	}
 }
 

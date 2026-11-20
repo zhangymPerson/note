@@ -235,14 +235,14 @@
               <div class="search-hit-lines">
                 {#each hit.match_lines as line}
                   <div class="search-hit-line">
-                    <Highlight text={line} query={searchedQ} />
+                    <Markdown source={line} query={searchedQ} compact />
                   </div>
                 {/each}
               </div>
             {:else if hit.content}
               <div class="search-hit-lines">
                 <div class="search-hit-line">
-                  <Highlight text={hit.content} query={searchedQ} />
+                  <Markdown source={hit.content} query={searchedQ} compact />
                 </div>
               </div>
             {/if}

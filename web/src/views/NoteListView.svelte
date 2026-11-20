@@ -1,6 +1,7 @@
 <script lang="ts">
   import CategoryTree from '../components/CategoryTree.svelte'
   import Highlight from '../components/Highlight.svelte'
+  import Markdown from '../components/Markdown.svelte'
   import NoteDetailView from './NoteDetailView.svelte'
   import { ApiRequestError } from '../lib/api'
   import {
@@ -325,25 +326,25 @@
                   {/if}
                 </span>
                 {#if note.match_lines && note.match_lines.length > 0}
-                  <span class="note-summary note-match-lines">
+                  <div class="note-summary note-match-lines">
                     {#if committedQ !== ''}
-                      {#each note.match_lines as line, i}
-                        <Highlight text={line} query={committedQ} />{i < note.match_lines.length - 1 ? '\n' : ''}
+                      {#each note.match_lines as line}
+                        <Markdown source={line} query={committedQ} compact />
                       {/each}
                     {:else}
                       {note.match_lines.join('\n')}
                     {/if}
-                  </span>
+                  </div>
                 {:else if note.content}
-                  <span class="note-summary">
+                  <div class="note-summary" class:md-rendered={committedQ !== ''}>
                     {#if committedQ !== ''}
-                      <Highlight text={note.content} query={committedQ} />
+                      <Markdown source={note.content} query={committedQ} compact />
                     {:else}
                       {note.content}
                     {/if}
-                  </span>
+                  </div>
                 {:else if note.encrypted}
-                  <span class="note-summary muted">密文内容不在列表展示。</span>
+                  <div class="note-summary muted">密文内容不在列表展示。</div>
                 {/if}
                 <span class="note-meta">
                   {shownAt(note.updated_at)}

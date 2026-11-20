@@ -1,13 +1,19 @@
 <script lang="ts">
   import { renderMarkdown } from '../lib/markdown'
+  import { highlightRendered } from '../lib/highlight'
 
-  let { source }: { source: string } = $props()
+  // query 非空时，在渲染（并净化）后的 HTML 里把命中词包上 <mark>，供搜索命中片段使用；
+  // compact 压缩块级间距，供列表行内的短片段使用（大标题/代码块/图片都压小）。
+  let { source, query = '', compact = false }: { source: string; query?: string; compact?: boolean } = $props()
 
-  // 全仓唯一允许 {@html} 的位置：输入必须先经 renderMarkdown 净化。
-  const html = $derived(renderMarkdown(source))
+  // 全仓唯一允许 {@html} 的位置：输入必须先经 renderMarkdown 净化；
+  // highlightRendered 只往净化结果里加 <mark>，不引入新风险。
+  const html = $derived(
+    query === '' ? renderMarkdown(source) : highlightRendered(renderMarkdown(source), query),
+  )
 </script>
 
-<div class="md">{@html html}</div>
+<div class="md" class:compact>{@html html}</div>
 
 <style>
   .md {
@@ -123,5 +129,45 @@
     margin: 1.4em 0;
     background: var(--border);
     border: 0;
+  }
+
+  /* 搜索命中片段：compact 压平块级间距，避免列表行里出现大标题/大代码块/大图 */
+  .md.compact :global(p),
+  .md.compact :global(ul),
+  .md.compact :global(ol),
+  .md.compact :global(blockquote),
+  .md.compact :global(table),
+  .md.compact :global(pre) {
+    margin: 0;
+  }
+
+  .md.compact :global(h1),
+  .md.compact :global(h2),
+  .md.compact :global(h3),
+  .md.compact :global(h4),
+  .md.compact :global(h5),
+  .md.compact :global(h6) {
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .md.compact :global(ul),
+  .md.compact :global(ol) {
+    padding-left: 1.2em;
+  }
+
+  .md.compact :global(pre) {
+    padding: 0.3em 0.5em;
+    max-height: 6em;
+    overflow: auto;
+  }
+
+  .md.compact :global(img) {
+    max-height: 2em;
+    width: auto;
   }
 </style>

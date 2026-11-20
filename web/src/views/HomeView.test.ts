@@ -265,6 +265,81 @@ describe("HomeView 查询结果", () => {
     ).not.toContain("<mark>");
   });
 
+  it("命中行先渲染成 Markdown，再在渲染结果里高亮命中词", async () => {
+    mocks.listNotes.mockResolvedValue({
+      items: [
+        {
+          id: "n1",
+          title: "会议纪要",
+          encrypted: false,
+          category_id: null,
+          updated_at: "2026-11-16T12:00:00Z",
+          match_lines: ["**会议**纪要", "- 列表项里有 会议"],
+        },
+      ],
+      total: 1,
+      page: 1,
+      per_page: 20,
+    });
+    const target = renderHome();
+    typeInto(target.querySelector("#home-search") as HTMLInputElement, "会议");
+    const form = target.querySelector(".search-form") as HTMLFormElement;
+    form.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    await vi.waitFor(() =>
+      expect(target.querySelectorAll(".search-hit-line")).toHaveLength(2),
+    );
+    const lines = Array.from(
+      target.querySelectorAll<HTMLElement>(".search-hit-line"),
+    );
+    // 粗体语法渲染成 <strong>，命中词在渲染结果里包 <mark>
+    expect(lines[0]?.querySelector("strong mark")?.textContent).toBe("会议");
+    // 列表语法渲染成 <li>，命中词仍在
+    expect(lines[1]?.textContent).toContain("会议");
+    expect(lines[1]?.querySelector("mark")?.textContent).toBe("会议");
+  });
+
+  it("命中代码块/表格时整块渲染，不丢失结构", async () => {
+    mocks.listNotes.mockResolvedValue({
+      items: [
+        {
+          id: "n1",
+          title: "会议纪要",
+          encrypted: false,
+          category_id: null,
+          updated_at: "2026-11-16T12:00:00Z",
+          match_lines: [
+            '```\nprint("会议")\n```',
+            "| 选项 | 说明 |\n| --- | --- |\n| 会议 | 周五 |",
+          ],
+        },
+      ],
+      total: 1,
+      page: 1,
+      per_page: 20,
+    });
+    const target = renderHome();
+    typeInto(target.querySelector("#home-search") as HTMLInputElement, "会议");
+    const form = target.querySelector(".search-form") as HTMLFormElement;
+    form.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    await vi.waitFor(() =>
+      expect(target.querySelectorAll(".search-hit-line")).toHaveLength(2),
+    );
+    const lines = Array.from(
+      target.querySelectorAll<HTMLElement>(".search-hit-line"),
+    );
+    // 代码块整块渲染成 <pre><code>，命中词在渲染结果里高亮
+    expect(lines[0]?.querySelector("pre code mark")?.textContent).toBe("会议");
+    // 表格整块渲染成 <table>，含表头与数据行，命中词在单元格里高亮
+    const table = lines[1]?.querySelector("table");
+    expect(table?.textContent).toContain("选项");
+    expect(table?.textContent).toContain("周五");
+    expect(table?.querySelector("mark")?.textContent).toBe("会议");
+  });
+
   it("空查询不发请求", async () => {
     const target = renderHome();
     const input = target.querySelector("#home-search") as HTMLInputElement;

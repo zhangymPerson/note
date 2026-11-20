@@ -491,6 +491,12 @@ input {
   word-break: break-word;
 }
 
+/* 搜索命中用 Markdown 渲染摘要：块级子元素，不走 -webkit-box 行数截断 */
+.note-match-lines,
+.note-summary.md-rendered {
+  display: block;
+}
+
 /* 速记卡片：正文框 + 直接速记 / AI 速记（预览确认） */
 .quick-card {
   margin-top: 16px;

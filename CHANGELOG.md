@@ -27,6 +27,13 @@
   - 文案跟着单位走：`ai.formatTimeout` 新增整分钟分支，`TimeoutError` 现在说「模型 X 在 5 分钟内没有响应，可以稍后重试、换一个模型，或检查接口地址是否可用」（整秒仍是「45 秒」、毫秒仍是「20 毫秒」）。
   - **测试**：新增 `TestDefaultTimeoutIsFiveMinutes`（常量值 + 文案 + 三处超时同值）、`TestOptimizeErrorTimeoutUsesMinutes`（504 文案说 5 分钟）；既有断言里的 60 秒改为按新单位对齐。`just test`（前端 219 项）与 `just check` 通过。
 
+- 搜索结果把命中内容**渲染成 Markdown 后再高亮**，并区分「普通行小窗口」与「结构化块整块」两种片段（实现过程与关键逻辑）：
+  - **`internal/store/note.go`**：`matchLines` 不再回整行——普通行以首次命中处为中心裁出展示窗口（命中前 `matchBeforeRunes`、后 `matchAfterRunes` 各 30 码点，窗口外内容隐藏、被裁的一侧补省略号；即使单行不足旧上限 160 码点也只回窗口）；**命中处落在 fenced code 块（```/~~~）或表格块里时整块返回**（多行、保留围栏/表头；同一块的多处命中合并成一条，仍最多 `matchLineLimit = 3` 条）——单行窗口会把表格行或代码行砍成残片，前端渲染不出完整的块。原 `matchLineRunes`（160 码点、命中前 24 码点起截断）删除；普通浏览列表与 `ListNotesAll`（CLI 本地筛选）不受影响。
+  - **新增 `internal/snippet`**：fenced code 块与表格块的**行区间判定**（`FenceBlocks`/`TableBlocks`/`Containing`），store 的 `matchLines` 与 cli 的命中块渲染共用同一套规则，避免两端各自演化漂移。
+  - **前端**：`Markdown.svelte` 新增可选 `query`（非空时 `renderMarkdown` 净化后经 `highlightRendered` 在渲染结果里对检索词包 `<mark>`）与 `compact`（压缩块级间距，供列表行内片段用）；`lib/highlight.ts` 新增 `highlightRendered(html, query)`（DOMParser 走文本节点切段、只追加 `<mark>`，忽略 ASCII 大小写、每处都命中，输入必须来自 `renderMarkdown` 净化结果）；`HomeView.svelte` 与 `NoteListView.svelte` 的搜索结果把命中片段（整块或小窗口）改用 `<Markdown source query compact>` 渲染——整块表格/代码块因此能在搜索结果里**完整渲染**，标题仍是纯文本 `<Highlight>` 高亮；`app.css` 为 `.note-match-lines` / `.note-summary.md-rendered` 补 `display: block`（块级子元素不走 -webkit-box 行数截断）。
+  - **CLI `note list`（glow 渲染）**：`listDelegate` 从恒 2 行改为有状态——过滤态下按「过滤结果里命中块的最大渲染行数」撑高行（未过滤时回到 2 行，行高是全局的、没有块的项用空行补齐），命中 fenced code / 表格块的项整块经 `markdown.Render`（glamour，glow 的渲染内核）渲染出来，保留块内换行、语法着色与表格列对齐，**不再把所有行压成一行**；行高封顶到列表可视高度，块渲染结果按 item.ID 缓存（过滤词或宽度变了整份作废，量行高与画行共用，避免每帧渲两遍）。
+  - **测试**：store 新增 4 项（代码块整块返回、表格整张返回、同一块多处命中合并成一条、普通长行窗口）；`internal/snippet` 新增 3 组（围栏/表格/包含判定）；CLI 新增 4 项（`blockSnippet` 判定、过滤态代码块整块展示且视图不溢出、过滤态表格整块展示、Esc 退出过滤后行高回到 2）；前端新增 `highlight-rendered.test.ts` 6 项（空词/未命中/标签内命中/大小写/多处命中/代码块内命中）、`HomeView.test.ts` 1 项（命中行渲染成 `<strong>`/`<li>` 后命中词仍包 `<mark>`）。`just test` 与 `just check` 通过。
+
 ### Fixed
 
 - AI 优化失败时的日志信息量不够，排查只能靠猜（「模型 X 在 60 秒内没有响应」看不出是 DNS 卡住、连不上、TLS 失败还是模型就是不出字，也看不出到底发了什么）：
