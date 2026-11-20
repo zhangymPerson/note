@@ -372,6 +372,73 @@ func TestListModelFilterEscRestoresTwoLineRows(t *testing.T) {
 	}
 }
 
+func TestListModelFilterNarrowingBelowCursorDoesNotPanic(t *testing.T) {
+	// 回归：bubbles v1.0.0 的 FilterMatchesMsg 只填 filteredItems、不重算分页。
+	// handleFiltering 在每次按键时虽然会 updatePagination，但那是对「旧的
+	// filteredItems」算的（新结果要等异步 FilterMatchesMsg 回来才落地）——所以
+	// 两段式过滤会踩中：第一段「会」命中 7 条、代码块把行高撑高（PerPage 缩到
+	// 1），过滤态里下移 4 次把 Page 走到 4；第二段「排」→「会排」把可见项缩到
+	// 3 条，分页指针还停在第 4 页 → populatedView 里 items[start:end] 会
+	// start>end，直接 slice out of range 崩溃（用户报的 [4:3]）。
+	// 修复在 picker.forward 每次更新后 clampPagination。
+	items := make([]ListItem, 0, 37)
+	for i := range 30 {
+		items = append(items, plainItem(fmt.Sprintf("id-%02d", i), fmt.Sprintf("笔记 %02d", i), "工作", "2026-10-29T00:00:00Z"))
+	}
+	// 7 条命中「会」：4 条「会议X」+ 2 条「会排X」（也命中「会排」）+ 1 条代码块；
+	// 代码块内容同时含「会」与「会排」，两段过滤下行高都保持撑高（PerPage=1）。
+	for i := range 4 {
+		items = append(items, plainItem(fmt.Sprintf("议-%d", i), fmt.Sprintf("会议%c", 'A'+i), "工作", "2026-10-29T00:00:00Z"))
+	}
+	for i := range 2 {
+		items = append(items, plainItem(fmt.Sprintf("排-%d", i), fmt.Sprintf("会排%c", 'A'+i), "工作", "2026-10-29T00:00:00Z"))
+	}
+	items = append(items, noteItem("block", "安装说明", "正文\n```sh\n"+strings.Repeat("会排会议记录\n", 20)+"```\n结束"))
+	model := newTestListModel(items...)
+	model.picker.list.SetSize(80, 24)
+
+	// 浏览态先下移 5 次，让过滤前的分页指针有一个非零位置
+	for range 5 {
+		model = feedList(t, model, keyMsg("down"))
+	}
+	if idx := model.picker.list.Index(); idx != 5 {
+		t.Fatalf("光标应停在 index 5，得到 %d", idx)
+	}
+
+	// 第一段「会」：命中 7 条，代码块把行高撑高（PerPage 缩到 1）
+	model = feedList(t, model, keyMsg("会"))
+	if n := len(model.picker.list.VisibleItems()); n != 7 {
+		t.Fatalf("第一段过滤应命中 7 条，得到 %d", n)
+	}
+	if model.delegate.height <= 2 {
+		t.Fatalf("过滤态下行高应撑高，得到 %d", model.delegate.height)
+	}
+
+	// 过滤态里下移 4 次：per=1 时每次下移都翻一页，走到第 4 页（index 4）
+	for range 4 {
+		model = feedList(t, model, keyMsg("down"))
+	}
+	if idx := model.picker.list.Index(); idx != 4 {
+		t.Fatalf("过滤态下移后光标应停在 index 4，得到 %d", idx)
+	}
+
+	// 第二段追加「排」→「会排」：可见项从 7 缩到 3，分页指针还在第 4 页
+	model = feedList(t, model, keyMsg("排"))
+	if n := len(model.picker.list.VisibleItems()); n != 3 {
+		t.Fatalf("第二段过滤应缩到 3 条，得到 %d", n)
+	}
+
+	// 分页指针必须还在可见项范围内：修复前这里 start=4 ≥ 3 直接崩溃
+	start := model.picker.list.Paginator.Page * model.picker.list.Paginator.PerPage
+	if start >= len(model.picker.list.VisibleItems()) {
+		t.Fatalf("分页指针越界：start=%d ≥ 可见项 %d（Page=%d PerPage=%d）",
+			start, len(model.picker.list.VisibleItems()), model.picker.list.Paginator.Page, model.picker.list.Paginator.PerPage)
+	}
+	if view := model.picker.view(); view == "" {
+		t.Fatal("过滤后的视图不该为空")
+	}
+}
+
 // columnOf 返回 sub 在 line 里的显示列（按 rune 计），用来断言列对齐。
 func columnOf(line, sub string) int {
 	return utf8.RuneCountInString(line[:strings.Index(line, sub)])

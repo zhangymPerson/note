@@ -16,6 +16,10 @@
 
 ### Fixed
 
+- **`note list` / `note show` 选择器两段式过滤时直接崩溃退出**：`slice bounds out of range [4:3]`，屏幕只剩报错与「Restoring terminal...」（`note add` 的分类选择器同样会触发）。
+  - **根因**：bubbles v1.0.0 的 `FilterMatchesMsg` 处理器只填 `filteredItems`、**不重算分页**（`updatePagination` 只在 `SetSize`/`SetItems`/`ResetFilter` 等路径被触发）；`handleFiltering` 每次按键虽会 `updatePagination`，但那是对「旧的 `filteredItems`」算的，新结果要等异步 `FilterMatchesMsg` 回来才落地。上一轮给 `note list` 加的命中块整块渲染把行高撑高、`PerPage` 缩到 1~4，于是两段式过滤必踩：第一段「会」命中 7 条、过滤态下移把 `Page` 走到 4；第二段「会排」把可见项缩到 3 条，分页指针还停在第 4 页 → `populatedView` 里 `items[start:end]` 的 `start(4) > end(3)`，直接 slice 越界崩溃。
+  - **修复**：`picker.forward`（`note list`/`note show`/`note add` 分类选择器共用、所有 `list.Update` 结果的唯一出口）在每次更新后调新增的 `clampPagination()`——按当前可见项数重算 `TotalPages`，`Index()` 越界时用 `Select(n-1)` 把光标校回可见范围；两条都只走 bubbles 公开 API，对已合法状态是恒等操作。
+  - **测试**：新增 `TestListModelFilterNarrowingBelowCursorDoesNotPanic`（复刻上述两段式场景，修复前精确复现 `[4:3]` panic，修复后通过）；`just test`（Go 全包 + 前端 228 项）与 `just check` 通过；PTY 冒烟：浏览下移 5 → 过滤「会」→ 下移 4 → 追加「排」，列表正常渲染、`Esc` 正常退出（rc=0）。
 - **`note list` / `note show` 选择器输入过滤词后报错直接退出**：屏幕残留 `]11;rgb:1515/1919/1e1e` 一类的终端转义垃圾（`note add` 的 AI 优化预览、速记的 AI 整理预览同样会触发）。
   - **根因**：`markdown.Render` 的 "auto" 风格会经 glamour 调用 termenv 向终端发 OSC 11 背景查询（`\x1b]11;?\x07`）并阻塞读 stdin 等回复。本轮给 `note list` 加命中块整块渲染后，渲染发生在 TUI 循环里（`renderBlockFor`）——termenv 的读取与 bubbletea 自己的 stdin 读取器抢终端回复的字节：回复的 `\x1b]11;rgb:…` 被当作用户输入，轻则显示乱码、误触发按键，重则让程序报错退出。
   - **修复**：`internal/markdown` 新增 `AutoStyle()`——用 `sync.Once` 把 "auto" 的一次性解析结果缓存（stdout 非终端 → "notty"，与 glamour 的 auto 同口径；否则按 `termenv.HasDarkBackground()` 给 "dark"/"light"），`Render` 不再把 "auto" 交给 glamour，渲染阶段永不查终端；三个会渲染 Markdown 的 TUI 入口（`newListModel` / `newAddModel` / `newQuickAddModel`）在构造模型时（tea 进入 raw mode 之前）先 `AutoStyle()` 预热，查询只发生这一次且不与 TUI 抢输入。

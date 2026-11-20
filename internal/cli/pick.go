@@ -110,7 +110,29 @@ func (p picker) update(msg tea.Msg) (picker, bool, tea.Cmd) {
 func (p picker) forward(msg tea.Msg) (picker, bool, tea.Cmd) {
 	var cmd tea.Cmd
 	p.list, cmd = p.list.Update(msg)
+	p.clampPagination()
 	return p, true, cmd
+}
+
+// clampPagination 把分页指针校回与当前可见项一致的范围。
+//
+// bubbles v1.0.0 的 FilterMatchesMsg 只填 filteredItems、不重算分页（它的
+// updatePagination 只在 SetSize/SetItems 等路径被触发）：过滤把可见项缩到分页
+// 指针之后时，populatedView 里 items[start:end] 会 start>end，直接
+// slice out of range 崩溃（note list 过滤时用户报的 [4:3] 就是这样来的——
+// 过滤命中的代码块/表格把行高撑高、PerPage 缩到 1~4，浏览态下光标稍微往下
+// 一点，过滤结果一落地分页指针就出了可见项的范围）。这里每次 list 更新后重算
+// TotalPages，并用 Select 把越界的 Index 校回，两条都只走 bubbles 的公开 API；
+// 对已合法的状态是无副作用的恒等操作。
+func (p *picker) clampPagination() {
+	n := len(p.list.VisibleItems())
+	if n == 0 {
+		return
+	}
+	p.list.Paginator.SetTotalPages(n)
+	if p.list.Index() >= n {
+		p.list.Select(n - 1)
+	}
 }
 
 // enterFiltering 借 list 自己的 / 进过滤态。不能直接调 SetFilterState：
