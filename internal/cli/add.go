@@ -119,6 +119,10 @@ type addModel struct {
 
 // newAddModel 造一个只含默认值、尚未加载分类的模型。
 func newAddModel(deps AddDeps) addModel {
+	// 进 TUI 前先解析一次终端亮暗：AI 优化结果预览会在 TUI 循环里渲染
+	// Markdown（glamour "auto" 会查终端背景），必须趁还没进 raw mode 查完
+	// 并缓存（见 internal/markdown 的 AutoStyle 注释）。
+	markdown.AutoStyle()
 	create := textinput.New()
 	create.Placeholder = "分类名"
 	create.CharLimit = maxAddCategoryRunes

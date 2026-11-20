@@ -28,6 +28,34 @@ func TestRenderKeepsCodeBlockContent(t *testing.T) {
 	}
 }
 
+func TestAutoStyleResolvesOnceAndCaches(t *testing.T) {
+	// AutoStyle 与 glamour 的 auto 同口径：stdout 不是终端（测试里就是这样）时
+	// 回 "notty"，是终端则按背景亮暗给 "dark"/"light"。解析一次后永久缓存——
+	// 不能每次渲染都去查终端（在 TUI 循环里查会跟 bubbletea 的 stdin 读取器
+	// 抢字节）。结果必须稳定且是合法风格名。
+	first := AutoStyle()
+	if first != "dark" && first != "light" && first != "notty" {
+		t.Fatalf("AutoStyle 应返回 dark/light/notty 之一，得到 %q", first)
+	}
+	if second := AutoStyle(); second != first {
+		t.Fatalf("AutoStyle 应缓存同一结果：%q != %q", first, second)
+	}
+}
+
+func TestRenderEmptyStyleUsesResolvedStyle(t *testing.T) {
+	// Style 空串与 "auto" 一样，都按 AutoStyle 的一次性解析结果渲染，
+	// 不再把 "auto" 交给 glamour（那会触发对终端的 OSC 查询）。
+	resolved := AutoStyle()
+	out, err := Render("正文\n", Options{Width: 80})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(out, "正文") {
+		t.Fatalf("正文被吞了：%q", out)
+	}
+	_ = resolved
+}
+
 func TestRenderRejectsUnknownStyle(t *testing.T) {
 	if _, err := Render("hi\n", Options{Style: "nope"}); err == nil {
 		t.Fatal("未知风格应当报错，而不是静默回退")

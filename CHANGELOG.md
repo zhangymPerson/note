@@ -16,6 +16,10 @@
 
 ### Fixed
 
+- **`note list` / `note show` 选择器输入过滤词后报错直接退出**：屏幕残留 `]11;rgb:1515/1919/1e1e` 一类的终端转义垃圾（`note add` 的 AI 优化预览、速记的 AI 整理预览同样会触发）。
+  - **根因**：`markdown.Render` 的 "auto" 风格会经 glamour 调用 termenv 向终端发 OSC 11 背景查询（`\x1b]11;?\x07`）并阻塞读 stdin 等回复。本轮给 `note list` 加命中块整块渲染后，渲染发生在 TUI 循环里（`renderBlockFor`）——termenv 的读取与 bubbletea 自己的 stdin 读取器抢终端回复的字节：回复的 `\x1b]11;rgb:…` 被当作用户输入，轻则显示乱码、误触发按键，重则让程序报错退出。
+  - **修复**：`internal/markdown` 新增 `AutoStyle()`——用 `sync.Once` 把 "auto" 的一次性解析结果缓存（stdout 非终端 → "notty"，与 glamour 的 auto 同口径；否则按 `termenv.HasDarkBackground()` 给 "dark"/"light"），`Render` 不再把 "auto" 交给 glamour，渲染阶段永不查终端；三个会渲染 Markdown 的 TUI 入口（`newListModel` / `newAddModel` / `newQuickAddModel`）在构造模型时（tea 进入 raw mode 之前）先 `AutoStyle()` 预热，查询只发生这一次且不与 TUI 抢输入。
+  - **测试**：`internal/markdown` 新增 `TestAutoStyleResolvesOnceAndCaches` / `TestRenderEmptyStyleUsesResolvedStyle`；`golang.org/x/term` 由 indirect 提升为直接依赖。`just test`（Go 全包 + 前端 228 项）与 `just check` 通过；PTY 冒烟：过滤 "a"（命中代码块/表格）不再退出、无 OSC 泄漏，管道输出仍无 ANSI（notty 分支）。
 - **AI 调用超过 30 秒时客户端收不到任何响应**：`http.Server` 的 `WriteTimeout=30s` 是从读完请求头起算的绝对截止时间，长响应的写入会落在一个已被服务器关掉的连接上——访问日志照样记 `status=504 bytes=196`，客户端却只拿到空响应（`curl code=000`）。现在 `/api/ai/optimize` 与 `/api/ai/quick-note` 进入 handler 立即 `liftWriteDeadline(w)`（`http.NewResponseController(w).SetWriteDeadline(time.Time{})`）解除写超时，`statusWriter` 补 `Unwrap()` 让 `ResponseController` 能穿过访问日志中间件。时间上限仍由 `ctx`（5 分钟）与空闲看门狗（60 秒）负责。
   - 实测：黑洞上游（回 SSE 头后不出字）第 60 秒客户端拿到 `504 {"code":"ai_idle","message":"模型 deepseek-v4-flash 在 1 分钟内没有输出新内容…"}`；修复前同一场景客户端空响应。
 

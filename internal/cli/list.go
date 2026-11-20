@@ -149,6 +149,10 @@ type listModel struct {
 }
 
 func newListModel(items []list.Item) listModel {
+	// 进 TUI 前先解析一次终端亮暗：glamour 的 "auto" 会在渲染时向终端发
+	// OSC 11 查询并阻塞读 stdin，跟 bubbletea 的输入读取器抢字节（见
+	// internal/markdown 的 AutoStyle 注释），必须趁还没进 raw mode 查完并缓存。
+	markdown.AutoStyle()
 	delegate := &listDelegate{height: 2}
 	return listModel{
 		picker:   newPicker(items, 80, 24, delegate, noteFilter(contentsOf(items))),

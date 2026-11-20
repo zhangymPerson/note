@@ -93,6 +93,10 @@ type quickAddModel struct {
 }
 
 func newQuickAddModel(deps QuickAddDeps) quickAddModel {
+	// 进 TUI 前先解析一次终端亮暗：AI 整理预览会在 TUI 循环里渲染 Markdown
+	// （glamour "auto" 会查终端背景），必须趁还没进 raw mode 查完并缓存
+	//（见 internal/markdown 的 AutoStyle 注释）。
+	markdown.AutoStyle()
 	m := quickAddModel{
 		deps:  deps,
 		step:  stepQuickWorking,
