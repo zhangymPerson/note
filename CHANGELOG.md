@@ -40,6 +40,17 @@
 
 ### Changed
 
+- 布局逐页对齐原型 C「纸墨分类彩色」（方向 C 换皮后的按钮/菜单排列收尾；行为与既有交互不变，仅结构与 CSS 调整）：
+  - **顶栏**：`.topbar` 改 60px 单行（`min-height` + 无纵向 padding）；`brand-mark` SVG 换 `.brand-dot` conic 圆点徽标（4 色 conic + 旋转 45°）；导航改 `.topnav`（gap 16px → 2px、「纸面凹陷」hover + 当前页下划线 left/right 14px bottom 4px）；新增 `.spacer` 把 who / 锁定 / 主题推到最右；`.theme-cycle`（循环按钮、显示当前主题名）→ `.theme-btn` 固定「主题」文字 + 主题图标（当前与下一步写进 title / aria-label）；锁定钮「锁定」只随解锁会话出现（`$hasKey`）；≤640px 品牌/身份/动作一行、导航整行下移横向滚动。
+  - **首页**：`.home-head` → `.greet`（大号衬线问候 + 衬线日期署名）；旧单列堆叠改 `.home-grid` 两栏（左：查询卡 + 速记卡；右：热力卡 + 账簿卡）；速记卡脚新增 `.quick-foot`（左侧等宽 hint「默认落入「速记」分类」+ 右侧 `AI 速记` 与墨绿描边 `.quick-go`「记下」，悬停填满）；账簿卡统计改 `.ledger-foot` 两栏（累计事件 / 活跃天数）。
+  - **列表页**：`.list-head` → `.page-head`（大号衬线 `.page-title` + 等宽 `.page-sub` 统计行）；`list-layout` 改 `220px minmax(0, 1fr)`，分类树移到左列；顶部工具条改 `.card list-bar` 一行卡片（搜索框 + 「筛选」按钮 + `.count-chip` n/N + `.merge-toggle` 合并 + 墨绿实心 `.new-note`「新建」）；`.note-row` 从横向行改纵向卡片，新增 `.note-foot`（展开 / 编辑 / 删除 danger，悬停纸面凹陷）；分类树脚新增 `.tree-foot` 提示「分类可增删改名 · 同一分类内标题唯一」。
+  - **详情页**：底部 `.actions` 组移入 `detail-head` 的 `.detail-actions`（复制原文 primary 图标钮 → 编辑 → 解锁/锁定 → 移入回收站 / 彻底删除 → 返回/收起；回收站内为 恢复/彻底删除/返回回收站），页尾不再有第二组动作。
+  - **编辑器**：`.editor-grid` 1fr/1fr → `5fr/7fr`；`.field-toolbar` → `.toolbar` pill 胶囊（编辑模板 / 停止 + `.grow` + 模型 `<select>` + `AI 优化`，`data-on` 激活态）；底部 `.actions` → `.editor-save` 右对齐（取消 + 墨绿保存）。
+  - **回收站**：行结构独立 `.trash-row`（横向排布：标题 + 等宽 meta + 恢复 / 彻底删除两个描边钮，restore hover 墨绿、purge hover 陶土红），`.page-head` 与列表一致。
+  - **404**：`.notfound` 居中（64px 衬线 404 + 说明 + `.btn-primary`「回到概览」）。
+  - **测试配套**（按钮/菜单文字按原型变化，断言同步）：ThemeSwitch 固定「主题」后可见文字不再含主题名，循环断言从 `textContent` 改 `aria-label`（title / aria-label 仍写当前与下一步）；HomeView 速记卡主动作「速记」→「记下」（`buttonWith` 改匹配「记下」，避免误中「AI 速记」）；NoteEditorView `aiButton` 匹配新增「AI 优化」标签。
+  - **验证**：`just test`（Go 全包 + 前端 231 项）与 `just check`（go vet + svelte-check 0 errors / 0 warnings）通过；真实构建 + 静态服务 + playwright 拦截 `/api/*` 渲染真实 SPA——既有 50 项皮肤探针外新增 57 项布局探针（顶栏 60px 单行 / conic 徽标 / nav gap 2px / spacer / 未解锁无锁定钮、首页 greet 与两栏栅格与 ledger-foot、列表 page-head / list-bar 五件套 / 树左 220px / note-foot 三动作、详情 detail-actions 顺序、编辑 5fr/7fr 与 toolbar pill 与模型下拉、回收站 trash-row 横向、404 居中）全部通过；真实界面截图 12 张（新增编辑器 / 回收站 / 404）存 `design-demos/real-shots/`。
+
 - 前端换皮为「纸墨分类彩色」主题（方向 C，行为不变；对应上方 Added 的落地条目，实现过程与关键逻辑）：
   - **三主题纸墨家族**：亮 = 微暖纸白 `#f6f4ef` + 墨绿 `#3e6b4f`、暗 = 暖黑深墨纸 `#1c1b18` + `#8db893`、护眼沿用 `#e9efdf` + `#3f7a54`；正文黑体，**衬线只给署名位**——品牌、页标题（`.page > h1` / `.list-head h1` / `.editor-head h1` / `.detail-head h1` 四条结构规则，覆盖列表/回收站/编辑/模板/详情/信息/主密码/忘记密码/404 全部页标题 h1）、日期与问候（`.home-head p.muted` / `.greeting`）；时间仍是等宽 tabular-nums。主题变量块 1–76 行整体替换：新增 `--surface-2` / `--faint` / `--border-strong` / `--accent-ink` / `--accent-soft` / `--amber` / `--danger-soft` / `--mark-bg` / `--mark-ink` / `--shadow-card` / `--shadow-row` / `--radius`(8px) / `--radius-sm` / `--t-fast`，`--accent-contrast` 变量名保留（值取原型 `--on-accent`）。
   - **彩色只干分类一件事**：6 色固定分类色板 `--c-uncat / --c-short / --c-work / --c-life / --c-read / --c-more`（原型只有 5 支，按决策自补第 6 支 `--c-more` 哑光青绿，三主题各自换值），不做渐变（品牌 conic 除外）、emoji、纸纹噪点；列表行与详情正文 `.note-row / .detail-body` 加 `border-left: 3px solid var(--rc)` 分类色线。
