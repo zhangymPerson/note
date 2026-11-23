@@ -27,6 +27,9 @@
 
 ### Fixed
 
+- **首页「找到一条笔记」查询后结果不显示（被推到首屏之外）**：查询本身正常（能命中、无报错），但布局对齐原型 C 后 `home-grid` 改为两栏栅格，结果块仍排在整块栅格之后——热力卡（371 格）与账簿卡把栅格撑高，结果落点在视口之外（1440×900 下结果顶部 y≈1108，视口仅 900），看起来就像「查询后无显示」。
+  - **修复**：把搜索结果块从栅格之后移进「找到一条笔记」卡片内、表单正下方（卡片新增 `.search-card` 作样式作用域；结果列表沿用既有 `.search-results` / `.search-empty` / `.search-error`，仅补 `margin-top` 间隔），查询命中后结果就地出现在输入框下方首屏内，空态与错误提示同理。
+  - **验证**：`just test`（Go 全包 + 前端 231 项）与 `just check`（go vet + svelte-check 0 errors / 0 warnings）通过；真实构建 + playwright 探针：查询「会议」命中 1 条，结果顶部落点 y=1108 → y=326（视口 900 内可见）、无 JS 错误；既有首页布局探针（greet / home-grid 两栏 / quick-go「记下」 / ledger-foot）全部通过。
 - **`note list` / `note show` 选择器两段式过滤时直接崩溃退出**：`slice bounds out of range [4:3]`，屏幕只剩报错与「Restoring terminal...」（`note add` 的分类选择器同样会触发）。
   - **根因**：bubbles v1.0.0 的 `FilterMatchesMsg` 处理器只填 `filteredItems`、**不重算分页**（`updatePagination` 只在 `SetSize`/`SetItems`/`ResetFilter` 等路径被触发）；`handleFiltering` 每次按键虽会 `updatePagination`，但那是对「旧的 `filteredItems`」算的，新结果要等异步 `FilterMatchesMsg` 回来才落地。上一轮给 `note list` 加的命中块整块渲染把行高撑高、`PerPage` 缩到 1~4，于是两段式过滤必踩：第一段「会」命中 7 条、过滤态下移把 `Page` 走到 4；第二段「会排」把可见项缩到 3 条，分页指针还停在第 4 页 → `populatedView` 里 `items[start:end]` 的 `start(4) > end(3)`，直接 slice 越界崩溃。
   - **修复**：`picker.forward`（`note list`/`note show`/`note add` 分类选择器共用、所有 `list.Update` 结果的唯一出口）在每次更新后调新增的 `clampPagination()`——按当前可见项数重算 `TotalPages`，`Index()` 越界时用 `Select(n-1)` 把光标校回可见范围；两条都只走 bubbles 公开 API，对已合法状态是恒等操作。
