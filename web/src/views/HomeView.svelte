@@ -146,7 +146,7 @@
 
   <div class="home-grid">
     <div class="home-left">
-      <section class="card card-pad" aria-label="查询笔记">
+      <section class="card card-pad search-card" aria-label="查询笔记">
         <h2 class="section-title">找到一条笔记</h2>
         <form class="search-form" onsubmit={search}>
           <label class="sr-only" for="home-search">查询笔记</label>
@@ -162,6 +162,43 @@
             {searching ? '查询中…' : '查询'}
           </button>
         </form>
+
+        {#if searchError}
+          <p class="search-error" role="alert">{searchError}</p>
+        {:else if results !== null}
+          {#if results.length === 0}
+            <p class="search-empty">没有匹配的笔记。换个词试试。</p>
+          {:else}
+            <ul class="search-results">
+              {#each results as hit}
+                <li>
+                  <a href="/notes/{hit.id}" onclick={(e) => { e.preventDefault(); openNote(hit.id) }}>
+                    <span class="catdot sm" style="--c: {catColorVar(hit.category_id)}" aria-hidden="true"></span>
+                    <Highlight text={hit.title} query={searchedQ} />
+                  </a>
+                  {#if hit.encrypted}
+                    <span class="badge">已加密</span>
+                  {/if}
+                  {#if hit.match_lines && hit.match_lines.length > 0}
+                    <div class="search-hit-lines">
+                      {#each hit.match_lines as line}
+                        <div class="search-hit-line">
+                          <Markdown source={line} query={searchedQ} compact />
+                        </div>
+                      {/each}
+                    </div>
+                  {:else if hit.content}
+                    <div class="search-hit-lines">
+                      <div class="search-hit-line">
+                        <Markdown source={hit.content} query={searchedQ} compact />
+                      </div>
+                    </div>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        {/if}
       </section>
 
       <section class="card card-pad quick-card" aria-label="速记">
@@ -281,41 +318,4 @@
       {/if}
     </div>
   </div>
-
-  {#if searchError}
-    <p class="search-error" role="alert">{searchError}</p>
-  {:else if results !== null}
-    {#if results.length === 0}
-      <p class="search-empty">没有匹配的笔记。换个词试试。</p>
-    {:else}
-      <ul class="search-results">
-        {#each results as hit}
-          <li>
-            <a href="/notes/{hit.id}" onclick={(e) => { e.preventDefault(); openNote(hit.id) }}>
-              <span class="catdot sm" style="--c: {catColorVar(hit.category_id)}" aria-hidden="true"></span>
-              <Highlight text={hit.title} query={searchedQ} />
-            </a>
-            {#if hit.encrypted}
-              <span class="badge">已加密</span>
-            {/if}
-            {#if hit.match_lines && hit.match_lines.length > 0}
-              <div class="search-hit-lines">
-                {#each hit.match_lines as line}
-                  <div class="search-hit-line">
-                    <Markdown source={line} query={searchedQ} compact />
-                  </div>
-                {/each}
-              </div>
-            {:else if hit.content}
-              <div class="search-hit-lines">
-                <div class="search-hit-line">
-                  <Markdown source={hit.content} query={searchedQ} compact />
-                </div>
-              </div>
-            {/if}
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  {/if}
 </section>

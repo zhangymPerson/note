@@ -716,6 +716,13 @@ input {
   font-size: 0.95rem;
 }
 
+/* 首页查询卡内：结果就地显示在表单下方，留出间隔 */
+.search-card .search-error,
+.search-card .search-empty,
+.search-card .search-results {
+  margin-top: 14px;
+}
+
 .search-results {
   margin: 0;
   padding: 0;
