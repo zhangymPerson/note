@@ -1,22 +1,20 @@
-/* 三主题：亮/暗取自 GitHub Primer 官方色板，护眼为低饱和米绿纸色。
+/* 三主题（纸墨家族 · 方向 C）：亮 = 微暖纸白，暗 = 暖黑深墨纸，护眼 = 米绿纸。
+   彩色只干「分类」一件事：--c-* 六支固定色板，装饰圆点与行左边线用。
    data-theme 由 lib/theme.ts 在启动时写入 <html>（localStorage 优先，否则跟随系统）。 */
-:root,
-:root[data-theme="light"] {
-  --bg: #ffffff;
-  --surface: #f6f8fa;
-  --text: #1f2328;
-  --muted: #656d76;
-  --border: #d0d7de;
-  --accent: #0969da;
-  --accent-contrast: #ffffff;
-  --heat-0: #ebedf0;
-  --heat-1: #9be9a8;
-  --heat-2: #40c463;
-  --heat-3: #30a14e;
-  --heat-4: #216e39;
-  --danger: #cf222e;
+:root {
+  --radius: 8px;
+  --radius-sm: 6px;
+  /* 纸墨家族的基础动效时长 */
+  --t-fast: 150ms ease;
 
-  color-scheme: light;
+  /* 分类色板默认值（亮主题）；三个主题各自换值，色值见下 */
+  --c-uncat: #8a8478;
+  --c-short: #3e6b4f;
+  --c-work: #4f6f96;
+  --c-life: #a4633f;
+  --c-read: #7a5a8e;
+  --c-more: #4f7f72;
+
   font-family:
     system-ui,
     -apple-system,
@@ -39,40 +37,108 @@
   --page-max: clamp(880px, 84vw, 1280px);
 }
 
-:root[data-theme="dark"] {
-  --bg: #0d1117;
-  --surface: #161b22;
-  --text: #e6edf3;
-  --muted: #7d8590;
-  --border: #30363d;
-  --accent: #1f6feb;
-  --accent-contrast: #ffffff;
-  --heat-0: #2d333b;
-  --heat-1: #0e4429;
-  --heat-2: #006d32;
-  --heat-3: #26a641;
-  --heat-4: #39d353;
-  --danger: #f85149;
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f4ef;
+  --surface: #fbfaf6;
+  --surface-2: #efebe2;
+  --text: #2b2823;
+  --muted: #6f6a60;
+  --faint: #837d6f;
+  --border: #e2dcd0;
+  --border-strong: #c9c1b2;
+  --accent: #3e6b4f;
+  --accent-ink: #2c4f3a;
+  --accent-contrast: #f6f4ee;
+  --accent-soft: #e4ece3;
+  --danger: #b3402f;
+  --danger-soft: #f4e4df;
+  --amber: #a06a21;
+  --mark-bg: #f6e8c2;
+  --mark-ink: #4a3a10;
+  --shadow-card: 0 1px 2px rgb(43 40 35 / 6%), 0 1px 1px rgb(43 40 35 / 3%);
+  --shadow-row: 0 1px 1px rgb(43 40 35 / 4%);
+  /* 陶土暖阶：使用频率越高越「烫」 */
+  --heat-0: var(--surface-2);
+  --heat-1: #f3e7d8;
+  --heat-2: #e6c9a8;
+  --heat-3: #cf9a6f;
+  --heat-4: #a4633f;
+  --c-uncat: #8a8478;
+  --c-short: #3e6b4f;
+  --c-work: #4f6f96;
+  --c-life: #a4633f;
+  --c-read: #7a5a8e;
+  --c-more: #4f7f72;
+}
 
+:root[data-theme="dark"] {
   color-scheme: dark;
+  --bg: #1c1b18;
+  --surface: #23211d;
+  --surface-2: #2b2823;
+  --text: #e8e2d6;
+  --muted: #a49d90;
+  --faint: #716c60;
+  --border: #37332b;
+  --border-strong: #4a453c;
+  --accent: #8db893;
+  --accent-ink: #a7c9ac;
+  --accent-contrast: #142019;
+  --accent-soft: #26332a;
+  --danger: #e08a7c;
+  --danger-soft: #3a2723;
+  --amber: #d8a65c;
+  --mark-bg: #4a4233;
+  --mark-ink: #e8e2d6;
+  --shadow-card: 0 1px 3px rgb(0 0 0 / 35%);
+  --shadow-row: 0 1px 1px rgb(0 0 0 / 25%);
+  --heat-0: var(--surface-2);
+  --heat-1: #3a2f26;
+  --heat-2: #5c4030;
+  --heat-3: #966a4a;
+  --heat-4: #d29a6a;
+  --c-uncat: #9a9488;
+  --c-short: #7fae89;
+  --c-work: #7fa0c4;
+  --c-life: #cf9a72;
+  --c-read: #a98cc0;
+  --c-more: #7fb8a8;
 }
 
 :root[data-theme="eye-care"] {
+  color-scheme: light;
   --bg: #e9efdf;
   --surface: #f2f6e9;
+  --surface-2: #dde6cf;
   --text: #33402f;
-  --muted: #66735f;
-  --border: #c6d0b8;
+  --muted: #5c6a52;
+  --faint: #75816a;
+  --border: #cfd9c0;
+  --border-strong: #b3c1a2;
   --accent: #3f7a54;
+  --accent-ink: #2f5c3f;
   --accent-contrast: #f4f7ee;
-  --heat-0: #dfe7d2;
-  --heat-1: #b5cfa0;
-  --heat-2: #86b274;
-  --heat-3: #5d9155;
-  --heat-4: #3f7a54;
-  --danger: #b3512f;
-
-  color-scheme: light;
+  --accent-soft: #ddeae0;
+  --danger: #a04a33;
+  --danger-soft: #eadfd5;
+  --amber: #8a6420;
+  --mark-bg: #f0e6c0;
+  --mark-ink: #3f4020;
+  --shadow-card: 0 1px 2px rgb(51 64 47 / 8%);
+  --shadow-row: 0 1px 1px rgb(51 64 47 / 5%);
+  --heat-0: var(--surface-2);
+  --heat-1: #ece2cd;
+  --heat-2: #d9c09b;
+  --heat-3: #bc8f68;
+  --heat-4: #96674a;
+  --c-uncat: #7d8a72;
+  --c-short: #3f7a54;
+  --c-work: #5a7496;
+  --c-life: #96674a;
+  --c-read: #7a648e;
+  --c-more: #55897c;
 }
 
 * {
@@ -99,8 +165,13 @@ body {
   outline-offset: 2px;
 }
 
+::selection {
+  background: var(--mark-bg);
+  color: var(--mark-ink);
+}
+
 a {
-  color: var(--accent);
+  color: var(--accent-ink);
   text-decoration: none;
 }
 
@@ -120,6 +191,34 @@ a:hover {
   border: 0;
 }
 
+/* 分类装饰色点：--c 由使用处按分类 id 设值（见 lib/catColor.ts），未设时回落未分类灰 */
+.catdot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--c, var(--c-uncat));
+}
+
+.catdot.sm {
+  width: 7px;
+  height: 7px;
+}
+
+.catdot.lg {
+  width: 11px;
+  height: 11px;
+}
+
+/* 行内圆点与文字基线对齐：flex 容器里用 align-self，文本流里用 vertical-align */
+.cat-row .catdot,
+.note-title .catdot,
+.quick-head .catdot {
+  align-self: center;
+  vertical-align: middle;
+}
+
 .shell {
   display: flex;
   min-height: 100vh;
@@ -128,6 +227,9 @@ a:hover {
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   display: flex;
   flex-wrap: wrap;
   width: 100%;
@@ -137,6 +239,7 @@ a:hover {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px 16px;
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 
@@ -167,6 +270,35 @@ a:hover {
 nav {
   display: flex;
   gap: 16px;
+}
+
+/* 顶栏导航：常态墨色，悬停纸面凹陷，当前页用墨绿加粗 + 下划线（Layout 按路由写 data-active） */
+.topbar nav a {
+  position: relative;
+  color: var(--muted);
+}
+
+.topbar nav a:hover {
+  color: var(--text);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+}
+
+.topbar nav a[data-active="true"] {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.topbar nav a[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
 }
 
 .who {
@@ -232,6 +364,15 @@ h1 {
   line-height: 1.2;
 }
 
+/* 页标题衬线：设计里衬线只给署名位——品牌 / 页标题 / 日期 / 笔记标题 */
+.page > h1,
+.list-head h1,
+.editor-head h1,
+.detail-head h1 {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
 h2 {
   margin: 0;
   font-size: 1.2rem;
@@ -265,8 +406,9 @@ p {
 .card {
   padding: 20px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-card);
 }
 
 code {
@@ -415,7 +557,7 @@ input {
 }
 
 .name-error {
-  color: #b3261e;
+  color: var(--danger);
   font-size: 0.9rem;
 }
 
@@ -428,6 +570,11 @@ input {
 .home-head .greeting {
   font-family: var(--font-display);
   font-weight: 600;
+}
+
+/* 「日期」也是署名位：衬线小字（与原型 .today 一致） */
+.home-head p.muted {
+  font-family: var(--font-display);
 }
 
 .search-form {
@@ -445,8 +592,14 @@ input {
   background: var(--surface);
 }
 
+.search-input::placeholder,
+.quick-input::placeholder,
+.quick-title-input::placeholder {
+  color: var(--faint);
+}
+
 .search-error {
-  color: #b3261e;
+  color: var(--danger);
   font-size: 0.9rem;
 }
 
@@ -467,13 +620,13 @@ input {
   border-bottom: 1px solid var(--border);
 }
 
-/* 检索词高亮：mark 默认黄色底在深色主题下看不清，统一配色 */
+/* 检索词高亮：暖黄墨迹底（纸墨家族），三主题各自换值，深浅都看得清 */
 .search-results a mark,
 .search-hit-line mark,
 .note-title mark,
 .note-summary mark {
-  background: var(--accent);
-  color: var(--accent-contrast, #fff);
+  background: var(--mark-bg);
+  color: var(--mark-ink);
   border-radius: 2px;
   padding: 0 1px;
 }
@@ -503,6 +656,9 @@ input {
 }
 
 .quick-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 10px;
   font-size: 1.05rem;
 }
@@ -1037,7 +1193,7 @@ input {
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--surface);
   flex-wrap: wrap;
 }
@@ -1080,8 +1236,10 @@ input {
   gap: 12px;
   padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-left: 3px solid var(--rc, transparent);
+  border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-row);
 }
 
 /* 展开了详情的行：描边高亮，表明下面那块内容属于它 */
@@ -1098,12 +1256,34 @@ input {
   flex: none;
 }
 
-/* 内联展开的详情：就地撑开，不再跳页、不用回退 */
+/* 内联展开的详情：就地撑开，不再跳页、不用回退；展开用短过渡，动效减弱时关掉 */
 .note-detail {
   padding: 16px 18px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+@keyframes detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.note-detail {
+  animation: detail-in 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note-detail {
+    animation: none;
+  }
 }
 
 /* 卡片已经包了一层，里面的正文区就不再套第二个框 */
@@ -1172,10 +1352,58 @@ input {
 
 .empty-hint {
   padding: 24px;
-  border: 1px dashed var(--border);
-  border-radius: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
   color: var(--muted);
   text-align: center;
+  font-size: 0.92rem;
+}
+
+/* 骨架屏：列表/回收站载入时用纸面色块撑出卡片轮廓，脉动强调「正在取纸」 */
+.sk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sk-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 76px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-row);
+}
+
+.sk-block {
+  display: block;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  animation: sk-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes sk-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-block {
+    animation: none;
+  }
 }
 
 /* 回收站行尾的两个动作：恢复 / 彻底删除 */
@@ -1250,7 +1478,7 @@ input {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--muted);
   cursor: pointer;
@@ -1278,8 +1506,10 @@ input {
 .detail-body {
   padding: 20px 22px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-left: 3px solid var(--rc, transparent);
+  border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-card);
 }
 
 .lock-card {
@@ -1307,7 +1537,7 @@ input {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--accent);
+  color: var(--accent-ink);
   font: inherit;
   cursor: pointer;
   text-decoration: underline;
@@ -1377,8 +1607,9 @@ input {
   gap: 6px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-row);
 }
 
 .cat-root {
@@ -1434,7 +1665,8 @@ input {
 
 .cat-row[data-active="true"] {
   border-color: var(--accent);
-  background: var(--bg);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
 }
 
 .cat-row:focus-visible {
@@ -1565,10 +1797,10 @@ input {
 .toast {
   padding: 10px 14px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 6px 18px rgb(0 0 0 / 12%);
+  box-shadow: var(--shadow-card);
   font-size: 0.9rem;
 }
 

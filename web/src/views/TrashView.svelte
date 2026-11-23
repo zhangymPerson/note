@@ -10,6 +10,7 @@
   import { toast } from '../lib/toast'
   import { formatLocalStamp } from '../lib/time'
   import { navigate } from '../router/router'
+  import { catColorVar } from '../lib/catColor'
 
   let rows = $state<NoteListItem[]>([])
   let total = $state(0)
@@ -109,15 +110,21 @@
   {/if}
 
   {#if loading}
-    <p class="muted">回收站载入中…</p>
+    <ul class="sk-list" aria-hidden="true">
+      <li class="sk-row"><span class="sk-block" style="width: 46%"></span></li>
+      <li class="sk-row"><span class="sk-block" style="width: 70%"></span></li>
+      <li class="sk-row"><span class="sk-block" style="width: 55%"></span></li>
+    </ul>
+    <p class="sr-only">载入中…</p>
   {:else if rows.length === 0}
     <p class="empty-hint">回收站是空的。在笔记里点「删除」，它会先到这里。</p>
   {:else}
     <ul class="note-rows">
       {#each rows as note (note.id)}
-        <li class="note-row">
+        <li class="note-row" style="--rc: {catColorVar(note.category_id)}">
           <button class="note-main" type="button" onclick={() => open(note)}>
             <span class="note-title">
+              <span class="catdot sm" style="--c: {catColorVar(note.category_id)}" aria-hidden="true"></span>
               {note.title}
               {#if note.encrypted}
                 <span class="badge">已加密</span>

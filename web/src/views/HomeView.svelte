@@ -7,6 +7,7 @@
   import { settings } from '../lib/settings'
   import { HEATMAP_WEEKS, groupEvents, loadStats, type Stats } from '../lib/stats'
   import { navigate } from '../router/router'
+  import { catColorVar } from '../lib/catColor'
 
   let stats = $state<Stats | null>(null)
   let statsError = $state('')
@@ -159,7 +160,10 @@
   </form>
 
   <section class="card quick-card" aria-label="速记">
-    <h2 class="quick-head">速记</h2>
+    <h2 class="quick-head">
+      <span class="catdot" style="--c: var(--c-short)" aria-hidden="true"></span>
+      速记
+    </h2>
     <textarea
       class="quick-input"
       placeholder="记一条速记…（标题自动生成，或让 AI 帮你整理）"
@@ -226,6 +230,7 @@
         {#each results as hit}
           <li>
             <a href="/notes/{hit.id}" onclick={(e) => { e.preventDefault(); openNote(hit.id) }}>
+              <span class="catdot sm" style="--c: {catColorVar(hit.category_id)}" aria-hidden="true"></span>
               <Highlight text={hit.title} query={searchedQ} />
             </a>
             {#if hit.encrypted}

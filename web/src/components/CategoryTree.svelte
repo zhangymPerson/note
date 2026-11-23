@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Category } from '../lib/notes'
+  import { catColorVar } from '../lib/catColor'
 
   interface Props {
     categories: Category[]
@@ -79,6 +80,7 @@
       }}>▾</button
     >
     <button class="cat-row" type="button" data-active={active === 0} onclick={() => onPick(0)}>
+      <span class="catdot" style="--c: var(--c-uncat)" aria-hidden="true"></span>
       <span class="cat-name">全部笔记</span>
       <span class="cat-num">{total}</span>
     </button>
@@ -108,6 +110,7 @@
                 data-active={active === category.id}
                 onclick={() => onPick(category.id)}
               >
+                <span class="catdot" style="--c: {catColorVar(category.id)}" aria-hidden="true"></span>
                 <span class="cat-name">{category.name}</span>
                 <span class="cat-num">{category.note_count}</span>
               </button>

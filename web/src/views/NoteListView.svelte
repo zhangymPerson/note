@@ -18,6 +18,7 @@
   import { toast } from '../lib/toast'
   import { formatLocalStamp } from '../lib/time'
   import { navigate } from '../router/router'
+  import { catColorVar } from '../lib/catColor'
 
   function paramsFromUrl(): URLSearchParams {
     return new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
@@ -286,7 +287,12 @@
       {/if}
 
       {#if loading}
-        <p class="muted">笔记载入中…</p>
+        <ul class="sk-list" aria-hidden="true">
+          <li class="sk-row"><span class="sk-block" style="width: 46%"></span></li>
+          <li class="sk-row"><span class="sk-block" style="width: 72%"></span></li>
+          <li class="sk-row"><span class="sk-block" style="width: 58%"></span></li>
+        </ul>
+        <p class="sr-only">载入中…</p>
       {:else if rows.length === 0}
         <p class="empty-hint">
           {#if committedQ !== '' || category !== 0}
@@ -298,7 +304,11 @@
       {:else}
         <ul class="note-rows">
           {#each rows as note (note.id)}
-            <li class="note-row" class:note-row-selected={merging && selectedIds.includes(note.id)}>
+            <li
+              class="note-row"
+              class:note-row-selected={merging && selectedIds.includes(note.id)}
+              style="--rc: {catColorVar(note.category_id)}"
+            >
               {#if merging}
                 <input
                   class="note-select"
@@ -316,6 +326,7 @@
                 onclick={() => (merging ? toggleSelect(note.id) : toggle(note))}
               >
                 <span class="note-title">
+                  <span class="catdot sm" style="--c: {catColorVar(note.category_id)}" aria-hidden="true"></span>
                   {#if committedQ !== ''}
                     <Highlight text={note.title} query={committedQ} />
                   {:else}

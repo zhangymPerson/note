@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
-  import { navigate } from '../router/router'
+  import { navigate, route } from '../router/router'
   import { settings } from '../lib/settings'
   import { hasKey, lockSession } from '../lib/session-key'
   import { toast, toasts } from '../lib/toast'
@@ -51,10 +51,15 @@
       <span>笔记</span>
     </a>
     <nav>
-      <a href="/" onclick={(event) => link(event, '/')}>概览</a>
-      <a href="/notes" onclick={(event) => link(event, '/notes')}>全部笔记</a>
-      <a href="/notes/new" onclick={(event) => link(event, '/notes/new')}>新建</a>
-      <a href="/trash" onclick={(event) => link(event, '/trash')}>回收站</a>
+      <a href="/" data-active={$route.name === 'home'} onclick={(event) => link(event, '/')}>概览</a>
+      <a
+        href="/notes"
+        data-active={['list', 'detail', 'edit'].includes($route.name)}
+        onclick={(event) => link(event, '/notes')}
+      >全部笔记</a
+      >
+      <a href="/notes/new" data-active={$route.name === 'new'} onclick={(event) => link(event, '/notes/new')}>新建</a>
+      <a href="/trash" data-active={$route.name === 'trash'} onclick={(event) => link(event, '/trash')}>回收站</a>
     </nav>
     <a class="who" href="/info" title="用户与信息" onclick={(event) => link(event, '/info')}>
       {$settings.name}

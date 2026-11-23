@@ -14,6 +14,7 @@
   import { toast } from '../lib/toast'
   import { formatLocalStamp } from '../lib/time'
   import { navigate } from '../router/router'
+  import { catColorVar } from '../lib/catColor'
 
   // inline：嵌在列表页就地展开，不跳页；onclose(removed) 让列表收起后自行决定要不要刷新。
   let {
@@ -247,6 +248,7 @@
       {:else}
         <div class="detail-title">
           <h1>
+            <span class="catdot" style="--c: {catColorVar(note?.category_id ?? null)}" aria-hidden="true"></span>
             {note.title}
             {#if encrypted}
               <span class="badge">已加密</span>
@@ -296,7 +298,7 @@
         </p>
       </div>
     {:else}
-      <article class="detail-body">
+      <article class="detail-body" style="--rc: {catColorVar(note?.category_id ?? null)}">
         <Markdown source={body} />
       </article>
     {/if}
