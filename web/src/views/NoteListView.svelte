@@ -235,32 +235,53 @@
 </script>
 
 <section class="page list">
-  <header class="list-head">
-    <h1>全部笔记</h1>
-    <div class="head-actions">
-      <a class="button" href="/notes/new" onclick={(event) => { event.preventDefault(); navigate('/notes/new') }}>
-        新建笔记
-      </a>
-      <button class="button" type="button" data-merge disabled={loading || rows.length === 0} onclick={startMerge}>
-        合并
-      </button>
-    </div>
+  <header class="page-head">
+    <h1 class="page-title">全部笔记</h1>
+    <p class="page-sub">
+      {total} 条{activeCategory ? ` · ${activeCategory.name}` : ''}{committedQ !== '' ? ` · 含「${committedQ}」` : ''}
+    </p>
   </header>
 
   <div class="list-layout">
+    <CategoryTree
+      {categories}
+      active={category}
+      busy={categoryBusy}
+      onPick={pickCategory}
+      onCreate={createNamed}
+      onRename={renameTo}
+      onDelete={removeCategory}
+    />
+
     <div class="list-main">
-      <form class="search-form" onsubmit={submitSearch}>
-        <label class="sr-only" for="list-search">搜索笔记</label>
-        <input
-          id="list-search"
-          class="search-input"
-          type="search"
-          placeholder="按标题或正文搜索…"
-          maxlength="200"
-          bind:value={query}
-        />
-        <button class="button" type="submit" disabled={loading}>搜索</button>
-      </form>
+      <div class="card list-bar">
+        <form class="search-form" onsubmit={submitSearch}>
+          <label class="sr-only" for="list-search">搜索笔记</label>
+          <input
+            id="list-search"
+            class="search-input"
+            type="search"
+            placeholder="筛选标题、分类、正文…"
+            maxlength="200"
+            bind:value={query}
+          />
+          <button class="button" type="submit" disabled={loading}>筛选</button>
+        </form>
+        <span class="count-chip">{rows.length} / {total}</span>
+        <button
+          class="merge-toggle"
+          type="button"
+          data-merge
+          data-on={merging}
+          disabled={loading || rows.length === 0}
+          onclick={startMerge}
+        >
+          合并
+        </button>
+        <a class="new-note" href="/notes/new" onclick={(event) => { event.preventDefault(); navigate('/notes/new') }}>
+          新建
+        </a>
+      </div>
 
       {#if error}
         <p class="form-error" role="alert">{error}</p>
@@ -298,7 +319,7 @@
           {#if committedQ !== '' || category !== 0}
             没有符合条件的笔记。换个词，或点右侧「全部笔记」。
           {:else}
-            还没有笔记。点击右上角「新建笔记」写下第一条。
+            还没有笔记。点击「新建」写下第一条。
           {/if}
         </p>
       {:else}
@@ -365,15 +386,19 @@
                 </span>
               </button>
               {#if !merging && openId !== note.id}
-                <button
-                  class="button button-quiet"
-                  type="button"
-                  disabled={pendingId === note.id || note.encrypted}
-                  title={note.encrypted ? '加密笔记请打开详情、解锁后再删除' : '删除后先进回收站，可以恢复'}
-                  onclick={() => remove(note)}
-                >
-                  {pendingId === note.id ? '删除中…' : '删除'}
-                </button>
+                <div class="note-foot">
+                  <button type="button" onclick={() => toggle(note)}>展开</button>
+                  <button type="button" onclick={() => navigate(`/notes/${encodeURIComponent(note.id)}/edit`)}>编辑</button>
+                  <button
+                    class="danger"
+                    type="button"
+                    disabled={pendingId === note.id || note.encrypted}
+                    title={note.encrypted ? '加密笔记请打开详情、解锁后再删除' : '删除后先进回收站，可以恢复'}
+                    onclick={() => remove(note)}
+                  >
+                    {pendingId === note.id ? '删除中…' : '删除'}
+                  </button>
+                </div>
               {/if}
             </li>
             {#if openId === note.id}
@@ -398,15 +423,5 @@
         </nav>
       {/if}
     </div>
-
-    <CategoryTree
-      {categories}
-      active={category}
-      busy={categoryBusy}
-      onPick={pickCategory}
-      onCreate={createNamed}
-      onRename={renameTo}
-      onDelete={removeCategory}
-    />
   </div>
 </section>

@@ -31,26 +31,10 @@
 <div class="shell">
   <header class="topbar">
     <a class="brand" href="/" aria-label="笔记" onclick={(event) => link(event, '/')}>
-      <svg
-        class="brand-mark"
-        viewBox="0 0 24 24"
-        width="19"
-        height="19"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.6"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <path d="M6.6 3.4h9.9c.9 0 1.6.7 1.6 1.6v14c0 .9-.7 1.6-1.6 1.6H6.6c-.9 0-1.6-.7-1.6-1.6V5c0-.9.7-1.6 1.6-1.6Z" />
-        <path d="M9.2 3.4v17.2" />
-        <path d="M12.4 8.6h3.4M12.4 12h3.4" />
-      </svg>
+      <span class="brand-dot" aria-hidden="true"></span>
       <span>笔记</span>
     </a>
-    <nav>
+    <nav class="topnav" aria-label="主导航">
       <a href="/" data-active={$route.name === 'home'} onclick={(event) => link(event, '/')}>概览</a>
       <a
         href="/notes"
@@ -61,11 +45,12 @@
       <a href="/notes/new" data-active={$route.name === 'new'} onclick={(event) => link(event, '/notes/new')}>新建</a>
       <a href="/trash" data-active={$route.name === 'trash'} onclick={(event) => link(event, '/trash')}>回收站</a>
     </nav>
+    <div class="spacer" aria-hidden="true"></div>
     <a class="who" href="/info" title="用户与信息" onclick={(event) => link(event, '/info')}>
       {$settings.name}
     </a>
     {#if $hasKey}
-      <button class="button button-quiet" type="button" onclick={lock}>锁定</button>
+      <button class="lock-btn" type="button" onclick={lock}>锁定</button>
     {/if}
     <ThemeSwitch />
   </header>

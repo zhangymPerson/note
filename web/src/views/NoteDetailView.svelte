@@ -188,7 +188,7 @@
 {#snippet copyButton()}
   {#if !awaitingKey && body !== ''}
     <button
-      class="icon-button"
+      class="icon-button primary"
       type="button"
       title="复制原文"
       aria-label="复制原文"
@@ -240,10 +240,9 @@
   {:else if note}
     <header class="detail-head">
       {#if inline}
-        <!-- 就地展开时标题已在上面那一行，这里只留元信息与复制图标 -->
+        <!-- 就地展开时标题已在上面那一行，这里只留元信息 -->
         <div class="detail-meta-row">
           {@render metaLine(note)}
-          {@render copyButton()}
         </div>
       {:else}
         <div class="detail-title">
@@ -254,10 +253,40 @@
               <span class="badge">已加密</span>
             {/if}
           </h1>
-          {@render copyButton()}
         </div>
         {@render metaLine(note)}
       {/if}
+      <div class="detail-actions">
+        {@render copyButton()}
+        {#if inTrash}
+          <button class="detail-act" type="button" disabled={busy} onclick={bringBack}>恢复</button>
+          {#if canDelete}
+            <button class="detail-act danger" type="button" disabled={busy} onclick={purge}>彻底删除</button>
+          {/if}
+          <a class="detail-act" href="/trash" onclick={(event) => { event.preventDefault(); navigate('/trash') }}>
+            返回回收站
+          </a>
+        {:else}
+          <a class="detail-act" href="/notes/{noteId}/edit" onclick={(event) => { event.preventDefault(); navigate(`/notes/${noteId}/edit`) }}>
+            编辑
+          </a>
+          {#if encrypted && awaitingKey}
+            <button class="detail-act" type="button" onclick={() => document.getElementById('detail-password')?.focus()}>解锁</button>
+          {:else if encrypted && !awaitingKey}
+            <button class="detail-act" type="button" onclick={lock}>锁定</button>
+          {/if}
+          {#if canDelete}
+            <button class="detail-act danger" type="button" disabled={busy} onclick={remove}>移入回收站</button>
+          {/if}
+          {#if inline}
+            <button class="detail-act" type="button" onclick={() => onclose?.(false)}>收起</button>
+          {:else}
+            <a class="detail-act" href="/notes" onclick={(event) => { event.preventDefault(); navigate('/notes') }}>
+              返回
+            </a>
+          {/if}
+        {/if}
+      </div>
     </header>
 
     {#if inTrash}
@@ -265,7 +294,6 @@
         这条笔记在回收站里，不会出现在列表与搜索结果中。恢复后回到原来的分类。
       </p>
     {/if}
-
     {#if awaitingKey}
       <div class="card lock-card">
         <h2>这条笔记已加密</h2>
@@ -307,43 +335,8 @@
       <p class="form-error" role="alert">{error}</p>
     {/if}
 
-    {#if inTrash}
-      <div class="actions">
-        <button class="button" type="button" disabled={busy} onclick={bringBack}>恢复</button>
-        {#if canDelete}
-          <button class="button button-quiet" type="button" disabled={busy} onclick={purge}>
-            彻底删除
-          </button>
-        {/if}
-        <a class="button button-quiet" href="/trash" onclick={(event) => { event.preventDefault(); navigate('/trash') }}>
-          返回回收站
-        </a>
-      </div>
-      {#if encrypted && awaitingKey}
-        <p class="muted">解锁后才能彻底删除这条加密笔记。</p>
-      {/if}
-    {:else}
-      <div class="actions">
-        <a class="button" href="/notes/{noteId}/edit" onclick={(event) => { event.preventDefault(); navigate(`/notes/${noteId}/edit`) }}>
-          编辑
-        </a>
-        {#if encrypted && !awaitingKey}
-          <button class="button button-quiet" type="button" onclick={lock}>锁定</button>
-        {/if}
-        {#if canDelete}
-          <button class="button button-quiet" type="button" disabled={busy} onclick={remove}>移入回收站</button>
-        {/if}
-        {#if inline}
-          <button class="button button-quiet" type="button" onclick={() => onclose?.(false)}>收起</button>
-        {:else}
-          <a class="button button-quiet" href="/notes" onclick={(event) => { event.preventDefault(); navigate('/notes') }}>
-            返回
-          </a>
-        {/if}
-      </div>
-      {#if encrypted && awaitingKey}
-        <p class="muted">解锁后才能删除这条加密笔记。</p>
-      {/if}
+    {#if encrypted && awaitingKey}
+      <p class="muted">{inTrash ? '解锁后才能彻底删除这条加密笔记。' : '解锁后才能删除这条加密笔记。'}</p>
     {/if}
 
     {#if encrypted && $hasKey}

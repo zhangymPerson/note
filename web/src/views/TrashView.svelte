@@ -93,11 +93,9 @@
 </script>
 
 <section class="page list">
-  <header class="list-head">
-    <h1>回收站</h1>
-    <a class="button button-quiet" href="/notes" onclick={(event) => { event.preventDefault(); navigate('/notes') }}>
-      返回全部笔记
-    </a>
+  <header class="page-head">
+    <h1 class="page-title">回收站</h1>
+    <p class="page-sub">{total} 条 · 删除 30 天后自动清空</p>
   </header>
 
   <p class="muted">
@@ -121,35 +119,28 @@
   {:else}
     <ul class="note-rows">
       {#each rows as note (note.id)}
-        <li class="note-row" style="--rc: {catColorVar(note.category_id)}">
-          <button class="note-main" type="button" onclick={() => open(note)}>
-            <span class="note-title">
-              <span class="catdot sm" style="--c: {catColorVar(note.category_id)}" aria-hidden="true"></span>
-              {note.title}
-              {#if note.encrypted}
-                <span class="badge">已加密</span>
-              {/if}
-            </span>
-            {#if note.content}
-              <span class="note-summary">{note.content}</span>
-            {:else if note.encrypted}
-              <span class="note-summary muted">密文内容不在列表展示。</span>
+        <li class="note-row trash-row" style="--rc: {catColorVar(note.category_id)}">
+          <button class="note-main trash-title" type="button" onclick={() => open(note)}>
+            <span class="catdot sm" style="--c: {catColorVar(note.category_id)}" aria-hidden="true"></span>
+            <span class="trash-name">{note.title}</span>
+            {#if note.encrypted}
+              <span class="badge">已加密</span>
             {/if}
-            <span class="note-meta">
-              {#if note.deleted_at}
-                移入于 {shownAt(note.deleted_at)}
-              {:else}
-                更新于 {shownAt(note.updated_at)}
-              {/if}
-              {#if note.category_name}
-                · 原分类「{note.category_name}」
-              {/if}
-            </span>
           </button>
+          <span class="note-meta trash-meta">
+            {#if note.deleted_at}
+              移入于 {shownAt(note.deleted_at)}
+            {:else}
+              更新于 {shownAt(note.updated_at)}
+            {/if}
+            {#if note.category_name}
+              · 原分类「{note.category_name}」
+            {/if}
+          </span>
 
           <div class="trash-actions">
             <button
-              class="button button-quiet"
+              class="restore"
               type="button"
               disabled={pendingId === note.id}
               onclick={() => restore(note)}
@@ -157,7 +148,7 @@
               {pendingId === note.id && pendingAction === 'restore' ? '恢复中…' : '恢复'}
             </button>
             <button
-              class="button button-quiet"
+              class="purge"
               type="button"
               disabled={pendingId === note.id || note.encrypted}
               title={note.encrypted ? '加密笔记请打开详情、解锁后再彻底删除' : '彻底删除后无法恢复'}

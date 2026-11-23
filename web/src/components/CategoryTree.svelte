@@ -147,5 +147,7 @@
     {#if createError}
       <p class="field-error cat-create-error" role="alert">{createError}</p>
     {/if}
+
+    <p class="tree-foot">分类可增删改名 · 同一分类内标题唯一</p>
   {/if}
 </nav>

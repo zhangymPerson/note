@@ -50,17 +50,17 @@ describe("ThemeSwitch", () => {
 
     click(button);
     expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(target.textContent).toContain("暗色");
+    expect(button.getAttribute("aria-label")).toContain("暗色");
     expect(localStorage.getItem("note.theme")).toBe("dark");
 
     click(button);
     expect(document.documentElement.dataset.theme).toBe("eye-care");
-    expect(target.textContent).toContain("护眼");
+    expect(button.getAttribute("aria-label")).toContain("护眼");
 
     // 绕回起点：三个状态之后回到亮色，不留死循环。
     click(button);
     expect(document.documentElement.dataset.theme).toBe("light");
-    expect(target.textContent).toContain("亮色");
+    expect(button.getAttribute("aria-label")).toContain("亮色");
   });
 
   it("当前主题在 aria-label 与 title 里都写明下一步是什么", () => {

@@ -97,6 +97,7 @@ function aiButton(element: HTMLElement): HTMLButtonElement {
   const button = Array.from(element.querySelectorAll("button")).find(
     (candidate) =>
       candidate.textContent?.includes("用 AI 优化格式") ||
+      candidate.textContent?.includes("AI 优化") ||
       candidate.textContent?.includes("优化中"),
   );
   if (!button) throw new Error("找不到 AI 优化按钮");

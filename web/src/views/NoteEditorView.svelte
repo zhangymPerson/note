@@ -460,21 +460,14 @@
             {contentLength} / {MAX_CONTENT_CODEPOINTS}
           </span>
         </div>
-        <div class="field-toolbar">
+        <div class="toolbar">
           {#if !isEdit}
-            <button class="linklike" type="button" onclick={editTemplate}>编辑模板</button>
+            <button class="pill" type="button" onclick={editTemplate}>编辑模板</button>
           {/if}
-          <button
-            class="linklike"
-            type="button"
-            disabled={!canOptimize}
-            onclick={optimize}
-          >
-            {aiBusy ? (aiStreaming ? '正在生成…' : '优化中…') : '用 AI 优化格式'}
-          </button>
+          <span class="grow" aria-hidden="true"></span>
           {#if aiBusy}
             <!-- 等待中随时能停：有些模型要生成长文档，中途反悔不该只能干等 -->
-            <button class="linklike" type="button" onclick={stopOptimize}>停止</button>
+            <button class="pill" type="button" onclick={stopOptimize}>停止</button>
           {/if}
           {#if aiModels.length > 1}
             <!-- 不用 bind:：<select> 挂载时会把自己的空值写回去，把默认模型冲掉 -->
@@ -490,6 +483,15 @@
               {/each}
             </select>
           {/if}
+          <button
+            class="pill"
+            type="button"
+            data-on={aiBusy}
+            disabled={!canOptimize}
+            onclick={optimize}
+          >
+            {aiBusy ? (aiStreaming ? '正在生成…' : '优化中…') : 'AI 优化'}
+          </button>
         </div>
         <label class="sr-only" for="ai-custom-prompt">自定义提示词</label>
         <input
@@ -633,11 +635,11 @@
         </div>
       {/if}
 
-      <div class="actions">
-        <button class="button" type="submit" disabled={!canSave}>
+      <div class="editor-save">
+        <button class="button button-quiet" type="button" onclick={discard}>取消</button>
+        <button class="button save" type="submit" disabled={!canSave}>
           {busy ? '保存中…' : '保存'}
         </button>
-        <button class="button button-quiet" type="button" onclick={discard}>取消</button>
       </div>
     </form>
 

@@ -139,86 +139,148 @@
 </script>
 
 <section class="page home">
-  <header class="home-head">
+  <div class="greet">
     <h1 class="greeting">你好，{$settings.name}。</h1>
-    <p class="muted">{todayText}，这是你的使用账簿。</p>
-  </header>
+    <p class="today">{todayText}，这是你的使用账簿。</p>
+  </div>
 
-  <form class="search-form" onsubmit={search}>
-    <label class="sr-only" for="home-search">查询笔记</label>
-    <input
-      id="home-search"
-      class="search-input"
-      type="search"
-      placeholder="查询笔记标题或内容…"
-      maxlength="200"
-      bind:value={query}
-    />
-    <button class="button" type="submit" disabled={query.trim() === '' || searching}>
-      {searching ? '查询中…' : '查询'}
-    </button>
-  </form>
+  <div class="home-grid">
+    <div class="home-left">
+      <section class="card card-pad" aria-label="查询笔记">
+        <h2 class="section-title">找到一条笔记</h2>
+        <form class="search-form" onsubmit={search}>
+          <label class="sr-only" for="home-search">查询笔记</label>
+          <input
+            id="home-search"
+            class="search-input"
+            type="search"
+            placeholder="查询笔记标题或内容…"
+            maxlength="200"
+            bind:value={query}
+          />
+          <button class="button search-go" type="submit" disabled={query.trim() === '' || searching}>
+            {searching ? '查询中…' : '查询'}
+          </button>
+        </form>
+      </section>
 
-  <section class="card quick-card" aria-label="速记">
-    <h2 class="quick-head">
-      <span class="catdot" style="--c: var(--c-short)" aria-hidden="true"></span>
-      速记
-    </h2>
-    <textarea
-      class="quick-input"
-      placeholder="记一条速记…（标题自动生成，或让 AI 帮你整理）"
-      maxlength={MAX_CONTENT_CODEPOINTS}
-      bind:value={quickText}
-      disabled={quickBusy || aiBusy}
-    ></textarea>
-    <div class="quick-actions">
-      <button class="button" type="button" disabled={quickBusy || aiBusy || quickText.trim() === ''} onclick={saveQuick}>
-        {quickBusy ? '保存中…' : '速记'}
-      </button>
-      <button
-        class="button button-quiet"
-        type="button"
-        disabled={aiBusy || quickBusy || quickText.trim() === ''}
-        onclick={runAIQuick}
-      >
-        {aiBusy ? '整理中…' : 'AI 速记'}
-      </button>
+      <section class="card card-pad quick-card" aria-label="速记">
+        <h2 class="quick-head">
+          <span class="catdot" style="--c: var(--c-short)" aria-hidden="true"></span>
+          速记
+        </h2>
+        <textarea
+          class="quick-input"
+          placeholder="想到什么就记什么，Ctrl+O 可以让 AI 帮忙整理…"
+          maxlength={MAX_CONTENT_CODEPOINTS}
+          bind:value={quickText}
+          disabled={quickBusy || aiBusy}
+        ></textarea>
+        <div class="quick-foot">
+          <span class="quick-hint">默认落入「速记」分类</span>
+          <span class="quick-actions">
+            <button
+              class="button button-quiet"
+              type="button"
+              disabled={aiBusy || quickBusy || quickText.trim() === ''}
+              onclick={runAIQuick}
+            >
+              {aiBusy ? '整理中…' : 'AI 速记'}
+            </button>
+            <button class="quick-go" type="button" disabled={quickBusy || aiBusy || quickText.trim() === ''} onclick={saveQuick}>
+              {quickBusy ? '保存中…' : '记下'}
+            </button>
+          </span>
+        </div>
+
+        {#if aiPreview}
+          <div class="quick-preview">
+            <h3 class="quick-preview-head">AI 整理预览</h3>
+            <label class="sr-only" for="quick-ai-title">AI 生成的标题（可修改）</label>
+            <input
+              id="quick-ai-title"
+              class="quick-title-input"
+              placeholder="AI 生成的标题（可修改）"
+              maxlength="60"
+              bind:value={aiTitle}
+            />
+            <Markdown source={aiPreview.content} />
+            <p class="muted">模型：{aiPreview.model}</p>
+            <div class="quick-actions">
+              <button class="button" type="button" disabled={quickBusy || aiTitle.trim() === ''} onclick={saveAI}>
+                {quickBusy ? '保存中…' : '保存'}
+              </button>
+              <button class="button button-quiet" type="button" disabled={quickBusy} onclick={() => (aiPreview = null)}>
+                返回修改
+              </button>
+            </div>
+          </div>
+        {/if}
+
+        {#if quickMessage}
+          <p class="quick-message" role="status">{quickMessage}</p>
+        {/if}
+        {#if quickError}
+          <p class="search-error" role="alert">{quickError}</p>
+        {/if}
+        {#if aiError}
+          <p class="search-error" role="alert">{aiError}</p>
+        {/if}
+      </section>
     </div>
 
-    {#if aiPreview}
-      <div class="quick-preview">
-        <h3 class="quick-preview-head">AI 整理预览</h3>
-        <label class="sr-only" for="quick-ai-title">AI 生成的标题（可修改）</label>
-        <input
-          id="quick-ai-title"
-          class="quick-title-input"
-          placeholder="AI 生成的标题（可修改）"
-          maxlength="60"
-          bind:value={aiTitle}
-        />
-        <Markdown source={aiPreview.content} />
-        <p class="muted">模型：{aiPreview.model}</p>
-        <div class="quick-actions">
-          <button class="button" type="button" disabled={quickBusy || aiTitle.trim() === ''} onclick={saveAI}>
-            {quickBusy ? '保存中…' : '保存'}
-          </button>
-          <button class="button button-quiet" type="button" disabled={quickBusy} onclick={() => (aiPreview = null)}>
-            返回修改
-          </button>
-        </div>
-      </div>
-    {/if}
+    <div class="home-right">
+      <section class="card card-pad heat-section" aria-label="使用频率">
+        <h2 class="section-title">近一年使用频率</h2>
+        <p class="muted">查询、查看与增删改都算一次使用，颜色越深代表当天越忙。</p>
+        {#if stats}
+          <ActivityHeatmap days={stats.days} />
+        {:else if statsError}
+          <p class="search-error" role="alert">{statsError}</p>
+        {:else}
+          <p class="muted">图表载入中…</p>
+        {/if}
+      </section>
 
-    {#if quickMessage}
-      <p class="quick-message" role="status">{quickMessage}</p>
-    {/if}
-    {#if quickError}
-      <p class="search-error" role="alert">{quickError}</p>
-    {/if}
-    {#if aiError}
-      <p class="search-error" role="alert">{aiError}</p>
-    {/if}
-  </section>
+      {#if stats}
+        {@const groups = groupEvents(stats.events_by_kind)}
+        <section class="card card-pad ledger" aria-label="使用统计">
+          <h2 class="section-title">使用账簿</h2>
+          <div class="ledger-foot">
+            <span class="ledger-stat">累计事件<b>{stats.total_events}</b></span>
+            <span class="ledger-stat">活跃天数<b>{stats.active_days}</b></span>
+          </div>
+
+          <h3>事件构成</h3>
+          <ul class="event-groups">
+            {#each groups as group (group.key)}
+              <li>
+                <span class="event-label">{group.label}</span>
+                <span class="event-bar" aria-hidden="true">
+                  <span class="event-fill" style="width: {Math.round(group.share * 100)}%"></span>
+                </span>
+                <span class="num muted">{group.count}</span>
+              </li>
+            {/each}
+          </ul>
+
+          <h3>查询最多的内容</h3>
+          {#if stats.top_queries.length === 0}
+            <p class="muted">还没有查询记录。在上方搜索一次，这里就会开始累积。</p>
+          {:else}
+            <ol class="top-queries">
+              {#each stats.top_queries as item}
+                <li>
+                  <span class="top-query">{item.query}</span>
+                  <span class="num muted">{item.count} 次</span>
+                </li>
+              {/each}
+            </ol>
+          {/if}
+        </section>
+      {/if}
+    </div>
+  </div>
 
   {#if searchError}
     <p class="search-error" role="alert">{searchError}</p>
@@ -255,61 +317,5 @@
         {/each}
       </ul>
     {/if}
-  {/if}
-
-  <section class="heat-section" aria-label="使用频率">
-    <h2>近一年使用频率</h2>
-    <p class="muted">查询、查看与增删改都算一次使用，颜色越深代表当天越忙。</p>
-    {#if stats}
-      <ActivityHeatmap days={stats.days} />
-    {:else if statsError}
-      <p class="search-error" role="alert">{statsError}</p>
-    {:else}
-      <p class="muted">图表载入中…</p>
-    {/if}
-  </section>
-
-  {#if stats}
-    {@const groups = groupEvents(stats.events_by_kind)}
-    <section class="ledger" aria-label="使用统计">
-      <h2>使用统计</h2>
-      <dl class="ledger-rows">
-        <div class="ledger-row">
-          <dt>累计事件</dt>
-          <dd class="num">{stats.total_events}</dd>
-        </div>
-        <div class="ledger-row">
-          <dt>活跃天数</dt>
-          <dd class="num">{stats.active_days}</dd>
-        </div>
-      </dl>
-
-      <h3>事件构成</h3>
-      <ul class="event-groups">
-        {#each groups as group (group.key)}
-          <li>
-            <span class="event-label">{group.label}</span>
-            <span class="event-bar" aria-hidden="true">
-              <span class="event-fill" style="width: {Math.round(group.share * 100)}%"></span>
-            </span>
-            <span class="num muted">{group.count}</span>
-          </li>
-        {/each}
-      </ul>
-
-      <h3>查询最多的内容</h3>
-      {#if stats.top_queries.length === 0}
-        <p class="muted">还没有查询记录。在上方搜索一次，这里就会开始累积。</p>
-      {:else}
-        <ol class="top-queries">
-          {#each stats.top_queries as item}
-            <li>
-              <span class="top-query">{item.query}</span>
-              <span class="num muted">{item.count} 次</span>
-            </li>
-          {/each}
-        </ol>
-      {/if}
-    </section>
   {/if}
 </section>

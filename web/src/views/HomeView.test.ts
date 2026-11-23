@@ -129,7 +129,7 @@ describe("HomeView 速记卡片", () => {
     const box = quickBox(target);
     typeInto(box, "买牛奶");
 
-    click(buttonWith(target, "速记"));
+    click(buttonWith(target, "记下"));
 
     expect(mocks.createQuickNote).toHaveBeenCalledWith("买牛奶");
     await vi.waitFor(() => expect(box.value).toBe(""));
@@ -198,7 +198,7 @@ describe("HomeView 速记卡片", () => {
 
   it("正文为空时按钮禁用", () => {
     const target = renderHome();
-    expect(buttonWith(target, "速记").disabled).toBe(true);
+    expect(buttonWith(target, "记下").disabled).toBe(true);
     expect(buttonWith(target, "AI 速记").disabled).toBe(true);
   });
 });

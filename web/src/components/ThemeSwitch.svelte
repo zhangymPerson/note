@@ -5,9 +5,11 @@
   const upcoming = $derived(themeLabel(nextTheme($theme)))
 </script>
 
+<!-- 原型 C 顶栏是固定「主题」按钮：点一下循环换主题，按钮文字不变，
+     当前与下一步写进 title / aria-label（视觉上始终是「主题」）。 -->
 <button
   type="button"
-  class="theme-cycle"
+  class="theme-btn"
   title="配色：{current}（点击切换到{upcoming}）"
   aria-label="配色主题：{current}，点击切换到{upcoming}"
   onclick={() => setTheme(nextTheme($theme))}
@@ -23,5 +25,5 @@
       <path d="M4.8 12.8c1.6-2.3 3.7-4 6.1-5.3" />
     {/if}
   </svg>
-  <span class="theme-cycle-label">{current}</span>
+  <span class="theme-btn-label">主题</span>
 </button>
