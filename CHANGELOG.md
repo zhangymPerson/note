@@ -8,6 +8,17 @@
 
 ### Added
 
+- 前端视觉评审与美化建议文档 `docs/design-review.md`（纯文档，无代码改动）：
+  - 通读 `web/src` 全部视图与 `app.css`（1844 行 token + 组件样式），并在临时沙箱库（不含真实数据）用真实构建逐页截图核对，19 张截图存档于 `docs/design/screens/`（亮/暗/护眼三主题、1440/375 两档、引导→首页→列表→搜索→详情→编辑器→加密解锁→回收站→信息页→404 全流程）。
+  - 结论：底子好（三主题机制、可访问性、无模板装饰），问题是「块面同质 + 强调色身兼数职 + 衬线字体没出场 + 状态不全（无骨架/空态简陋）+ 动效只有入场」。
+  - 提出三个方向（A 纸与墨手账 / B 精密工作台 / C 活力彩色）与 P0/P1/P2 分级落地清单，并列明改视觉时不可破坏的硬规则（`{@html}` 净化、三主题、可访问性下限、Svelte 5 runes、测试配套、时间展示口径等）。
+  - 未改任何前端代码；是否进入美化及选定方向待用户决定。
+
+- 落地设计方向 C「纸墨分类彩色」（用户已选定，见 `design-demos/direction-approved.md`；行为不变，仅换皮）：
+  - **分类装饰色映射** `web/src/lib/catColor.ts`（新建）：`catColorVar(categoryId)`——未分类(1)/空 → `--c-uncat` 灰、速记(2) → `--c-short` 墨绿、用户分类按 `(id-3) % 4` 循环 `--c-work / --c-life / --c-read / --c-more`（id 不变、改名不换色）；app.css 新增 `.catdot` 装饰圆点（默认 9px、`.sm` 7px、`.lg` 11px），分类树每行（含「全部笔记」根=uncat 灰点）、列表/回收站行标题前、速记卡标题、详情页 h1 与搜索命中标题前都挂色点，全部 `aria-hidden`。
+  - **骨架屏**：列表页/回收站载入态从「笔记载入中…」文本换成 `.sk-list / .sk-row / .sk-block` 纸面色块脉冲骨架（`prefers-reduced-motion` 时关脉动），保留 sr-only 文案；详情页原文案不动（其测试断言 `not.toContain("笔记载入中")`）。
+- 前端主题换皮（方向 C 的 CSS 层，实现过程见下方 Changed 的「三主题纸墨家族」条目）；验证：`just test`（Go 全包 + 前端 228 项）与 `just check`（go vet + svelte-check 0 errors / 0 warnings）通过；真实构建 + 静态服务 + playwright 拦截 `/api/*` 渲染真实 SPA，50 项皮肤探针与 8 视图 h1 衬线 17 项全部通过，真实界面截图存 `design-demos/real-shots/`。
+
 - AI 请求显式关掉「思考模式」并固定推理强度：`thinking = {"type": "disabled"}` + `reasoning_effort = "medium"`，两条管线（`Optimize` / `OptimizeStream`）共用 `prepare`，只有一处。
   - 实测（真实网关，同一条笔记、`deepseek-v4-flash`）：默认首字 **4.33s**、`thinking disabled` 后 **1.03s**、只加 `reasoning_effort=medium` 仍 4.68s、两个都加 1.23s；`glm-5.3-flash` 默认 0 字（201 个事件里全是空 delta），关掉思考后 6.21s 正常出字。不关的时候模型先默默推理再吐第一个字，这正是「响应头 1 秒就回、正文 87 秒沉默」的形态。
 - 流式调用的**空闲看门狗**：`chatStream` 里 `idleWatch` 每收到一段 delta 就 `Reset`，超过 `ai.DefaultIdleTimeout`（60 秒）没有新内容就取消一个**子** ctx、主动掐掉上游（省 token），并报新增的 `ai.IdleError` → 网页 504 `ai_idle`（开流前失败走普通 JSON，中途停住走 `event: error`），文案「模型 X 在 1 分钟内没有输出新内容，可能卡住了；可以稍后重试、换一个模型…」。取消落在子 ctx 上，用户点「停止」仍是父 ctx 取消、仍判 `client_gone`。
@@ -28,6 +39,14 @@
   - 实测：黑洞上游（回 SSE 头后不出字）第 60 秒客户端拿到 `504 {"code":"ai_idle","message":"模型 deepseek-v4-flash 在 1 分钟内没有输出新内容…"}`；修复前同一场景客户端空响应。
 
 ### Changed
+
+- 前端换皮为「纸墨分类彩色」主题（方向 C，行为不变；对应上方 Added 的落地条目，实现过程与关键逻辑）：
+  - **三主题纸墨家族**：亮 = 微暖纸白 `#f6f4ef` + 墨绿 `#3e6b4f`、暗 = 暖黑深墨纸 `#1c1b18` + `#8db893`、护眼沿用 `#e9efdf` + `#3f7a54`；正文黑体，**衬线只给署名位**——品牌、页标题（`.page > h1` / `.list-head h1` / `.editor-head h1` / `.detail-head h1` 四条结构规则，覆盖列表/回收站/编辑/模板/详情/信息/主密码/忘记密码/404 全部页标题 h1）、日期与问候（`.home-head p.muted` / `.greeting`）；时间仍是等宽 tabular-nums。主题变量块 1–76 行整体替换：新增 `--surface-2` / `--faint` / `--border-strong` / `--accent-ink` / `--accent-soft` / `--amber` / `--danger-soft` / `--mark-bg` / `--mark-ink` / `--shadow-card` / `--shadow-row` / `--radius`(8px) / `--radius-sm` / `--t-fast`，`--accent-contrast` 变量名保留（值取原型 `--on-accent`）。
+  - **彩色只干分类一件事**：6 色固定分类色板 `--c-uncat / --c-short / --c-work / --c-life / --c-read / --c-more`（原型只有 5 支，按决策自补第 6 支 `--c-more` 哑光青绿，三主题各自换值），不做渐变（品牌 conic 除外）、emoji、纸纹噪点；列表行与详情正文 `.note-row / .detail-body` 加 `border-left: 3px solid var(--rc)` 分类色线。
+  - **纸面质感**：`.card / .note-row / .merge-bar / .note-detail / .empty-hint / .detail-body / .cat-tree` 圆角 12px → `var(--radius)`（10px 的 icon-button/toast 一并归一）+ 极浅阴影；`::selection`、检索高亮 mark 改暖黄 `--mark-bg / --mark-ink`（纯 CSS 换色，不碰 DOMPurify → highlightRendered 净化链）；全局 `a` / `.linklike` 链接色改 `--accent-ink`（对比度更稳）；`.cat-row[data-active]` 改 accent-soft 底 + accent-ink 字；`.name-error / .search-error` 硬编码 `#b3261e` 改 `--danger`。
+  - **热力图换陶土暖阶**：`--heat-0` = `var(--surface-2)`、`--heat-1..4` 从绿阶改为陶土暖阶（亮 `#f3e7d8 → #a4633f`、暗 `#3a2f26 → #d29a6a`、护眼 `#ece2cd → #96674a`），组件不动、只换变量值。
+  - **顶栏**：`.topbar` 加 sticky + `var(--bg)` 背景，导航常态墨色、悬停纸面凹陷、当前页 `data-active="true"` 墨绿加粗 + 下划线（`Layout.svelte` 按 `route` store 写 data-active：概览/全部笔记/新建/回收站）。
+  - **验证**：`just test`（Go 全包 + 前端 228 项）与 `just check`（go vet + svelte-check 0 errors / 0 warnings）通过；真实构建起静态服务、playwright 拦截 `/api/*` 回罐头数据渲染真实 SPA——50 项皮肤探针（三主题 `--bg` 值、速记卡/分类树/列表/回收站/详情的色点与 `--rc` 色线、陶土热力 4 级色、8px 圆角 + 极浅阴影、导航 active、三主题切换循环、dark/eye-care 对比度矩阵、375px 移动端无横向溢出、各视图 JS 无错误）+ 8 视图页标题 h1 衬线 17 项全部通过；真实界面截图 9 张（亮/暗/护眼 × 首页、亮 × 列表/详情/行内展开/移动端）存 `design-demos/real-shots/`。
 
 - 用户主动中止的 AI 调用不再记 `ERROR`：`logOptimizeFailure` 按 `client_gone`（`r.Context().Err() != nil`）分流成 `INFO` + `outcome=client_abort`，字段一个不少。「用户等急了点停止」和真故障混在一起会淹没告警（本轮日志里那条 `error_type=errors.errorString error="context canceled"` 就属于这种）。
 - AI 调用超时上限 60 秒 → **5 分钟**（`ai.DefaultTimeout`）：慢模型 + 近 2000 字正文常要两三分钟才吐完，60 秒会误杀正常生成（实测日志：`first_byte_ms=1041` 说明上游已开始回包，60 秒上限仍被 `context deadline exceeded` 打断）。
